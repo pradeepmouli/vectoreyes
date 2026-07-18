@@ -288,8 +288,8 @@ def _region_polyline_svg(trace, regions, fills=None) -> str:
     return render_svg_doc(trace.width, trace.height, body, defs)
 
 
-def _source_svg(rgb: np.ndarray) -> str:
-    """Embed the exact MCP-preprocessed source as the first review artifact."""
+def _raster_svg(rgb: np.ndarray) -> str:
+    """Embed a raster artifact in a portable SVG review frame."""
     png = io.BytesIO()
     Image.fromarray(np.asarray(rgb, dtype=np.uint8), mode="RGB").save(png, format="PNG")
     encoded = base64.b64encode(png.getvalue()).decode()
@@ -299,6 +299,11 @@ def _source_svg(rgb: np.ndarray) -> str:
         height,
         [f'<image width="{width}" height="{height}" href="data:image/png;base64,{encoded}"/>'],
     )
+
+
+def _source_svg(rgb: np.ndarray) -> str:
+    """Embed the exact MCP-preprocessed source as the first review artifact."""
+    return _raster_svg(rgb)
 
 
 def main() -> None:
@@ -380,6 +385,16 @@ def main() -> None:
     output.with_suffix(".auto.svg").write_text(auto_svg)
     output.with_suffix(".labels.svg").write_text(labels_svg)
     if args.debug_passes:
+        final = _render_svg(auto_svg, trace.width, trace.height)
+        difference = np.abs(np.asarray(rgb, dtype=np.int16) - np.asarray(final, dtype=np.int16))
+        pass_snapshots.extend([
+            ("region_map", labels_svg, None),
+            (
+                "source_vector_diff",
+                _raster_svg(np.clip(difference * 4, 0, 255).astype(np.uint8)),
+                None,
+            ),
+        ])
         debug_dir = output.with_name(output.stem + "-passes")
         debug_dir.mkdir(parents=True, exist_ok=True)
         for stale_svg in debug_dir.glob("*.svg"):

@@ -26,7 +26,14 @@ import numpy as np
 from PIL import Image
 
 from vectormark import Options, idealize
-from vectormark.drawing_refine import auto_refine, drawing_summary, render_drawing, root_regions, stitch_regions
+from vectormark.drawing_refine import (
+    auto_refine,
+    drawing_summary,
+    labeled_drawing_svg,
+    render_drawing,
+    root_regions,
+    stitch_regions,
+)
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
 from vectormark.pipeline import _flatten_on_white
 
@@ -449,6 +456,7 @@ def _trace_drawing_auto_with_cache(
     cache_dir: Path,
     max_colors: int | Literal["auto"],
     fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"],
+    debug_dir: Path | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     trace_options = _drawing_trace_options(options, max_colors=max_colors, fit_strategy=fit_strategy)
     cache_path = _drawing_trace_cache_path(cache_dir, entry, source, trace_options)
@@ -485,9 +493,20 @@ def _trace_drawing_auto_with_cache(
     # Cache only tracing and retained v0 geometry.  Auto refinement, final fill
     # fitting, SVG emission, and diagnostics are intentionally rerun so an
     # optimizer or renderer change appears in the next corpus invocation.
-    regions = auto_refine(trace, roots, rgb=rgb)
+    pass_snapshots: list[tuple[str, str, dict[str, Any]]] = []
+    if debug_dir is not None:
+        pass_snapshots.append(("trace_v0", render_drawing(trace, roots).svg, dict(render_drawing(trace, roots).report)))
+
+    def capture_auto_pass(name: str, regions) -> None:
+        if debug_dir is not None:
+            rendered_pass = render_drawing(trace, regions)
+            pass_snapshots.append((name, rendered_pass.svg, dict(rendered_pass.report)))
+
+    regions = auto_refine(trace, roots, rgb=rgb, on_pass=capture_auto_pass if debug_dir is not None else None)
     rendered = render_drawing(trace, regions)
     svg = rendered.svg
+    if debug_dir is not None:
+        pass_snapshots.append(("final_refill", svg, dict(rendered.report)))
     report = {
         "trace": drawing_summary(trace, regions),
         "report": rendered.report,
@@ -498,7 +517,91 @@ def _trace_drawing_auto_with_cache(
         **trace_options.model_dump(mode="json"),
         "effective_max_colors": trace.options.max_colors,
     }
+    if debug_dir is not None:
+        _write_trace_auto_debug_report(
+            debug_dir,
+            source_rgb=rgb,
+            trace=trace,
+            final_svg=svg,
+            final_regions=regions,
+            pass_snapshots=pass_snapshots,
+            trace_report=report,
+            public_options=public_options,
+        )
     return svg, report, public_options
+
+
+def _render_svg_rgb(svg: str, *, width: int, height: int) -> Image.Image:
+    """Render an SVG on white, matching the MCP review-panel comparison."""
+    import resvg_py
+
+    png = resvg_py.svg_to_bytes(svg_string=svg, width=width, height=height)
+    rgba = Image.open(io.BytesIO(bytes(png))).convert("RGBA")
+    result = Image.new("RGB", rgba.size, "white")
+    result.paste(rgba, mask=rgba.getchannel("A"))
+    return result
+
+
+def _write_trace_auto_debug_report(
+    debug_dir: Path,
+    *,
+    source_rgb: np.ndarray,
+    trace: Any,
+    final_svg: str,
+    final_regions: Any,
+    pass_snapshots: list[tuple[str, str, dict[str, Any]]],
+    trace_report: dict[str, Any],
+    public_options: dict[str, Any],
+) -> None:
+    """Write a self-contained trace-auto pass report without retracing.
+
+    The first artifacts retain v0 and every optimizer pass.  The final two
+    artifacts mirror the MCP review panel's agent-facing evidence: an
+    addressable region map and a source-to-final SVG difference map.
+    """
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    for stale in debug_dir.iterdir():
+        if stale.is_file():
+            stale.unlink()
+
+    entries: list[tuple[str, str, str, dict[str, Any] | None]] = []
+    for index, (name, svg, pass_report) in enumerate(pass_snapshots):
+        filename = f"{index:02d}-{name.removesuffix('_pass')}.svg"
+        (debug_dir / filename).write_text(svg)
+        entries.append((f"{index:02d} {name.removesuffix('_pass')}", filename, "svg", pass_report))
+
+    region_map_name = "region-map.svg"
+    (debug_dir / region_map_name).write_text(labeled_drawing_svg(trace, final_regions))
+    entries.append(("addressable region map", region_map_name, "svg", None))
+
+    source = Image.fromarray(np.asarray(source_rgb, dtype=np.uint8)).convert("RGB")
+    final = _render_svg_rgb(final_svg, width=trace.width, height=trace.height)
+    difference = np.abs(np.asarray(source, dtype=np.int16) - np.asarray(final, dtype=np.int16))
+    diff_name = "source-vector-diff.png"
+    Image.fromarray(np.clip(difference * 4, 0, 255).astype(np.uint8), "RGB").save(debug_dir / diff_name)
+    entries.append(("source-to-vector diff (4x; black = match)", diff_name, "png", None))
+
+    report_name = "trace-report.json"
+    (debug_dir / report_name).write_text(json.dumps({"options": public_options, "result": trace_report}, indent=2, sort_keys=True))
+    cards = "\n".join(
+        (
+            f'''<article><h2>{html.escape(label)}</h2>
+<object data="{html.escape(filename)}" type="image/svg+xml"></object></article>'''
+            if kind == "svg" else
+            f'''<article><h2>{html.escape(label)}</h2>
+<img src="{html.escape(filename)}" alt="{html.escape(label)}"></article>'''
+        )
+        for label, filename, kind, _pass_report in entries
+    )
+    details = "\n".join(
+        f'''<details><summary>{html.escape(label)} diagnostics</summary><pre>{html.escape(json.dumps(pass_report, indent=2, sort_keys=True))}</pre></details>'''
+        for label, _filename, _kind, pass_report in entries
+        if pass_report is not None
+    )
+    (debug_dir / "index.html").write_text(f'''<!doctype html>
+<meta charset="utf-8"><title>VectorMark trace-auto debug</title>
+<style>body{{font:14px/1.45 system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}object,img{{display:block;width:100%;aspect-ratio:1;background:#fff;border:0}}details{{margin-top:12px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
+<h1>VectorMark trace-auto debug</h1><p><a href="{html.escape(report_name)}">trace report and effective options</a></p><main>{cards}</main>{details}''')
 
 
 def _safe_filename(entry: CorpusEntry) -> str:
@@ -571,9 +674,10 @@ def _entries_for_workflow(entries: Iterable[CorpusEntry], workflow: str) -> list
     return _sorted_entries(chosen.values())
 
 
-def _manifest_payload(entries: list[CorpusEntry]) -> dict[str, Any]:
+def _manifest_payload(entries: list[CorpusEntry], *, debug_reports: bool = False) -> dict[str, Any]:
     return {
-        "version": 3,
+        "version": 4,
+        "debug_reports": debug_reports,
         "entries": [
             {
                 "id": _entry_id(entry),
@@ -738,21 +842,27 @@ def _matches_filter(entry: CorpusEntry, selectors: set[str]) -> bool:
     } & selectors)
 
 
-def _write_index_if_needed(output: Path, entries: list[CorpusEntry], *, force: bool = False) -> None:
+def _write_index_if_needed(
+    output: Path,
+    entries: list[CorpusEntry],
+    *,
+    force: bool = False,
+    debug_reports: bool = False,
+) -> None:
     manifest_path = output / "corpus-manifest.json"
-    manifest = _manifest_payload(entries)
+    manifest = _manifest_payload(entries, debug_reports=debug_reports)
     current_manifest = None
     if manifest_path.exists():
         current_manifest = json.loads(manifest_path.read_text())
     if not force and current_manifest == manifest and (output / "index.html").exists():
         return
 
-    cards = [_entry_card(entry) for entry in entries]
+    cards = [_entry_card(entry, debug_reports=debug_reports) for entry in entries]
     (output / "index.html").write_text(_html_document(cards))
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True))
 
 
-def _entry_card(entry: CorpusEntry) -> str:
+def _entry_card(entry: CorpusEntry, *, debug_reports: bool = False) -> str:
     svg_name = _safe_filename(entry)
     input_name = _input_filename(entry)
     raw_name = _raw_svg_filename(entry)
@@ -766,11 +876,17 @@ def _entry_card(entry: CorpusEntry) -> str:
     rel_diagnostics = Path("diagnostics") / diagnostics_name
     rel_diagnostics_summary = Path("diagnostic-summary") / diagnostics_summary_name
     rel_options = Path("options") / options_name
+    debug_link = (
+        f'<a href="debug/{html.escape(_entry_id(entry))}-passes/index.html">debug report</a>'
+        if debug_reports else
+        ""
+    )
     return f"""
     <article class="entry" id="{html.escape(_entry_id(entry))}">
       <header>
         <h2>{html.escape(entry.mode)} / {html.escape(entry.name)}</h2>
         <a href="{html.escape(str(rel_svg))}">{html.escape(str(rel_svg))}</a>
+        {debug_link}
       </header>
       <section class="renders">
         <figure>
@@ -811,6 +927,7 @@ def generate_corpus_html(
     workflow: str = "oneshot",
     trace_max_colors: int | Literal["auto"] = 16,
     trace_fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"] = "quadratic",
+    debug_reports: bool = False,
 ) -> Path:
     output = Path(output)
     svg_dir = output / "svg"
@@ -820,6 +937,7 @@ def generate_corpus_html(
     diagnostics_summary_dir = output / "diagnostic-summary"
     options_dir = output / "options"
     trace_cache_dir = output / "cache"
+    debug_dir = output / "debug"
     svg_dir.mkdir(parents=True, exist_ok=True)
     input_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
@@ -827,9 +945,11 @@ def generate_corpus_html(
     diagnostics_summary_dir.mkdir(parents=True, exist_ok=True)
     options_dir.mkdir(parents=True, exist_ok=True)
     trace_cache_dir.mkdir(parents=True, exist_ok=True)
+    if debug_reports:
+        debug_dir.mkdir(parents=True, exist_ok=True)
 
     all_entries = _entries_for_workflow(entries or default_entries(), workflow)
-    _write_index_if_needed(output, all_entries, force=rebuild_index)
+    _write_index_if_needed(output, all_entries, force=rebuild_index, debug_reports=debug_reports)
 
     selectors = set(only or ())
     for entry in [entry for entry in all_entries if _matches_filter(entry, selectors)]:
@@ -855,6 +975,7 @@ def generate_corpus_html(
                 cache_dir=trace_cache_dir,
                 max_colors=trace_max_colors,
                 fit_strategy=trace_fit_strategy,
+                debug_dir=debug_dir / f"{_entry_id(entry)}-passes" if debug_reports else None,
             )
         elif options.optimizer:
             svg, report = _idealize_optimizer_with_trace_cache(
@@ -1049,6 +1170,11 @@ def main() -> None:
         default="quadratic",
         help="Trace-auto path fitting strategy. Defaults to quadratic.",
     )
+    parser.add_argument(
+        "--debug-reports",
+        action="store_true",
+        help="Write linked per-image trace-auto pass reports under output/debug without retracing.",
+    )
     args = parser.parse_args()
     if args.source_manifest is not None:
         entries = source_manifest_entries(
@@ -1083,6 +1209,7 @@ def main() -> None:
         workflow=args.workflow.replace("-", "_"),
         trace_max_colors=trace_max_colors,
         trace_fit_strategy=args.trace_fit_strategy,
+        debug_reports=args.debug_reports,
     )
     print(index)
 
