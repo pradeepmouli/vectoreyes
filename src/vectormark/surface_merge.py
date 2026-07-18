@@ -18,6 +18,7 @@ from .gradient import _interp_stops_rgb, _model_t
 from .types import Region
 
 _NEIGHBORS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+_FOUR_CONNECTED = np.array(((0, 1, 0), (1, 1, 1), (0, 1, 0)), dtype=bool)
 _EIGHT_CONNECTED = np.ones((3, 3), dtype=bool)
 _MIN_CREDIBLE_SEAM_LENGTH = 24.0
 _MAX_CREDIBLE_SEAM_TORTUOSITY = 2.5
@@ -64,14 +65,20 @@ def seam_pairs(mask_a: np.ndarray, mask_b: np.ndarray, rgb: np.ndarray):
 def seam_is_soft(mask_a: np.ndarray, mask_b: np.ndarray, rgb: np.ndarray,
                  *, edge_de: float = 0.06) -> bool:
     """(A) True iff the masks are 4-adjacent and the source color steps smoothly across
-    their shared border (median straddling-pair OKLab ΔE < edge_de).
+    their shared border (low median and no persistent hard-edge OKLab ΔE).
     Same-color-at-seam features are not distinguishable here; the merge's
     union-fits-gradient guard handles them."""
     ca, cb = seam_pairs(mask_a, mask_b, rgb)
     if len(ca) == 0:
         return False
     de = np.linalg.norm(srgb_to_oklab(ca / 255.0) - srgb_to_oklab(cb / 255.0), axis=1)
-    return float(np.median(de)) < edge_de
+    return bool(
+        float(np.median(de)) < edge_de
+        # AA can make most of a deliberate boundary look locally smooth. A
+        # persistent upper-tail edge is still material evidence, unlike an
+        # actual continuous gradient where the entire distribution is small.
+        and float(np.quantile(de, 0.90)) < edge_de * 0.75
+    )
 
 
 def seam_is_noncredible(mask_a: np.ndarray, mask_b: np.ndarray) -> bool:
@@ -83,8 +90,21 @@ def seam_is_noncredible(mask_a: np.ndarray, mask_b: np.ndarray) -> bool:
     segmentation artifact independent of source colour, and is the first-pass
     reason to union two regions.
     """
-    seam = mask_a & ndimage.binary_dilation(mask_b, structure=_EIGHT_CONNECTED)
+    return _seam_credibility(mask_a, mask_b) == "noncredible"
+
+
+def _seam_credibility(mask_a: np.ndarray, mask_b: np.ndarray) -> str:
+    """Classify shared-boundary geometry as credible, noncredible, or unknown.
+
+    A long coherent seam is positive evidence for separate surfaces, while a
+    long high-tortuosity seam is evidence of palette fragmentation. Short
+    contact provides insufficient shape evidence, so the material-colour pass
+    may still decide it. Keeping the third state prevents colour continuity
+    from erasing a visible design line merely because it is smooth.
+    """
+    seam = mask_a & ndimage.binary_dilation(mask_b, structure=_FOUR_CONNECTED)
     labels, count = ndimage.label(seam, structure=_EIGHT_CONNECTED)
+    credible = False
     for component_id in range(1, count + 1):
         ys, xs = np.nonzero(labels == component_id)
         length = float(len(xs))
@@ -92,8 +112,9 @@ def seam_is_noncredible(mask_a: np.ndarray, mask_b: np.ndarray) -> bool:
             continue
         span = max(float(np.hypot(float(xs.max() - xs.min()), float(ys.max() - ys.min()))), 1.0)
         if length / span > _MAX_CREDIBLE_SEAM_TORTUOSITY:
-            return True
-    return False
+            return "noncredible"
+        credible = True
+    return "credible" if credible else "unknown"
 
 
 def _region_owner(regions: list[Region]) -> np.ndarray:
@@ -234,7 +255,10 @@ def _soft_adjacencies(
     soft: set[tuple[int, int]] = set()
     for start, end in zip(starts, ends, strict=True):
         encoded = int(ids[start])
-        if float(np.median(values[start:end])) >= edge_de:
+        seam_deltas = values[start:end]
+        if float(np.median(seam_deltas)) >= edge_de:
+            continue
+        if float(np.quantile(seam_deltas, 0.90)) >= edge_de * 0.75:
             continue
         if wide_by_id.get(encoded, 0.0) >= edge_de * 2.0:
             continue
