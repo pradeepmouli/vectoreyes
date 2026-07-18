@@ -38,13 +38,12 @@ def _fit_quadratic(pts, error):
     max_err, split = _compute_max_error(pts, ctrl, u)
     if max_err < error * error:
         return [ctrl]
-    if max_err < error * error:
-        for _ in range(20):
-            u = _reparameterize(pts, u, ctrl)
-            ctrl = _generate_quadratic(pts, u)
-            max_err, split = _compute_max_error(pts, ctrl, u)
-            if max_err < error * error:
-                return [ctrl]
+    for _ in range(20):
+        u = _reparameterize(pts, u, ctrl)
+        ctrl = _generate_quadratic(pts, u)
+        max_err, split = _compute_max_error(pts, ctrl, u)
+        if max_err < error * error:
+            return [ctrl]
     left = _fit_quadratic(pts[: split + 1], error)
     right = _fit_quadratic(pts[split:], error)
     return left + right
@@ -232,16 +231,20 @@ def _fit_cubic(pts, error, *, guard_inflections: bool):
     ctrl = _generate_cubic(pts, u, t_hat1, t_hat2)
     max_err, split = _compute_max_error_cubic(pts, ctrl, u)
     inflects = cubic_inflects(ctrl) if guard_inflections else []
-    if max_err < error and not inflects:
+    squared_error = error * error
+    if max_err < squared_error and not inflects:
         return [ctrl]
-    if not inflects and max_err < error * error:
+    if not inflects:
         for _ in range(20):
             u = _reparameterize_cubic(pts, u, ctrl)
             ctrl = _generate_cubic(pts, u, t_hat1, t_hat2)
             max_err, split = _compute_max_error_cubic(pts, ctrl, u)
-            if max_err < error and not cubic_inflects(ctrl):
+            inflects = cubic_inflects(ctrl) if guard_inflections else []
+            if max_err < squared_error and not inflects:
                 return [ctrl]
-    if inflects and max_err < error:
+            if inflects:
+                break
+    if inflects:
         split = int(np.argmin(np.abs(u - inflects[0])))  # split at the inflection
     split = max(1, min(split, len(pts) - 2))
     return (

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
-from typing import Literal, Protocol
+from typing import Literal, Mapping, Protocol
 
 import numpy as np
 from scipy.ndimage import binary_erosion, distance_transform_edt, label
 
-from .color import extract_palette, quantize
+from .color import extract_palette, quantize, white_canvas_mask
 from .contour import region_contours
 from .emit import render_svg_doc
 from .fit import fit_path_stages
@@ -22,6 +22,7 @@ from .segment import fill_tiny_isolated_holes, segment
 class TraceOptions:
     max_colors: int = 16
     requested_max_colors: int | Literal["auto"] | None = None
+    reserve_white_background: bool = False
     min_region_size: int = 16
     max_hole_area: int = 128
     trace_level: Literal["pixel", "subpixel"] = "pixel"
@@ -51,6 +52,7 @@ class TracePath:
     fill_rule: Literal["nonzero", "evenodd"]
     commands: tuple[TraceCommand, ...]
     fit_stages: dict[str, str] = field(default_factory=dict)
+    corner_diagnostics: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -159,11 +161,11 @@ class TraceResult:
                             "fill_rule": region.trace_path.fill_rule,
                             "commands": [
                                 {
-                                "id": command.id,
-                                "command": command.command,
-                                "values": list(command.values),
-                                "anchor_kind": command.anchor_kind,
-                                "corner_id": command.corner_id,
+                                    "id": command.id,
+                                    "command": command.command,
+                                    "values": list(command.values),
+                                    "anchor_kind": command.anchor_kind,
+                                    "corner_id": command.corner_id,
                                 }
                                 for command in region.trace_path.commands
                             ],
@@ -186,14 +188,30 @@ _PATH_TOKEN = re.compile(r"[MLQCAZ]|-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
 _COORDINATE_COUNTS = {"M": 2, "L": 2, "Q": 4, "C": 6, "A": 7, "Z": 0}
 
 
-def svg_path_commands(d: str, region_id: str, subpath_index: int = 0) -> tuple[TraceCommand, ...]:
+def svg_path_commands(
+    d: str,
+    region_id: str,
+    subpath_index: int = 0,
+    *,
+    declared_corners: tuple[tuple[float, float], ...] = (),
+    declared_corner_spans: tuple[tuple[tuple[float, float], tuple[float, float]], ...] = (),
+    corner_diagnostics: Mapping[str, object] | None = None,
+) -> tuple[TraceCommand, ...]:
     """Parse SVG path data into stable, target-scoped command IDs."""
     tokens = _PATH_TOKEN.findall(d)
     commands: list[TraceCommand] = []
     index = 0
     command_index = 0
     current_subpath = subpath_index
-    corner_annotations = path_corner_diagnostics(d)["anchors"]
+    corner_annotations = (
+        corner_diagnostics.get("anchors", ())
+        if corner_diagnostics is not None
+        else path_corner_diagnostics(
+            d,
+            declared_corners=declared_corners,
+            declared_corner_spans=declared_corner_spans,
+        )["anchors"]
+    )
     anchors_by_command = {
         (int(anchor["subpath"]), int(anchor["command_index"])): anchor
         for anchor in corner_annotations
@@ -273,10 +291,24 @@ def _fit_trace_path(
         for contour in contours
     )
     paths = tuple(stages.atomic_d for stages in path_stages)
+    corner_diagnostics = tuple(
+        path_corner_diagnostics(
+            d,
+            declared_corners=stages.corner_points,
+            declared_corner_spans=stages.corner_spans,
+        )
+        for d, stages in zip(paths, path_stages, strict=True)
+    )
     commands = tuple(
         command
         for subpath_index, d in enumerate(paths)
-        for command in svg_path_commands(d, region_id, subpath_index)
+        for command in svg_path_commands(
+            d,
+            region_id,
+            subpath_index,
+            declared_corners=path_stages[subpath_index].corner_points,
+            declared_corner_spans=path_stages[subpath_index].corner_spans,
+        )
     )
     return contours, TracePath(
         d=" ".join(paths),
@@ -287,6 +319,11 @@ def _fit_trace_path(
             "simple": " ".join(stages.simple_d for stages in path_stages),
             "atomic": " ".join(paths),
         },
+        corner_diagnostics=(
+            corner_diagnostics[0]
+            if len(corner_diagnostics) == 1
+            else {"subpaths": corner_diagnostics}
+        ),
     )
 
 
@@ -444,7 +481,19 @@ class PythonTraceEngine:
         height, width, _ = image.shape
         # Interactive tracing is governed by the explicit absolute region floor;
         # a relative palette floor must not erase a region before segmentation.
-        palette = extract_palette(image, max_colors=options.max_colors, min_fraction=0.0)
+        white_canvas = white_canvas_mask(image) if options.reserve_white_background else None
+        if white_canvas is None:
+            palette = extract_palette(image, max_colors=options.max_colors, min_fraction=0.0)
+        else:
+            background_pixels = image[white_canvas]
+            colors, counts = np.unique(background_pixels, axis=0, return_counts=True)
+            background = colors[int(counts.argmax())][None, :]
+            foreground = extract_palette(
+                image[~white_canvas],
+                max_colors=options.max_colors,
+                min_fraction=0.0,
+            )
+            palette = np.vstack((background, foreground))
         quantized = quantize(image, palette)
         regions = segment(quantized, min_area=options.min_region_size)
         if options.trace_level == "subpixel":

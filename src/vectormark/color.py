@@ -134,12 +134,32 @@ def mean_delta_e(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.linalg.norm(la - lb, axis=1).mean())
 
 
+def white_canvas_mask(rgb_image: np.ndarray, *, tolerance: float = 32.0) -> np.ndarray | None:
+    """Return a dominant near-white border canvas, if the image has one.
+
+    This is deliberately narrower than general background detection: it only
+    reserves an almost-white opaque canvas so automatic palette sizing can
+    count foreground materials rather than the export matte.
+    """
+    image = np.asarray(rgb_image, dtype=np.uint8)
+    if image.ndim != 3 or image.shape[2] != 3:
+        raise ValueError("white canvas detection expects an RGB image")
+    border = np.concatenate((image[0], image[-1], image[:, 0], image[:, -1]))
+    colors, counts = np.unique(border, axis=0, return_counts=True)
+    background = colors[int(counts.argmax())].astype(float)
+    if float(background.min()) < 240.0:
+        return None
+    mask = np.linalg.norm(image.astype(float) - background, axis=2) <= tolerance
+    return mask if int(mask.sum()) else None
+
+
 def infer_max_colors(
     rgb_image: np.ndarray,
     *,
-    candidates: tuple[int, ...] = (8, 16, 32, 64),
+    candidates: tuple[int, ...] = (4, 8, 16, 32, 64),
     sample_size: int = 16_384,
-    minimum_improvement: float = 0.001,
+    minimum_improvement: float = 0.003,
+    exclude_mask: np.ndarray | None = None,
 ) -> int:
     """Choose the smallest palette before quantization improvements flatten.
 
@@ -154,16 +174,23 @@ def infer_max_colors(
     image = np.asarray(rgb_image, dtype=np.uint8)
     if image.ndim != 3 or image.shape[2] != 3:
         raise ValueError("palette inference expects an RGB image")
-    palette = extract_palette(image, max_colors=levels[-1], min_fraction=0.0)
+    pixels = image.reshape(-1, 3)
+    if exclude_mask is not None:
+        mask = np.asarray(exclude_mask, dtype=bool)
+        if mask.shape != image.shape[:2]:
+            raise ValueError("palette exclusion mask dimensions must match the image")
+        retained = pixels[~mask.reshape(-1)]
+        if len(retained):
+            pixels = retained
+    palette = extract_palette(pixels, max_colors=levels[-1], min_fraction=0.0)
     if len(palette) <= levels[0]:
         return int(len(palette))
 
     effective_levels = tuple(sorted({min(level, len(palette)) for level in levels}))
-    flat = image.reshape(-1, 3)
-    if len(flat) > sample_size:
-        sample = flat[np.linspace(0, len(flat) - 1, sample_size, dtype=np.intp)]
+    if len(pixels) > sample_size:
+        sample = pixels[np.linspace(0, len(pixels) - 1, sample_size, dtype=np.intp)]
     else:
-        sample = flat
+        sample = pixels
     sample_lab = srgb_to_oklab(sample / 255.0)
     palette_lab = srgb_to_oklab(palette / 255.0)
     best = np.full(len(sample_lab), np.inf, dtype=float)

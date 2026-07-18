@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-import math
+from collections.abc import Mapping, Sequence
 
 import numpy as np
 
@@ -11,21 +10,7 @@ from .._fitcurve import fit_quadratic_once
 from ..fit import Shape, _fmt, _quadratic_max_residual
 from .vector_region import _parse_subpaths, _sample_subpath
 
-_POINT_CORNER_TURN_DEGREES = 45.0
-_CURVED_CORNER_TURN_DEGREES = 35.0
 _CURVE_COMMANDS = {"Q", "C"}
-
-
-def _unit(vector: np.ndarray) -> np.ndarray | None:
-    length = float(np.linalg.norm(vector))
-    return None if length <= 1e-9 else vector / length
-
-
-def _turn_degrees(left: np.ndarray, right: np.ndarray) -> float:
-    a, b = _unit(left), _unit(right)
-    if a is None or b is None:
-        return 0.0
-    return float(math.degrees(math.acos(float(np.clip(np.dot(a, b), -1.0, 1.0)))))
 
 
 def _segments(tokens: list[tuple[str, list[float]]]) -> list[dict[str, object]]:
@@ -75,7 +60,13 @@ def _segments(tokens: list[tuple[str, list[float]]]) -> list[dict[str, object]]:
     return segments
 
 
-def path_corner_diagnostics(d: str) -> dict[str, object]:
+def path_corner_diagnostics(
+    d: str,
+    *,
+    declared_corners: Sequence[tuple[float, float]] = (),
+    declared_corner_spans: Sequence[tuple[tuple[float, float], tuple[float, float]]] = (),
+    corner_tolerance: float = 0.02,
+) -> dict[str, object]:
     """Classify command-end anchors that are part of point or curved corners.
 
     The result is intentionally command-indexed: an SVG command owns the
@@ -96,88 +87,102 @@ def path_corner_diagnostics(d: str) -> dict[str, object]:
             "corner_id": corner_id,
         }
 
+    # The path fitter's selected contour corners are authoritative.  An
+    # unannotated path has no normalizable corners: do not invent a different
+    # set by inspecting its fitted tangents.
+    declared = tuple((float(x), float(y)) for x, y in declared_corners)
+    declared_spans = tuple(
+        ((float(start[0]), float(start[1])), (float(end[0]), float(end[1])))
+        for start, end in declared_corner_spans
+    )
     for subpath_index, tokens in enumerate(_parse_subpaths(d)):
         total_commands += sum(command not in {"M", "Z"} for command, _values in tokens)
         segments = _segments(tokens)
         if not segments:
             continue
-
-        # A sharp L/L junction is already the canonical point-corner form.
-        for left, right in zip(segments, segments[1:], strict=False):
-            if left["command"] != "L" or right["command"] not in {"L", "Z"}:
+        endpoints: list[tuple[int, np.ndarray]] = []
+        if tokens and tokens[0][0] == "M":
+            endpoints.append((0, np.asarray(tokens[0][1][:2], dtype=float)))
+        endpoints.extend(
+            (int(segment["command_index"]), np.asarray(segment["end"], dtype=float))
+            for segment in segments
+            if segment["command"] != "Z"
+        )
+        for number, point in enumerate(declared):
+            matching = [
+                (command_index, endpoint)
+                for command_index, endpoint in endpoints
+                if float(np.linalg.norm(endpoint - point)) <= corner_tolerance
+            ]
+            if not matching:
                 continue
-            if _turn_degrees(left["end_tangent"], right["start_tangent"]) < _POINT_CORNER_TURN_DEGREES:
-                continue
-            owner = int(left["command_index"])
-            corner_id = f"p{subpath_index}.corner{corner_number}"
+            command_index, _endpoint = min(matching, key=lambda item: item[0])
+            corner_id = f"p{subpath_index}.corner{number}"
             corner_number += 1
-            mark(subpath_index, owner, corner_id)
+            mark(subpath_index, command_index, corner_id)
             spans.append({
                 "corner_id": corner_id,
                 "kind": "point",
                 "subpath": subpath_index,
-                "commands": [owner],
+                "commands": [command_index],
+                "source": "prefit",
+                "point": point,
             })
-
-        # The closing Z owns the initial M anchor.  Its outgoing join has no
-        # independent SVG segment record, so annotate M when the incoming
-        # closing edge and outgoing first edge form a point.
-        drawable = [segment for segment in segments if segment["command"] != "Z"]
-        if (
-            tokens
-            and tokens[-1][0] == "Z"
-            and len(drawable) >= 2
-            and drawable[0]["command"] == "L"
-            and segments[-1]["command"] == "Z"
-            and _turn_degrees(drawable[-1]["end_tangent"], drawable[0]["start_tangent"])
-            >= _POINT_CORNER_TURN_DEGREES
-        ):
-            corner_id = f"p{subpath_index}.corner{corner_number}"
-            corner_number += 1
-            mark(subpath_index, 0, corner_id)
-            spans.append({
-                "corner_id": corner_id,
-                "kind": "point",
-                "subpath": subpath_index,
-                "commands": [0],
-            })
-
-        # A curve run between straight sides is a rounded-corner candidate.
-        index = 0
-        while index < len(segments):
-            if segments[index]["command"] not in _CURVE_COMMANDS:
-                index += 1
+        command_by_index = {int(segment["command_index"]): segment for segment in segments}
+        endpoint_index = {
+            index: endpoint
+            for index, endpoint in endpoints
+        }
+        drawable_indices = [
+            index for index, (command, _values) in enumerate(tokens)
+            if command != "Z"
+        ]
+        for number, (start_point, end_point) in enumerate(declared_spans):
+            starts = [
+                index for index, endpoint in endpoint_index.items()
+                if float(np.linalg.norm(endpoint - start_point)) <= corner_tolerance
+            ]
+            ends = [
+                index for index, endpoint in endpoint_index.items()
+                if float(np.linalg.norm(endpoint - end_point)) <= corner_tolerance
+            ]
+            if not starts or not ends:
                 continue
-            end = index
-            while end + 1 < len(segments) and segments[end + 1]["command"] in _CURVE_COMMANDS:
-                end += 1
-            previous = segments[index - 1] if index else None
-            following = segments[end + 1] if end + 1 < len(segments) else None
-            if previous is None or following is None or previous["command"] != "L" or following["command"] != "L":
-                index = end + 1
+            start_index, end_index = min(starts), min(ends)
+            start_position = drawable_indices.index(start_index)
+            end_position = drawable_indices.index(end_index)
+            if end_position < start_position:
+                member_indices = drawable_indices[start_position:] + drawable_indices[:end_position + 1]
+            else:
+                member_indices = drawable_indices[start_position:end_position + 1]
+            # A rounded corner is bounded by *two* protected straight sides.
+            # The endpoint command owns the curve arriving at the exit anchor;
+            # include the following side command as well so a stem-to-band
+            # transition retains both of its declared boundaries.  Only Q/C
+            # members are refitted by corner normalization below.
+            exit_position = (end_position + 1) % len(drawable_indices)
+            exit_index = drawable_indices[exit_position]
+            if exit_index not in member_indices:
+                member_indices.append(exit_index)
+            curve_commands = [
+                index for index in member_indices
+                if index in command_by_index and command_by_index[index]["command"] in _CURVE_COMMANDS
+            ]
+            if not curve_commands:
                 continue
-            run = segments[index:end + 1]
-            turn = sum(
-                _turn_degrees(segment["start_tangent"], segment["end_tangent"])
-                for segment in run
-            )
-            if turn < _CURVED_CORNER_TURN_DEGREES:
-                index = end + 1
-                continue
-            corner_id = f"p{subpath_index}.corner{corner_number}"
-            corner_number += 1
-            member_commands = [int(previous["command_index"]), *(int(segment["command_index"]) for segment in run)]
-            for command_index in member_commands:
+            corner_id = f"p{subpath_index}.rounded_corner{number}"
+            for command_index in member_indices:
                 mark(subpath_index, command_index, corner_id)
             spans.append({
                 "corner_id": corner_id,
                 "kind": "curve",
                 "subpath": subpath_index,
-                "commands": member_commands,
-                "curve_commands": [int(segment["command_index"]) for segment in run],
-                "turn_degrees": round(turn, 3),
+                "commands": member_indices,
+                "curve_commands": curve_commands,
+                "source": "prefit",
+                "start_point": start_point,
+                "end_point": end_point,
             })
-            index = end + 1
 
     ordered_anchors = [anchors[key] for key in sorted(anchors)]
     corner_commands = {
@@ -200,6 +205,49 @@ def path_corner_diagnostics(d: str) -> dict[str, object]:
     }
 
 
+def rebind_prefit_corner_diagnostics(
+    d: str,
+    diagnostics: Mapping[str, object],
+    *,
+    tolerance: float,
+) -> dict[str, object]:
+    """Carry existing pre-fit corner provenance across a path rewrite.
+
+    A rewrite may move an endpoint slightly or expand one command into several.
+    It may not create corner semantics.  Rebind only the explicitly recorded
+    points/spans to their nearest retained endpoints in the rewritten path.
+    """
+    spans = diagnostics.get("spans", ())
+    if not isinstance(spans, Sequence):
+        return {"path": d}
+    points = [
+        tuple(float(value) for value in span["point"])
+        for span in spans
+        if isinstance(span, Mapping) and span.get("source") == "prefit" and "point" in span
+    ]
+    rounded_spans = [
+        (
+            tuple(float(value) for value in span["start_point"]),
+            tuple(float(value) for value in span["end_point"]),
+        )
+        for span in spans
+        if (
+            isinstance(span, Mapping)
+            and span.get("source") == "prefit"
+            and "start_point" in span
+            and "end_point" in span
+        )
+    ]
+    rebound = path_corner_diagnostics(
+        d,
+        declared_corners=points,
+        declared_corner_spans=rounded_spans,
+        corner_tolerance=tolerance,
+    )
+    rebound["path"] = d
+    return rebound
+
+
 def _subpath_d(tokens: list[tuple[str, list[float]]]) -> str:
     return " ".join(
         command if not values else f"{command}{' '.join(_fmt(value) for value in values)}"
@@ -207,9 +255,14 @@ def _subpath_d(tokens: list[tuple[str, list[float]]]) -> str:
     )
 
 
-def normalize_corners_path_d(d: str, *, max_error: float) -> tuple[str, dict[str, object]]:
+def normalize_corners_path_d(
+    d: str,
+    *,
+    max_error: float,
+    diagnostics: Mapping[str, object] | None = None,
+) -> tuple[str, dict[str, object]]:
     """Collapse recognised rounded-corner runs to one Q when the fit is faithful."""
-    diagnostics = path_corner_diagnostics(d)
+    diagnostics = dict(diagnostics) if diagnostics is not None else path_corner_diagnostics(d)
     tokens_by_subpath = _parse_subpaths(d)
     normalized_spans: list[str] = []
     curve_spans = sorted(

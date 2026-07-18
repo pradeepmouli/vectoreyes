@@ -24,10 +24,16 @@ def corner_normalize_pass(
         if not obj.is_leaf or obj.current is None or obj.current.kind != "path":
             continue
         d = str(obj.current.params.get("d", ""))
+        existing = obj.diagnostics.get("corners")
+        declared = (
+            existing
+            if isinstance(existing, dict) and existing.get("path") == d
+            else None
+        )
         normalized_d, diagnostics = (
-            normalize_corners_path_d(d, max_error=max_error)
-            if enabled
-            else (d, path_corner_diagnostics(d))
+            normalize_corners_path_d(d, max_error=max_error, diagnostics=declared)
+            if enabled and declared is not None
+            else (d, declared if declared is not None else path_corner_diagnostics(d))
         )
         shape = Shape("path", {**obj.current.params, "d": normalized_d})
         proposals.append(

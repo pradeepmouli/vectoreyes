@@ -21,9 +21,9 @@ from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
 from .drawing_trace import TraceResult, svg_path_commands
 from .emit import apply_affine_point, render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
 from .fill_fit import fit_fill
-from .fit import Shape, _curved_run_d, _fmt, atomic_flatten_path_d, fit_path, recognize_polygon
+from .fit import Shape, _curved_run_d, _fmt, atomic_flatten_path_d, fit_path, fit_path_stages, recognize_polygon
 from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath, to_polygon
-from .optimizer.corners import path_corner_diagnostics
+from .optimizer.corners import path_corner_diagnostics, rebind_prefit_corner_diagnostics
 from .optimizer.gate import rasterize
 from .optimizer.framework import optimize
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
@@ -145,9 +145,10 @@ def root_regions(
             surface.color_hex,
             coverage=surface.coverage,
         )
-        shape = _surface_shape(cleaned_surface, trace)
-        if shape is None:
+        fitted_surface = _surface_shape_with_corners(cleaned_surface, trace)
+        if fitted_surface is None:
             continue
+        shape, corners = fitted_surface
         source_regions = tuple(
             region.id for region in trace.regions if np.any(cleaned_mask & region.mask)
         )
@@ -157,6 +158,7 @@ def root_regions(
                     "sources": source_regions,
                     "merged": len(source_regions) > 1,
                 },
+                "corners": corners,
             }
             if filled_hole_area:
                 diagnostics["hole_cleanup"] = {
@@ -279,9 +281,10 @@ def _geometry_root_regions(
                 max_area=trace.options.max_hole_area,
             )
             surface = Region(member.label, mask, member.color_hex)
-            shape = _surface_shape(surface, trace)
-            if shape is None:
+            fitted_surface = _surface_shape_with_corners(surface, trace)
+            if fitted_surface is None:
                 continue
+            shape, corners = fitted_surface
             source_regions = tuple(
                 region.id for region in trace.regions if np.any(mask & region.mask)
             )
@@ -306,14 +309,18 @@ def _geometry_root_regions(
                             "edge_de": 0.06,
                             "boundary_preserving": True,
                             "filled_hole_area": filled_hole_area,
-                        }
+                        },
+                        "corners": corners,
                     },
                 )
             )
         if not children:
             continue
         baseline_diagnostics = {
-            "corners": path_corner_diagnostics(str(baseline_shape.params["d"])),
+            "corners": {
+                **geometry.trace_path.corner_diagnostics,
+                "path": str(baseline_shape.params["d"]),
+            },
             "geometry_seed": {
                 "trace_region": geometry.id,
                 "background": dict(trace.background),
@@ -486,32 +493,53 @@ def _normalize_drawing_addresses(regions: Sequence[VectorRegion]) -> DrawingRegi
     return tuple(normalize_root(region, _root_label(region)) for region in regions)
 
 
-def _surface_shape(surface: Region, trace: TraceResult) -> Shape | None:
+def _surface_shape_with_corners(
+    surface: Region,
+    trace: TraceResult,
+) -> tuple[Shape, dict[str, object]] | None:
     contours = [contour for contour in region_contours(surface.mask) if len(contour) >= 3]
     if not contours:
         return None
-    paths = [
-        str(
-            fit_path(
-                contour,
-                epsilon=trace.options.simplify_tolerance,
-                max_error=trace.options.curve_tolerance,
-                cubic=False,
-                progressive=trace.options.fit_strategy != "quadratic",
-                progressive_allow_lines=trace.options.fit_strategy == "progressive_allow_lines",
-                # Root fitting follows the trace curve family, but it must not
-                # run a second command-reduction search over a mask that has
-                # just been material-merged.  The trace itself already made
-                # that choice; this pass establishes only the merged boundary.
-                prefer_simple_curves=False,
-            ).params["d"]
+    stages = [
+        fit_path_stages(
+            contour,
+            epsilon=trace.options.simplify_tolerance,
+            max_error=trace.options.curve_tolerance,
+            cubic=False,
+            progressive=trace.options.fit_strategy != "quadratic",
+            progressive_allow_lines=trace.options.fit_strategy == "progressive_allow_lines",
+            # Root fitting follows the trace curve family, but it must not
+            # run a second command-reduction search over a mask that has just
+            # been material-merged.  This establishes the merged boundary.
+            prefer_simple_curves=False,
         )
         for contour in contours
     ]
+    paths = [stage.atomic_d for stage in stages]
     params: dict[str, object] = {"d": " ".join(paths)}
     if len(paths) > 1:
         params["fill_rule"] = "evenodd"
-    return Shape("path", params)
+    diagnostics = tuple(
+        path_corner_diagnostics(
+            path,
+            declared_corners=stage.corner_points,
+            declared_corner_spans=stage.corner_spans,
+        )
+        for path, stage in zip(paths, stages, strict=True)
+    )
+    corners: dict[str, object] = (
+        dict(diagnostics[0])
+        if len(diagnostics) == 1
+        else {"subpaths": diagnostics}
+    )
+    corners["path"] = str(params["d"])
+    return Shape("path", params), corners
+
+
+def _surface_shape(surface: Region, trace: TraceResult) -> Shape | None:
+    """Return only geometry where callers do not retain a drawing region."""
+    fitted = _surface_shape_with_corners(surface, trace)
+    return fitted[0] if fitted is not None else None
 
 
 def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> RenderedDrawing:
@@ -698,7 +726,16 @@ def drawing_summary(trace: TraceResult, regions: Sequence[VectorRegion]) -> dict
                     "anchor_kind": command.anchor_kind,
                     "corner_id": command.corner_id,
                 }
-                for command in svg_path_commands(str(shape.params["d"]), target.id)
+                for command in svg_path_commands(
+                    str(shape.params["d"]),
+                    target.id,
+                    corner_diagnostics=(
+                        target.region.diagnostics.get("corners")
+                        if isinstance(target.region.diagnostics.get("corners"), Mapping)
+                        and target.region.diagnostics["corners"].get("path") == str(shape.params["d"])
+                        else None
+                    ),
+                )
             ]
             geometry["commands"] = commands
         summaries.append(
@@ -954,7 +991,50 @@ def _run_detection(
     before = {region.id: region for region in regions}
     masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
     optimized = optimize(list(regions), masks, [pass_fn])
-    return tuple(_restore_root_metadata(region, before.get(region.id)) for region in optimized)
+    restored = tuple(_restore_root_metadata(region, before.get(region.id)) for region in optimized)
+    return _rebind_corner_provenance(regions, restored, tolerance=max(1.0, epsilon * 2.0))
+
+
+def _rebind_corner_provenance(
+    before: Sequence[VectorRegion],
+    after: Sequence[VectorRegion],
+    *,
+    tolerance: float,
+) -> DrawingRegions:
+    """Preserve trace-declared corners through a command-preserving rewrite."""
+    originals = {leaf.id: leaf for root in before for leaf in root.leaves()}
+
+    def visit(region: VectorRegion) -> VectorRegion:
+        if region.is_branch:
+            children = tuple(visit(child) for child in region.children)
+            # VectorRegion equality deliberately ignores diagnostics.  Corner
+            # provenance is a diagnostics-only update, so retain the rebuilt
+            # branch whenever any child instance changed.
+            return (
+                region.with_children(children)
+                if any(child is not original for child, original in zip(children, region.children, strict=True))
+                else region
+            )
+        assert region.current is not None
+        original = originals.get(region.id)
+        if (
+            original is None
+            or original.current is None
+            or original.current.kind != "path"
+            or region.current.kind != "path"
+        ):
+            return region
+        corners = original.diagnostics.get("corners")
+        if not isinstance(corners, Mapping) or corners.get("path") != str(original.current.params.get("d", "")):
+            return region
+        rebound = rebind_prefit_corner_diagnostics(
+            str(region.current.params["d"]),
+            corners,
+            tolerance=tolerance,
+        )
+        return region.with_diagnostics({"corners": rebound})
+
+    return tuple(visit(region) for region in after)
 
 
 def _bake_self_symmetry_uses_for_polish(regions: Sequence[VectorRegion]) -> DrawingRegions:

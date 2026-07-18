@@ -56,6 +56,13 @@ class PathFitStages:
     baseline_d: str
     simple_d: str
     atomic_d: str
+    # Pre-fit contour corners are the authoritative anchor provenance.  Keep
+    # them separate from the emitted SVG so downstream passes never have to
+    # guess a corner again from fitted tangents.
+    corner_points: tuple[tuple[float, float], ...] = ()
+    # Each entry is the pre-fit entry/exit boundary of one rounded corner.
+    # The fitted Q/C commands between those points are its members.
+    corner_spans: tuple[tuple[tuple[float, float], tuple[float, float]], ...] = ()
 
 
 def _max_residual(model, pts: np.ndarray) -> float:
@@ -226,6 +233,75 @@ def _inside_closed_span(index: int, start: int, end: int) -> bool:
     if start < end:
         return start < index < end
     return index > start or index < end
+
+
+def _advance_ring_index(ring: np.ndarray, index: int, step: int, distance: float) -> int:
+    """Walk a closed contour by arc length without inventing an anchor point."""
+    remaining = float(distance)
+    current = index
+    count = len(ring)
+    while remaining > 1e-9:
+        following = (current + step) % count
+        edge = ring[following] - ring[current]
+        length = float(np.linalg.norm(edge))
+        if length >= remaining:
+            return following
+        remaining -= length
+        current = following
+    return current
+
+
+def _arc_distance(ring: np.ndarray, start: int, end: int) -> float:
+    """Forward closed-ring arc distance from ``start`` to ``end``."""
+    total = 0.0
+    current = start
+    while current != end:
+        following = (current + 1) % len(ring)
+        total += float(np.linalg.norm(ring[following] - ring[current]))
+        current = following
+    return total
+
+
+def _protected_corner_ranges(
+    ring: np.ndarray,
+    corners: set[int],
+    *,
+    epsilon: float,
+    recovery_corners: set[int] = frozenset(),
+) -> list[tuple[int, int]]:
+    """Expand clustered pre-fit cornerlets into protected contour intervals.
+
+    A rounded corner is often represented by two or more nearby high-turn
+    samples.  Treating each as a separate cut leaks its transition samples into
+    the neighboring side.  This groups only such adjacent detections, expands
+    their two outer boundaries along existing raw samples, and leaves isolated
+    sharp corners untouched. A single broad-support recovery corner is also a
+    valid range: it is precisely the case where AA has softened one design
+    corner into an otherwise unclustered bend.
+    """
+    if len(corners) < 2:
+        return []
+    ordered = sorted(corners)
+    group_gap = max(12.0, epsilon * 8.0)
+    groups: list[list[int]] = [[ordered[0]]]
+    for index in ordered[1:]:
+        if _arc_distance(ring, groups[-1][-1], index) <= group_gap:
+            groups[-1].append(index)
+        else:
+            groups.append([index])
+    if len(groups) > 1 and _arc_distance(ring, groups[-1][-1], groups[0][0]) <= group_gap:
+        groups[0] = groups[-1] + groups[0]
+        groups.pop()
+
+    guard = max(4.0, epsilon * 4.0)
+    ranges: list[tuple[int, int]] = []
+    for group in groups:
+        if len(group) < 2 and not any(index in recovery_corners for index in group):
+            continue
+        start = _advance_ring_index(ring, group[0], -1, guard)
+        end = _advance_ring_index(ring, group[-1], 1, guard)
+        ranges.append((start, end))
+    return ranges
 
 
 def _fmt(v: float) -> str:
@@ -967,7 +1043,7 @@ def _curved_run_d(
     return _append_cubic_run("", seg, max_error, line_epsilon=line_epsilon)
 
 
-def _fit_path_d(
+def _fit_path_d_with_corners(
     contour: np.ndarray,
     *,
     epsilon: float,
@@ -976,7 +1052,11 @@ def _fit_path_d(
     progressive: bool = False,
     progressive_allow_lines: bool = True,
     forced_corners: np.ndarray | None = None,
-) -> str:
+) -> tuple[
+    str,
+    tuple[tuple[float, float], ...],
+    tuple[tuple[tuple[float, float], tuple[float, float]], ...],
+]:
     pts = np.asarray(contour, dtype=float)
     closed = np.allclose(pts[0], pts[-1])
     ring = pts[:-1] if closed else pts
@@ -994,6 +1074,8 @@ def _fit_path_d(
         support_radius=max(4.0, epsilon * 2.0),
     )
     corner_pts = simp[corners] if corners else np.empty((0, 2), dtype=float)
+    recovery_cut_idx: set[int] = set()
+    protected_lines = _protected_line_spans(ring) if progressive else []
     if progressive:
         # Some long organic corners are softened by anti-aliasing over more
         # than the normal trace tolerance.  Add (rather than replace with)
@@ -1020,15 +1102,21 @@ def _fit_path_d(
             support_radius=max(24.0, epsilon * 32.0),
         )
         if recovery_corners:
-            corner_pts = np.vstack([corner_pts, recovery_seed[recovery_corners]])
+            recovered_points = recovery_seed[recovery_corners]
+            corner_pts = np.vstack([corner_pts, recovered_points])
+            recovery_cut_idx = {
+                int(np.argmin(np.hypot(*(ring - point).T)))
+                for point in recovered_points
+            }
     if not len(corner_pts):
         corner_pts = simp[[0]]
-    cut_idx = {int(np.argmin(np.hypot(*(ring - cp).T))) for cp in corner_pts}
+    detected_cut_idx = {int(np.argmin(np.hypot(*(ring - cp).T))) for cp in corner_pts}
+    cut_idx = set(detected_cut_idx)
     if progressive:
         # Protect pre-fit straight sides before progressive recursion.  Their
         # endpoints are ordinary cut boundaries, but no automatically detected
         # corner may subdivide the line between those endpoints.
-        for start, end in _protected_line_spans(ring):
+        for start, end in protected_lines:
             cut_idx = {
                 index for index in cut_idx
                 if not _inside_closed_span(index, start, end)
@@ -1039,6 +1127,22 @@ def _fit_path_d(
             int(np.argmin(np.hypot(*(ring - point).T)))
             for point in np.asarray(forced_corners, dtype=float)
         )
+    corner_ranges = (
+        _protected_corner_ranges(
+            ring,
+            detected_cut_idx,
+            epsilon=epsilon,
+            recovery_corners=recovery_cut_idx,
+        )
+        if progressive
+        else []
+    )
+    for start, end in corner_ranges:
+        cut_idx = {
+            index for index in cut_idx
+            if not _inside_closed_span(index, start, end)
+        }
+        cut_idx.update((start, end))
     cut_idx = sorted(cut_idx)
     if len(cut_idx) < 2:
         cut_idx = [0, len(ring) // 2]
@@ -1062,7 +1166,49 @@ def _fit_path_d(
                 progressive_allow_lines=progressive_allow_lines,
             )
     d += "Z"
-    return d
+    corner_spans: list[tuple[tuple[float, float], tuple[float, float]]] = []
+    for start, end in corner_ranges:
+        corner_spans.append((
+            (float(ring[start][0]), float(ring[start][1])),
+            (float(ring[end][0]), float(ring[end][1])),
+        ))
+    if len(protected_lines) >= 2:
+        ordered_lines = sorted(protected_lines)
+        for position, (_start, end) in enumerate(ordered_lines):
+            next_start, _next_end = ordered_lines[(position + 1) % len(ordered_lines)]
+            if end == next_start:
+                continue
+            corner_spans.append((
+                (float(ring[end][0]), float(ring[end][1])),
+                (float(ring[next_start][0]), float(ring[next_start][1])),
+            ))
+    return (
+        d,
+        tuple((float(ring[index][0]), float(ring[index][1])) for index in cut_idx),
+        tuple(corner_spans),
+    )
+
+
+def _fit_path_d(
+    contour: np.ndarray,
+    *,
+    epsilon: float,
+    max_error: float,
+    cubic: bool = False,
+    progressive: bool = False,
+    progressive_allow_lines: bool = True,
+    forced_corners: np.ndarray | None = None,
+) -> str:
+    """Fit a contour, discarding provenance for internal candidate searches."""
+    return _fit_path_d_with_corners(
+        contour,
+        epsilon=epsilon,
+        max_error=max_error,
+        cubic=cubic,
+        progressive=progressive,
+        progressive_allow_lines=progressive_allow_lines,
+        forced_corners=forced_corners,
+    )[0]
 
 
 def _simpler_curve_candidate(
@@ -1117,7 +1263,7 @@ def fit_path_stages(
     prefer_simple_curves: bool = False,
 ) -> PathFitStages:
     """Fit a contour while retaining each trace-time simplification boundary."""
-    baseline_d = _fit_path_d(
+    baseline_d, corner_points, corner_spans = _fit_path_d_with_corners(
         contour,
         epsilon=epsilon,
         max_error=max_error,
@@ -1127,7 +1273,13 @@ def fit_path_stages(
         forced_corners=forced_corners,
     )
     if not prefer_simple_curves:
-        return PathFitStages(baseline_d=baseline_d, simple_d=baseline_d, atomic_d=baseline_d)
+        return PathFitStages(
+            baseline_d=baseline_d,
+            simple_d=baseline_d,
+            atomic_d=baseline_d,
+            corner_points=corner_points,
+            corner_spans=corner_spans,
+        )
 
     simple_d = _simpler_curve_candidate(
         contour,
@@ -1143,6 +1295,8 @@ def fit_path_stages(
         baseline_d=baseline_d,
         simple_d=simple_d,
         atomic_d=_residual_gated_atomic_simplify_d(contour, simple_d),
+        corner_points=corner_points,
+        corner_spans=corner_spans,
     )
 
 

@@ -41,7 +41,7 @@ from .drawing_refine import (
 )
 from .drawing_state import DrawingNotFound, DrawingStore
 from .drawing_trace import PythonTraceEngine, TraceOptions
-from .color import infer_max_colors
+from .color import infer_max_colors, white_canvas_mask
 
 # Transport is chosen at startup. stdio = local, full-trust (your own machine, your
 # files). Any HTTP transport is potentially network-reachable, so the filesystem tools
@@ -971,9 +971,15 @@ def _trace_result(image: ImageRef, options: TraceDrawingOptions):
     # white-composited for material and fill analysis, and every later vector
     # pass is free to refine the fitted geometry; alpha is never retained as a
     # downstream clipping constraint.
-    effective_max_colors = infer_max_colors(rgb) if options.max_colors == "auto" else options.max_colors
+    white_canvas = white_canvas_mask(rgb)
+    effective_max_colors = (
+        infer_max_colors(rgb, exclude_mask=white_canvas)
+        if options.max_colors == "auto"
+        else options.max_colors
+    )
     trace = PythonTraceEngine().trace(rgb, TraceOptions(max_colors=effective_max_colors,
         requested_max_colors=options.max_colors,
+        reserve_white_background=options.max_colors == "auto" and white_canvas is not None,
         min_region_size=options.min_region_size, max_hole_area=options.max_hole_area, trace_level=options.trace_level,
         simplify_tolerance=options.simplify_tolerance, curve_tolerance=options.curve_tolerance,
         fit_strategy=options.fit_strategy, corner_normalize=options.corner_normalize,

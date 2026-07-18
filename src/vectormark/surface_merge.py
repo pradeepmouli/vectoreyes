@@ -18,7 +18,6 @@ from .gradient import _interp_stops_rgb, _model_t
 from .types import Region
 
 _NEIGHBORS = ((1, 0), (-1, 0), (0, 1), (0, -1))
-_FOUR_CONNECTED = np.array(((0, 1, 0), (1, 1, 1), (0, 1, 0)), dtype=bool)
 _EIGHT_CONNECTED = np.ones((3, 3), dtype=bool)
 _MIN_CREDIBLE_SEAM_LENGTH = 24.0
 _MAX_CREDIBLE_SEAM_TORTUOSITY = 2.5
@@ -84,7 +83,7 @@ def seam_is_noncredible(mask_a: np.ndarray, mask_b: np.ndarray) -> bool:
     segmentation artifact independent of source colour, and is the first-pass
     reason to union two regions.
     """
-    seam = mask_a & ndimage.binary_dilation(mask_b, structure=_FOUR_CONNECTED)
+    seam = mask_a & ndimage.binary_dilation(mask_b, structure=_EIGHT_CONNECTED)
     labels, count = ndimage.label(seam, structure=_EIGHT_CONNECTED)
     for component_id in range(1, count + 1):
         ys, xs = np.nonzero(labels == component_id)
@@ -95,6 +94,32 @@ def seam_is_noncredible(mask_a: np.ndarray, mask_b: np.ndarray) -> bool:
         if length / span > _MAX_CREDIBLE_SEAM_TORTUOSITY:
             return True
     return False
+
+
+def _region_owner(regions: list[Region]) -> np.ndarray:
+    """Return the one-to-one component ownership image for ``regions``."""
+    owner = np.full(regions[0].mask.shape, -1, dtype=np.int32)
+    for index, region in enumerate(regions):
+        owner[region.mask] = index
+    return owner
+
+
+def _adjacent_region_pairs(owner: np.ndarray) -> set[tuple[int, int]]:
+    """Return the distinct 8-adjacent component pairs in an ownership image."""
+    pairs: set[tuple[int, int]] = set()
+    for left, right in (
+        (owner[:, :-1], owner[:, 1:]),
+        (owner[:-1, :], owner[1:, :]),
+        (owner[:-1, :-1], owner[1:, 1:]),
+        (owner[:-1, 1:], owner[1:, :-1]),
+    ):
+        valid = (left >= 0) & (right >= 0) & (left != right)
+        if not valid.any():
+            continue
+        low = np.minimum(left[valid], right[valid])
+        high = np.maximum(left[valid], right[valid])
+        pairs.update(zip(low.tolist(), high.tolist(), strict=True))
+    return pairs
 
 
 def seam_band(mask_a: np.ndarray, mask_b: np.ndarray, *, width: int = 2):
@@ -143,9 +168,7 @@ def _soft_adjacencies(
     """
     if not regions:
         return set()
-    owner = np.full(rgb.shape[:2], -1, dtype=np.int32)
-    for index, region in enumerate(regions):
-        owner[region.mask] = index
+    owner = _region_owner(regions)
 
     pair_ids: list[np.ndarray] = []
     deltas: list[np.ndarray] = []
@@ -221,12 +244,13 @@ def _soft_adjacencies(
 
 def _noncredible_adjacencies(regions: list[Region]) -> set[tuple[int, int]]:
     """Return adjacent region pairs with shape evidence against their seam."""
-    noncredible: set[tuple[int, int]] = set()
-    for left in range(len(regions)):
-        for right in range(left + 1, len(regions)):
-            if seam_is_noncredible(regions[left].mask, regions[right].mask):
-                noncredible.add((left, right))
-    return noncredible
+    if len(regions) < 2:
+        return set()
+    return {
+        (left, right)
+        for left, right in _adjacent_region_pairs(_region_owner(regions))
+        if seam_is_noncredible(regions[left].mask, regions[right].mask)
+    }
 
 
 def material_groups(
