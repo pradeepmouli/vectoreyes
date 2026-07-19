@@ -421,13 +421,14 @@ def _drawing_trace_options(
     *,
     max_colors: int | Literal["auto"],
     fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"],
+    trace_level: Literal["pixel", "subpixel"] | None = None,
 ) -> TraceDrawingOptions:
     return TraceDrawingOptions(
         refine="auto",
         max_colors=max_colors,
         min_region_size=options.min_region_size,
         min_region_fraction=options.min_region_fraction,
-        trace_level="subpixel" if options.aa_contours else "pixel",
+        trace_level=trace_level or ("subpixel" if options.aa_contours else "pixel"),
         simplify_tolerance=options.epsilon,
         curve_tolerance=options.max_error,
         fit_strategy=fit_strategy,
@@ -456,9 +457,15 @@ def _trace_drawing_auto_with_cache(
     cache_dir: Path,
     max_colors: int | Literal["auto"],
     fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"],
+    trace_level: Literal["pixel", "subpixel"] | None = None,
     debug_dir: Path | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    trace_options = _drawing_trace_options(options, max_colors=max_colors, fit_strategy=fit_strategy)
+    trace_options = _drawing_trace_options(
+        options,
+        max_colors=max_colors,
+        fit_strategy=fit_strategy,
+        trace_level=trace_level,
+    )
     cache_path = _drawing_trace_cache_path(cache_dir, entry, source, trace_options)
     if cache_path.exists():
         cached = pickle.loads(cache_path.read_bytes())
@@ -586,7 +593,9 @@ def _write_trace_auto_debug_report(
     cards = "\n".join(
         (
             f'''<article><h2>{html.escape(label)}</h2>
-<object data="{html.escape(filename)}" type="image/svg+xml"></object></article>'''
+<a class="artifact" href="{html.escape(filename)}" title="Open {html.escape(filename)}">
+<object data="{html.escape(filename)}" type="image/svg+xml"></object></a>
+<p><a href="{html.escape(filename)}">{html.escape(filename)}</a></p></article>'''
             if kind == "svg" else
             f'''<article><h2>{html.escape(label)}</h2>
 <img src="{html.escape(filename)}" alt="{html.escape(label)}"></article>'''
@@ -600,7 +609,7 @@ def _write_trace_auto_debug_report(
     )
     (debug_dir / "index.html").write_text(f'''<!doctype html>
 <meta charset="utf-8"><title>VectorMark trace-auto debug</title>
-<style>body{{font:14px/1.45 system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}object,img{{display:block;width:100%;aspect-ratio:1;background:#fff;border:0}}details{{margin-top:12px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
+<style>body{{font:14px/1.45 system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}.artifact{{display:block}}object,img{{display:block;width:100%;aspect-ratio:1;background:#fff;border:0}}.artifact object{{pointer-events:none}}details{{margin-top:12px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
 <h1>VectorMark trace-auto debug</h1><p><a href="{html.escape(report_name)}">trace report and effective options</a></p><main>{cards}</main>{details}''')
 
 
@@ -927,6 +936,7 @@ def generate_corpus_html(
     workflow: str = "oneshot",
     trace_max_colors: int | Literal["auto"] = 16,
     trace_fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"] = "quadratic",
+    trace_level: Literal["pixel", "subpixel"] | None = None,
     debug_reports: bool = False,
 ) -> Path:
     output = Path(output)
@@ -975,6 +985,7 @@ def generate_corpus_html(
                 cache_dir=trace_cache_dir,
                 max_colors=trace_max_colors,
                 fit_strategy=trace_fit_strategy,
+                trace_level=trace_level,
                 debug_dir=debug_dir / f"{_entry_id(entry)}-passes" if debug_reports else None,
             )
         elif options.optimizer:
@@ -1171,6 +1182,12 @@ def main() -> None:
         help="Trace-auto path fitting strategy. Defaults to quadratic.",
     )
     parser.add_argument(
+        "--trace-level",
+        choices=("pixel", "subpixel"),
+        default=None,
+        help="Trace-auto boundary level. Defaults to each entry's legacy aa_contours setting.",
+    )
+    parser.add_argument(
         "--debug-reports",
         action="store_true",
         help="Write linked per-image trace-auto pass reports under output/debug without retracing.",
@@ -1209,6 +1226,7 @@ def main() -> None:
         workflow=args.workflow.replace("-", "_"),
         trace_max_colors=trace_max_colors,
         trace_fit_strategy=args.trace_fit_strategy,
+        trace_level=args.trace_level,
         debug_reports=args.debug_reports,
     )
     print(index)

@@ -241,14 +241,14 @@ def _stage_parameters(
 def _write_pass_index(output: Path, snapshots, trace, *, min_region_fraction: float) -> None:
     cards = "\n".join(
         f'''<article><h2>{html.escape(label)}</h2>
-<object data="{html.escape(filename)}" type="image/svg+xml"></object>
+<a class="artifact" href="{html.escape(filename)}" title="Open {html.escape(filename)}"><object data="{html.escape(filename)}" type="image/svg+xml"></object></a>
 <details><summary>parameters and report</summary><pre>{html.escape(json.dumps({"parameters": _stage_parameters(name, trace, min_region_fraction=min_region_fraction), "report": _report_with_path_diagnostics(svg, report)}, indent=2, sort_keys=True))}</pre></details>
 <p><a href="{html.escape(filename)}">{html.escape(filename)}</a></p></article>'''
         for name, label, filename, svg, report in snapshots
     )
     output.write_text(f'''<!doctype html>
 <title>VectorMark MCP optimizer pass review</title>
-<style>body{{font-family:system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}object{{width:100%;aspect-ratio:1;background:#fff}}summary{{cursor:pointer;font-size:13px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
+<style>body{{font-family:system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}.artifact{{display:block}}object{{width:100%;aspect-ratio:1;background:#fff;pointer-events:none}}summary{{cursor:pointer;font-size:13px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
 <h1>VectorMark MCP optimizer pass review</h1><main>{cards}</main>''')
 
 
