@@ -197,31 +197,65 @@ objects; the complete plan is atomically committed as one child drawing version.
 No operation mutates the base version or creates a separately persisted partial
 version.
 
-### Scene operations
+### Drawing actions
 
-- `merge`: create a semantic target from regions, retain their combined
-  source-region ancestry, and serialize their `SkPath` boolean union as one
+Every top-level action is applied in the context of one `Drawing`; there is no
+separate drawing-scope versus region-tree-scope action hierarchy. Its
+parameters determine scope:
+
+```text
+target / targets omitted  → applicable drawing roots
+target: "r1"              → r1 and its descendants
+targets: ["r1", "r2"]     → explicit region or relationship set
+```
+
+The canonical typed action vocabulary is:
+
+```text
+detect_primitives(target?)
+detect_symmetry(target?)
+detect_clones(target?)
+merge(id, regions[])
+split(target, divider)
+set_geometry(target, assignment)
+set_fill(target, fill)
+set_clone(source, target, transforms[])
+set_symmetry(target, axis)
+align(target, reference, axes)
+stitch(targets?, epsilon?, max_error?)
+set_z_order(targets[])
+```
+
+- `merge` creates a semantic target from regions, retains their combined
+  source-region ancestry, and serializes their `SkPath` boolean union as one
   outline. This removes shared interior edges before SVG emission so adjacent
-  same-fill regions cannot produce anti-aliased hairlines. Path-local `group`
-  remains separate.
-- `split`: invoke the existing compound-region splitter for the selected target.
-  Its returned branch children are addressed in the next plan using the existing
-  hyphenated convention (`r1-1`, `r1-2`).
-- `detect_primitives`, `detect_symmetry`, and `detect_clones`: run the named
-  existing automatic inference pass globally when `target` is omitted, or only
-  for an explicitly supplied target. A targeted symmetry operation also permits
-  a mirror-pair match involving that target. Clone detection includes
-  translation, rotation, and reflected affine clones; accepted clones emit SVG
-  `<use>` rather than a baked duplicate path.
-- `set_symmetry`: apply an agent-supplied mirror relationship between `source`
-  and `target` using an axis `{theta, cx, cy}` rather than infer one.
-- `clone`: apply an agent-supplied source/target/transform relationship.
-- `set_geometry`: assign a target to `circle`, `ellipse`, `rect`,
-  `rounded_rect`, `polygon`, `trapezoid`, `rounded_trapezoid`, `cap`, or `path`.
-- `set_fill`: assign `flat`, `linear_gradient`, `radial_gradient`, or `raster`.
-- `set_z_order`: establish final paint order for all emitted targets.
-- `simplify`: reduce path complexity globally or for an optional `target`.
-- `stitch`: reconcile shared boundaries globally or for an optional `target`.
+  same-fill regions cannot produce anti-aliased hairlines. It invalidates the
+  merged target's fill, which is subsequently re-evaluated by the fill pass.
+- `split` divides a target using either an infinite line from two points or a
+  supplied divider path. It creates addressable child regions for the next
+  versioned plan and invalidates their fills.
+- `set_geometry` accepts either a primitive assignment (`circle`, `ellipse`,
+  `rect`, `rounded_rect`, or `polygon`) or a path assignment containing the
+  nested path actions below. The engine resolves that intent to concrete typed
+  geometry; agents do not author final SVG coordinates.
+- `set_clone` establishes a source/target relationship and applies one or more
+  transforms. The target becomes `CloneGeometry`; its fill remains independent
+  of the source, so visually related clones may use different fills.
+- `set_symmetry` establishes self-symmetry for a target from an explicit axis.
+  The resulting geometry is a `PathGeometryWithSymmetry`. Before seam polish,
+  self-symmetry is materialized and unioned so the axis cannot emit a hairline.
+- `stitch` is region-only. It reconciles shared boundaries between neighboring
+  regions and may internally snap endpoints or adjust adjacent handles, but it
+  is not serialized as independent path commands.
+- `detect_*` is global when `target` is omitted and is restricted to a target
+  root/subtree otherwise. Clone detection includes translation, rotation, and
+  reflected affine clones; accepted clones can emit SVG `<use>`.
+- `set_z_order` establishes final paint order for all retained emitted targets.
+
+Every action returns a fresh drawing plus `affected_region_ids`,
+`created_region_ids`, `retired_region_ids`, and diagnostics. The store assigns
+the derived version ID around that result; actions never mutate their base
+drawing.
 
 `split` is structural and must be the final operation in a plan.
 `detect_symmetry` is structural only when it needs to split a freeform
@@ -242,22 +276,49 @@ including occlusion, compound splitting, symmetry, clones, simplification, and
 stitching. Interactive tracing remains raw; interactive plans opt into automatic
 behavior through the ordered `detect_*` scene operations.
 
-### MVP path operations
+### Path actions
 
-For `set_geometry` with `type: "path"`, the geometry owns an ordered `ops`
-array:
+For `set_geometry` with `type: "path"`, the assignment owns an ordered `ops`
+array. These are the only nested actions because they address version-scoped
+command IDs rather than drawing-region IDs:
 
-- `group`: trace-path commands -> named logical segment.
-- `fit`: logical segment -> `line`, `quadratic`, `cubic`, or `keep`.
-- `simplify` and `stitch`: geometry-local cleanup operations. `stitch` is the
-  public name for shared-boundary reconciliation; `smooth` is automatic
-  residual-gated tangent smoothing whenever a path is fitted.
-- `break`: request a G0 discontinuity after a named segment.
-- `close`: close the current subpath.
+```text
+fit(target | between, type | strategy)
+remove(target)
+match(target, reference, transform?)
+set_parallel(target, reference, distance?)
+match_length(target, reference)
+align(target, reference, axes)
+snap(target, reference)
+break(target)
+reverse(target)
+mirror(target, reference, axis)
+simplify()
+normalize_corners()
+```
+
+- `fit.type` selects the single-command fitter: `line`, `quadratic`, `cubic`,
+  or `keep`. A cubic may inflect when that is the appropriate fit.
+- `fit.strategy` selects recursive fitting across multiple commands:
+  `quadratic`, `cubic`, `progressive`, or `progressive_allow_lines`.
+- A `target` refits that retained command. `between: [left, right]` refits the
+  commands strictly between ordered boundary commands: it begins at the end of
+  `left` and ends at the start of `right`. `type` may be used with either form
+  for one replacement curve; `strategy` applies to a multi-command span.
+- `remove` removes a command and joins its neighbours. The resulting join is
+  eligible for later path fitting and region-level `stitch`.
+- `set_parallel` preserves the target's existing length unless `distance` is
+  supplied; without a distance it fits parallel geometry within the retained
+  region evidence.
+- `simplify` and `normalize_corners` are path-only. Corner normalization may
+  operate only on existing pre-fit corner provenance; it cannot invent a new
+  corner from a post-fit tangent.
 
 Adjacent fitted path segments are tangent-continuous by default; only `break`
-requests a sharp join. A `fit` operation creates final SVG commands; agents do
-not author final path coordinates.
+requests a sharp join. Paths are closed by the `PathGeometry` invariant, so
+there is no `close` operation. Arbitrary coordinate-authored insertion is not a
+public operation: `fit` over a retained span is the coordinate-free mechanism
+for replacing or creating commands.
 
 ## Execution model
 
