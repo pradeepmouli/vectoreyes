@@ -1,34 +1,27 @@
-"""Typed parsing and semantic validation for drawing refinement plans."""
+"""Version-aware semantic validation for canonical drawing plans.
+
+Static shape validation lives in :mod:`vectormark.drawing_actions` and is the
+same Pydantic contract exposed by FastMCP. This module validates only facts
+that require the retained drawing version: region existence and evolution,
+path-command ownership and order, and terminal-operation ordering.
+"""
 
 from __future__ import annotations
 
-import base64
-import binascii
-import math
-import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
-from types import MappingProxyType
-from typing import Literal
 
-from .drawing_trace import TraceCommand, TraceResult, svg_path_commands
-from .optimizer.vector_region import VectorRegion
+from pydantic import ValidationError
 
-
-_VERSION = "vectormark.plan.v1"
-_PLAN_KEYS = frozenset({"version", "drawing_id", "base_version", "label", "defaults", "ops"})
-_TOLERANCE_KEYS = frozenset({"epsilon", "max_error"})
-_HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
-_BASE_VERSION = re.compile(r"^v\d+(?:\.\d+)*$")
-_GEOMETRY_TYPES = frozenset(
-    {"circle", "ellipse", "rect", "rounded_rect", "polygon", "trapezoid", "rounded_trapezoid", "cap", "path"}
+from .drawing import Drawing, DrawingRegion
+from .drawing_actions import DrawingPlan
+from .path_geometry import (
+    CloneGeometry,
+    MoveCommand,
+    PathCommand,
+    PathGeometry,
+    PathGeometryWithCutouts,
+    PathGeometryWithSymmetry,
 )
-_FILL_TYPES = frozenset({"flat", "linear_gradient", "radial_gradient", "raster"})
-_FIT_TYPES = frozenset({"line", "quadratic", "cubic", "keep"})
-_FIT_STRATEGIES = frozenset({"quadratic", "cubic", "progressive", "progressive_allow_lines"})
-_DETECT_OPS = frozenset({"detect_primitives", "detect_symmetry", "detect_clones"})
-_POLISH_OPS = frozenset({"simplify", "stitch", "normalize_corners"})
-_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
 class PlanValidationError(ValueError):
@@ -40,421 +33,239 @@ class PlanValidationError(ValueError):
         super().__init__(f"{pointer}: {message}")
 
 
-@dataclass(frozen=True)
-class DrawingPlan:
-    version: Literal["vectormark.plan.v1"]
-    drawing_id: str
-    base_version: str
-    label: str | None
-    defaults: Mapping[str, float]
-    ops: tuple[object, ...]
+_SCHEMA_VARIANT_TOKENS = frozenset({
+    "align", "break", "detect_clones", "detect_primitives", "detect_symmetry",
+    "fit", "flat", "linear_gradient", "match", "match_length", "merge",
+    "mirror", "normalize_corners", "path", "radial_gradient", "raster",
+    "remove", "reverse", "set_clone", "set_fill", "set_geometry",
+    "set_parallel", "set_symmetry", "set_z_order", "simplify", "snap",
+    "split", "stitch", "line", "circle", "ellipse", "rect", "rounded_rect",
+    "polygon",
+})
 
 
 def parse_plan(payload: Mapping[str, object]) -> DrawingPlan:
-    """Parse a JSON-ready plan and detach it from the caller's mutable payload."""
-    if not isinstance(payload, Mapping):
-        raise PlanValidationError("", "plan must be an object")
-    for key in payload:
-        if key not in _PLAN_KEYS:
-            raise PlanValidationError(f"/{_escape(key)}", "unknown plan field")
-
-    version = _required_str(payload, "version", "")
-    if version != _VERSION:
-        raise PlanValidationError("/version", f"expected {_VERSION!r}")
-    drawing_id = _required_str(payload, "drawing_id", "")
-    if not drawing_id:
-        raise PlanValidationError("/drawing_id", "must not be empty")
-    base_version = _required_str(payload, "base_version", "")
-    if not _BASE_VERSION.fullmatch(base_version):
-        raise PlanValidationError("/base_version", "must be a version such as 'v0' or 'v0.1'")
-    label = payload.get("label")
-    if type(label) not in (str, type(None)):
-        raise PlanValidationError("/label", "must be a string or null")
-    if isinstance(label, str) and len(label) > 200:
-        raise PlanValidationError("/label", "must be at most 200 characters")
-    defaults_value = _mapping(payload.get("defaults", {}), "/defaults")
-    _reject_unknown_keys(defaults_value, set(_TOLERANCE_KEYS), "/defaults")
-    defaults = _tolerances(defaults_value, "/defaults")
-    ops = payload.get("ops")
-    if not isinstance(ops, list):
-        raise PlanValidationError("/ops", "must be an array")
-    frozen_ops = tuple(_freeze(op) for op in ops)
-    for index, op in enumerate(frozen_ops):
-        if not isinstance(op, Mapping):
-            raise PlanValidationError(f"/ops/{index}", "must be an object")
-    return DrawingPlan(_VERSION, drawing_id, base_version, label, MappingProxyType(defaults), frozen_ops)
+    """Parse the one canonical static plan contract."""
+    try:
+        return DrawingPlan.model_validate(payload)
+    except ValidationError as error:
+        issue = error.errors(include_url=False)[0]
+        location = tuple(
+            token for token in issue["loc"]
+            if not (isinstance(token, str) and token in _SCHEMA_VARIANT_TOKENS)
+        )
+        pointer = "".join(f"/{_escape(token)}" for token in location)
+        raise PlanValidationError(pointer, str(issue["msg"])) from None
 
 
-def validate_plan(plan: DrawingPlan, trace: TraceResult, regions: Sequence[VectorRegion]) -> None:
-    """Validate plan references and semantics against one trace and region roots."""
-    source_regions = _region_target_source_regions(regions)
-    target_ids = tuple(source_regions)
-    commands = _target_commands(regions)
-    known_targets = set(target_ids)
-    used_target_ids = set(target_ids)
+def validate_plan(plan: DrawingPlan, drawing: Drawing) -> None:
+    """Validate one canonical plan against one retained drawing snapshot."""
+    if plan.drawing_id != drawing.drawing_id:
+        raise PlanValidationError("/drawing_id", "does not identify the retained drawing")
+    source_regions = _region_target_source_regions(drawing)
+    commands = _target_commands(drawing)
+    known_targets = set(source_regions)
+    used_target_ids = set(known_targets)
     z_order_seen = False
-    z_order: tuple[Mapping[object, object], str] | None = None
     symmetry_targets: set[str] = set()
     symmetry_block = False
 
-    for index, raw_op in enumerate(plan.ops):
+    for index, action in enumerate(plan.ops):
         pointer = f"/ops/{index}"
-        op = _mapping(raw_op, pointer)
-        name = _required_str(op, "op", pointer)
+        op = action.model_dump(exclude_none=True)
+        name = action.op
         if symmetry_block and name != "detect_symmetry":
-            raise PlanValidationError(pointer, "detect_symmetry must be the final operation or part of a terminal targeted-symmetry block")
+            raise PlanValidationError(
+                pointer,
+                "detect_symmetry must be the final operation or part of a terminal targeted-symmetry block",
+            )
+
         if name == "merge":
-            _reject_unknown_keys(op, {"op", "id", "regions"}, pointer)
-            group_id = _required_str(op, "id", pointer)
+            group_id = str(op["id"])
             if group_id in used_target_ids:
                 raise PlanValidationError(f"{pointer}/id", "duplicate operation id")
-            requested_regions = _strings(op.get("regions"), f"{pointer}/regions", nonempty=True)
-            regions = _expand_merge_regions(requested_regions, known_targets, f"{pointer}/regions")
-            group_sources = frozenset().union(*(source_regions[region_id] for region_id in regions))
-            known_targets.difference_update(regions)
+            selected = _expand_merge_regions(tuple(op["regions"]), known_targets, f"{pointer}/regions")
+            group_sources = frozenset().union(*(source_regions[region_id] for region_id in selected))
+            known_targets.difference_update(selected)
             known_targets.add(group_id)
-            for region_id in regions:
+            for region_id in selected:
                 del source_regions[region_id]
             source_regions[group_id] = group_sources
             used_target_ids.add(group_id)
-        elif name == "split":
-            _reject_unknown_keys(op, {"op", "target", "divider"}, pointer)
-            _validate_target(op, pointer, known_targets)
-            _validate_split_divider(op.get("divider"), f"{pointer}/divider")
+            continue
+
+        if name == "split":
+            _known_target(str(op["target"]), known_targets, f"{pointer}/target")
             if index != len(plan.ops) - 1:
                 raise PlanValidationError(pointer, "split must be the final operation; refine child regions in a new version")
-        elif name in _DETECT_OPS:
-            _validate_detect_op(op, pointer, known_targets)
-            if name == "detect_symmetry":
-                target = op.get("target")
-                if target is None:
-                    if index != len(plan.ops) - 1:
-                        raise PlanValidationError(pointer, "global detect_symmetry must be the final operation; refine derived child regions in a new version")
-                    if symmetry_block:
-                        raise PlanValidationError(pointer, "global detect_symmetry cannot follow targeted symmetry operations")
-                else:
-                    assert type(target) is str
-                    if target in symmetry_targets:
-                        raise PlanValidationError(f"{pointer}/target", "target already has a symmetry operation in this plan")
-                    symmetry_targets.add(target)
-                    symmetry_block = True
-        elif name in _POLISH_OPS:
-            _validate_polish_op(op, pointer, known_targets)
-        elif name == "set_symmetry":
-            _validate_set_symmetry_op(op, pointer, known_targets)
-        elif name == "clone":
-            _validate_clone_op(op, pointer, known_targets)
-        elif name == "align":
-            _validate_align_op(op, pointer, known_targets)
-        elif name == "set_geometry":
-            _validate_geometry_op(op, pointer, known_targets, commands)
-        elif name == "set_fill":
-            _validate_fill_op(op, pointer, known_targets)
-        elif name == "set_z_order":
+            continue
+
+        if name in {"detect_primitives", "detect_clones"}:
+            if "target" in op:
+                _known_target(str(op["target"]), known_targets, f"{pointer}/target")
+            continue
+
+        if name == "detect_symmetry":
+            target = op.get("target")
+            if target is None:
+                if index != len(plan.ops) - 1:
+                    raise PlanValidationError(pointer, "global detect_symmetry must be the final operation")
+                if symmetry_block:
+                    raise PlanValidationError(pointer, "global detect_symmetry cannot follow targeted symmetry operations")
+            else:
+                target_id = str(target)
+                _known_target(target_id, known_targets, f"{pointer}/target")
+                if target_id in symmetry_targets:
+                    raise PlanValidationError(f"{pointer}/target", "target already has a symmetry operation in this plan")
+                symmetry_targets.add(target_id)
+                symmetry_block = True
+            continue
+
+        if name == "stitch":
+            for target_index, target_id in enumerate(op.get("targets", ())):
+                _known_target(str(target_id), known_targets, f"{pointer}/targets/{target_index}")
+            continue
+
+        if name == "set_geometry":
+            target_id = str(op["target"])
+            _known_target(target_id, known_targets, f"{pointer}/target")
+            assignment = op["assignment"]
+            if assignment["type"] == "path":
+                _validate_path_ops(assignment["ops"], f"{pointer}/assignment/ops", commands, target_id)
+            continue
+
+        if name == "set_fill":
+            _known_target(str(op["target"]), known_targets, f"{pointer}/target")
+            continue
+
+        if name == "set_clone":
+            source, target = str(op["source"]), str(op["target"])
+            _known_target(source, known_targets, f"{pointer}/source")
+            _known_target(target, known_targets, f"{pointer}/target")
+            continue
+
+        if name == "set_symmetry":
+            _known_target(str(op["target"]), known_targets, f"{pointer}/target")
+            continue
+
+        if name == "align":
+            _known_target(str(op["target"]), known_targets, f"{pointer}/target")
+            _known_target(str(op["reference"]), known_targets, f"{pointer}/reference")
+            continue
+
+        if name == "set_z_order":
             if z_order_seen:
                 raise PlanValidationError(pointer, "only one set_z_order operation is allowed")
             if index != len(plan.ops) - 1:
                 raise PlanValidationError(pointer, "set_z_order must be the final operation")
             z_order_seen = True
-            z_order = (op, pointer)
-        else:
-            raise PlanValidationError(f"{pointer}/op", "unsupported operation")
+            targets = tuple(str(target) for target in op["targets"])
+            for target_index, target_id in enumerate(targets):
+                _known_target(target_id, known_targets, f"{pointer}/targets/{target_index}")
+            if set(targets) != known_targets:
+                raise PlanValidationError(f"{pointer}/targets", "must list every target exactly once")
+            continue
 
-    if z_order is not None:
-        _validate_z_order(*z_order, known_targets)
-
-
-def _validate_geometry_op(
-    op: Mapping[object, object],
-    pointer: str,
-    targets: set[str],
-    commands: Mapping[str, tuple[str, int, int, TraceCommand]],
-) -> None:
-    _reject_unknown_keys(op, {"op", "target", "geometry"} | _TOLERANCE_KEYS, pointer)
-    _tolerances(op, pointer)
-    target = _validate_target(op, pointer, targets)
-    geometry = _mapping(op.get("geometry"), f"{pointer}/geometry")
-    geometry_type = _required_str(geometry, "type", f"{pointer}/geometry")
-    if geometry_type not in _GEOMETRY_TYPES:
-        raise PlanValidationError(f"{pointer}/geometry/type", "unsupported geometry type")
-    if geometry_type != "path":
-        _reject_unknown_keys(geometry, {"type"}, f"{pointer}/geometry")
-        return
-    _reject_unknown_keys(geometry, {"type", "ops"}, f"{pointer}/geometry")
-    path_ops = geometry.get("ops")
-    if not isinstance(path_ops, Sequence) or isinstance(path_ops, (str, bytes)):
-        raise PlanValidationError(f"{pointer}/geometry/ops", "must be an array")
-    if not path_ops:
-        raise PlanValidationError(f"{pointer}/geometry/ops", "must not be empty")
-    _validate_path_ops(
-        path_ops,
-        f"{pointer}/geometry/ops",
-        commands,
-        target,
-    )
-
-
-def _validate_detect_op(op: Mapping[object, object], pointer: str, targets: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "target"} | _TOLERANCE_KEYS, pointer)
-    _tolerances(op, pointer)
-    if "target" in op:
-        _validate_target(op, pointer, targets)
-
-
-def _validate_polish_op(op: Mapping[object, object], pointer: str, targets: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "target"} | _TOLERANCE_KEYS, pointer)
-    _tolerances(op, pointer)
-    if "target" in op:
-        _validate_target(op, pointer, targets)
-
-
-def _validate_set_symmetry_op(op: Mapping[object, object], pointer: str, targets: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "source", "target", "axis"}, pointer)
-    source = _required_str(op, "source", pointer)
-    target = _required_str(op, "target", pointer)
-    if source not in targets:
-        raise PlanValidationError(f"{pointer}/source", "unknown target")
-    if target not in targets:
-        raise PlanValidationError(f"{pointer}/target", "unknown target")
-    if source == target:
-        raise PlanValidationError(f"{pointer}/target", "must differ from source")
-    _validate_axis(op.get("axis"), f"{pointer}/axis")
-
-
-def _validate_clone_op(op: Mapping[object, object], pointer: str, targets: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "source", "target", "transform"}, pointer)
-    source = _required_str(op, "source", pointer)
-    target = _required_str(op, "target", pointer)
-    if source not in targets:
-        raise PlanValidationError(f"{pointer}/source", "unknown target")
-    if target not in targets:
-        raise PlanValidationError(f"{pointer}/target", "unknown target")
-    if source == target:
-        raise PlanValidationError(f"{pointer}/target", "must differ from source")
-    _validate_transform(op.get("transform"), f"{pointer}/transform")
-
-
-def _validate_transform(transform: object, pointer: str) -> None:
-    if not isinstance(transform, Sequence) or isinstance(transform, (str, bytes)) or len(transform) != 6:
-        raise PlanValidationError(pointer, "must be a six-number affine matrix")
-    for index, value in enumerate(transform):
-        if not _finite_number(value):
-            raise PlanValidationError(f"{pointer}/{index}", "must be a finite number")
-
-
-def _validate_align_op(op: Mapping[object, object], pointer: str, targets: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "target", "reference", "axes"}, pointer)
-    target = _required_str(op, "target", pointer)
-    reference = _required_str(op, "reference", pointer)
-    if target not in targets:
-        raise PlanValidationError(f"{pointer}/target", "unknown target")
-    if reference not in targets:
-        raise PlanValidationError(f"{pointer}/reference", "unknown target")
-    if target == reference:
-        raise PlanValidationError(f"{pointer}/reference", "must differ from target")
-    _validate_axes(op.get("axes"), f"{pointer}/axes")
-
-
-def _validate_axes(value: object, pointer: str) -> tuple[str, ...]:
-    axes = _strings(value, pointer, nonempty=True)
-    if len(set(axes)) != len(axes):
-        raise PlanValidationError(f"{pointer}/{_first_repeat(axes)}", "axis is repeated")
-    for index, axis in enumerate(axes):
-        if axis not in {"x", "y"}:
-            raise PlanValidationError(f"{pointer}/{index}", "must be 'x' or 'y'")
-    return axes
-
-
-def _validate_axis(value: object, pointer: str) -> None:
-    axis = _mapping(value, pointer)
-    _reject_unknown_keys(axis, {"theta", "cx", "cy"}, pointer)
-    for key in ("theta", "cx", "cy"):
-        if not _finite_number(axis.get(key)):
-            raise PlanValidationError(f"{pointer}/{key}", "must be a finite number")
+        raise AssertionError(f"unhandled canonical drawing action: {name}")
 
 
 def _validate_path_ops(
-    path_ops: Sequence[object],
+    path_ops: Sequence[Mapping[str, object]],
     pointer: str,
-    commands: Mapping[str, tuple[str, int, int, TraceCommand]],
+    commands: Mapping[str, tuple[str, int, int, PathCommand]],
     target_id: str,
 ) -> None:
-    fitted: set[str] = set()
     segment_ids = {
-        command_id
-        for command_id, record in commands.items()
-        if record[0] == target_id and record[3].command not in {"M", "Z"}
+        command_id for command_id, record in commands.items()
+        if record[0] == target_id and not isinstance(record[3], MoveCommand)
     }
     all_segment_ids = {
-        command_id
-        for command_id, record in commands.items()
-        if record[3].command not in {"M", "Z"}
+        command_id for command_id, record in commands.items()
+        if not isinstance(record[3], MoveCommand)
     }
-    broken: set[str] = set()
+    fitted: set[str] = set()
     removed: set[str] = set()
-    for index, raw_op in enumerate(path_ops):
+    broken: set[str] = set()
+
+    for index, op in enumerate(path_ops):
         op_pointer = f"{pointer}/{index}"
-        op = _mapping(raw_op, op_pointer)
-        name = _required_str(op, "op", op_pointer)
+        name = str(op["op"])
         if name == "fit":
-            _reject_unknown_keys(op, {"op", "target", "between", "type", "strategy"}, op_pointer)
             target = op.get("target")
             between = op.get("between")
-            if (target is None) == (between is None):
-                raise PlanValidationError(op_pointer, "fit requires exactly one of target or between")
-            fit_type = op.get("type")
-            fit_strategy = op.get("strategy")
-            if (fit_type is None) == (fit_strategy is None):
-                raise PlanValidationError(op_pointer, "fit requires exactly one of type or strategy")
             if target is not None:
-                if type(target) is not str or target not in segment_ids:
-                    raise PlanValidationError(f"{op_pointer}/target", "unknown retained command")
-                fitted_targets = (target,)
+                target_id_value = str(target)
+                _known_command(target_id_value, segment_ids, f"{op_pointer}/target")
+                fitted_targets = (target_id_value,)
             else:
-                boundaries = _strings(between, f"{op_pointer}/between", nonempty=True)
-                if len(boundaries) != 2:
-                    raise PlanValidationError(f"{op_pointer}/between", "must contain exactly [left, right]")
-                left, right = boundaries
+                assert isinstance(between, Sequence) and len(between) == 2
+                left, right = str(between[0]), str(between[1])
                 if left not in commands or right not in commands:
                     raise PlanValidationError(f"{op_pointer}/between", "unknown retained boundary command")
-                left_target, left_subpath, left_index, _ = commands[left]
-                right_target, right_subpath, right_index, right_command = commands[right]
-                if left_target != target_id or right_target != target_id:
+                left_owner, left_subpath, left_index, _ = commands[left]
+                right_owner, right_subpath, right_index, right_command = commands[right]
+                if left_owner != target_id or right_owner != target_id:
                     raise PlanValidationError(f"{op_pointer}/between", "boundary commands must belong to the geometry target")
                 if left_subpath != right_subpath or left_index >= right_index:
                     raise PlanValidationError(f"{op_pointer}/between", "boundaries must be ordered commands in one subpath")
-                if right_command.command == "M":
+                if isinstance(right_command, MoveCommand):
                     raise PlanValidationError(f"{op_pointer}/between", "right boundary cannot be a move command")
                 fitted_targets = tuple(
                     command_id
                     for command_id, (owner, subpath, command_index, command) in commands.items()
-                    if owner == target_id and subpath == left_subpath and left_index < command_index < right_index and command.command not in {"M", "Z"}
+                    if owner == target_id
+                    and subpath == left_subpath
+                    and left_index < command_index < right_index
+                    and not isinstance(command, MoveCommand)
                 )
                 if not fitted_targets:
                     raise PlanValidationError(f"{op_pointer}/between", "boundaries must enclose at least one retained command")
-            if any(command_id in fitted for command_id in fitted_targets):
+            if any(command_id in fitted or command_id in removed for command_id in fitted_targets):
                 field = "target" if target is not None else "between"
-                raise PlanValidationError(f"{op_pointer}/{field}", "command is already fitted")
-            if fit_type is not None:
-                if type(fit_type) is not str or fit_type not in _FIT_TYPES:
-                    raise PlanValidationError(f"{op_pointer}/type", "unsupported fit type")
-                if between is not None and fit_type == "keep":
-                    raise PlanValidationError(f"{op_pointer}/type", "keep is only valid for a single target command")
-            elif type(fit_strategy) is not str or fit_strategy not in _FIT_STRATEGIES:
-                raise PlanValidationError(f"{op_pointer}/strategy", "unsupported fit strategy")
+                raise PlanValidationError(f"{op_pointer}/{field}", "command is already refitted or removed")
             fitted.update(fitted_targets)
-        elif name == "remove":
-            _reject_unknown_keys(op, {"op", "target"}, op_pointer)
-            target = _required_str(op, "target", op_pointer)
-            if target not in segment_ids:
-                raise PlanValidationError(f"{op_pointer}/target", "unknown retained command")
+            continue
+
+        if name == "remove":
+            target = str(op["target"])
+            _known_command(target, segment_ids, f"{op_pointer}/target")
             if target in removed or target in fitted:
                 raise PlanValidationError(f"{op_pointer}/target", "command is already refitted or removed")
             removed.add(target)
-        elif name in {"match", "set_parallel", "match_length", "align", "snap"}:
-            allowed = {"op", "target", "reference"}
-            if name == "align":
-                allowed.add("axes")
-            if name == "set_parallel":
-                allowed.add("distance")
-            if name == "match":
-                allowed.add("transform")
-            _reject_unknown_keys(op, allowed, op_pointer)
-            target = _required_str(op, "target", op_pointer)
-            reference = _required_str(op, "reference", op_pointer)
-            if target not in segment_ids:
-                raise PlanValidationError(f"{op_pointer}/target", "unknown retained command")
-            if reference not in all_segment_ids:
-                raise PlanValidationError(f"{op_pointer}/reference", "unknown retained command")
-            if name == "align":
-                _validate_axes(op.get("axes"), f"{op_pointer}/axes")
-            if name == "set_parallel" and "distance" in op and not _finite_number(op["distance"]):
-                raise PlanValidationError(f"{op_pointer}/distance", "must be a finite number")
-            if name == "match":
-                _validate_transform(op.get("transform"), f"{op_pointer}/transform")
-        elif name == "break":
-            _reject_unknown_keys(op, {"op", "target"}, op_pointer)
-            target = _required_str(op, "target", op_pointer)
-            if target not in fitted or target in broken:
-                raise PlanValidationError(f"{op_pointer}/target", "break requires an unbroken fitted command")
-            broken.add(target)
-        elif name == "close":
-            _reject_unknown_keys(op, {"op"}, op_pointer)
-        elif name in {"simplify", "stitch"}:
-            _reject_unknown_keys(op, {"op"}, op_pointer)
-            if not fitted:
-                raise PlanValidationError(op_pointer, f"{name} requires a preceding fit")
-        else:
-            raise PlanValidationError(f"{op_pointer}/op", "unsupported path operation")
+            continue
+
+        if name in {"match", "set_parallel", "match_length", "align", "snap", "mirror"}:
+            target, reference = str(op["target"]), str(op["reference"])
+            _known_command(target, segment_ids, f"{op_pointer}/target")
+            _known_command(reference, all_segment_ids, f"{op_pointer}/reference")
+            continue
+
+        if name in {"reverse", "break"}:
+            target = str(op["target"])
+            _known_command(target, segment_ids, f"{op_pointer}/target")
+            if name == "break":
+                if target not in fitted or target in broken:
+                    raise PlanValidationError(f"{op_pointer}/target", "break requires an unbroken fitted command")
+                broken.add(target)
+            continue
+
+        if name in {"simplify", "normalize_corners"}:
+            continue
+
+        raise AssertionError(f"unhandled canonical path action: {name}")
 
 
-def _validate_fill_op(op: Mapping[object, object], pointer: str, targets: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "target", "fill"}, pointer)
-    _validate_target(op, pointer, targets)
-    fill = _mapping(op.get("fill"), f"{pointer}/fill")
-    fill_type = _required_str(fill, "type", f"{pointer}/fill")
-    if fill_type not in _FILL_TYPES:
-        raise PlanValidationError(f"{pointer}/fill/type", "unsupported fill type")
-    if fill_type == "flat":
-        _reject_unknown_keys(fill, {"type", "color"}, f"{pointer}/fill")
-        _color(fill.get("color"), f"{pointer}/fill/color")
-        return
-    geometry_keys = {"x1", "y1", "x2", "y2"} if fill_type == "linear_gradient" else {"cx", "cy", "r"} if fill_type == "radial_gradient" else {"x", "y", "w", "h"}
-    allowed = {"type", "geometry"} | ({"stops"} if fill_type != "raster" else {"png_b64"})
-    _reject_unknown_keys(fill, allowed, f"{pointer}/fill")
-    geometry = _mapping(fill.get("geometry"), f"{pointer}/fill/geometry")
-    _reject_unknown_keys(geometry, geometry_keys, f"{pointer}/fill/geometry")
-    for key in geometry_keys:
-        value = geometry.get(key)
-        if not _finite_number(value):
-            raise PlanValidationError(f"{pointer}/fill/geometry/{key}", "must be a finite number")
-    if fill_type in {"radial_gradient", "raster"}:
-        positive_key = "r" if fill_type == "radial_gradient" else "w"
-        if float(geometry[positive_key]) <= 0:
-            raise PlanValidationError(f"{pointer}/fill/geometry/{positive_key}", "must be greater than zero")
-    if fill_type == "raster":
-        if float(geometry["h"]) <= 0:
-            raise PlanValidationError(f"{pointer}/fill/geometry/h", "must be greater than zero")
-        if type(fill.get("png_b64")) is not str or not fill["png_b64"]:
-            raise PlanValidationError(f"{pointer}/fill/png_b64", "must be a non-empty base64 string")
-        try:
-            png_data = base64.b64decode(fill["png_b64"], validate=True)
-        except (binascii.Error, ValueError):
-            raise PlanValidationError(f"{pointer}/fill/png_b64", "must be valid base64 PNG data") from None
-        if not png_data.startswith(_PNG_SIGNATURE):
-            raise PlanValidationError(f"{pointer}/fill/png_b64", "must contain PNG data")
-        return
-    stops = fill.get("stops")
-    if not isinstance(stops, Sequence) or isinstance(stops, (str, bytes)) or len(stops) < 2:
-        raise PlanValidationError(f"{pointer}/fill/stops", "must contain at least two stops")
-    for index, raw_stop in enumerate(stops):
-        stop_pointer = f"{pointer}/fill/stops/{index}"
-        stop = _mapping(raw_stop, stop_pointer)
-        _reject_unknown_keys(stop, {"offset", "color"}, stop_pointer)
-        offset = stop.get("offset")
-        if not _finite_number(offset) or not 0 <= float(offset) <= 1:
-            raise PlanValidationError(f"{stop_pointer}/offset", "must be a finite number between zero and one")
-        _color(stop.get("color"), f"{stop_pointer}/color")
+def _known_target(target_id: str, targets: set[str], pointer: str) -> None:
+    if target_id not in targets:
+        raise PlanValidationError(pointer, "unknown target")
 
 
-def _validate_z_order(op: Mapping[object, object], pointer: str, target_ids: set[str]) -> None:
-    _reject_unknown_keys(op, {"op", "targets"}, pointer)
-    targets = _strings(op.get("targets"), f"{pointer}/targets", nonempty=True)
-    seen: set[str] = set()
-    for index, target in enumerate(targets):
-        if target in seen:
-            raise PlanValidationError(f"{pointer}/targets/{index}", "target is repeated")
-        seen.add(target)
-        if target not in target_ids:
-            raise PlanValidationError(f"{pointer}/targets/{index}", "unknown target")
-    if set(targets) != target_ids:
-        raise PlanValidationError(f"{pointer}/targets", "must list every target exactly once")
+def _known_command(command_id: str, commands: set[str], pointer: str) -> None:
+    if command_id not in commands:
+        raise PlanValidationError(pointer, "unknown retained command")
 
 
-def _expand_merge_regions(
-    requested: Sequence[str], known_targets: set[str], pointer: str
-) -> tuple[str, ...]:
-    """Expand a semantic root reference into its currently retained leaf targets."""
+def _expand_merge_regions(requested: Sequence[str], known_targets: set[str], pointer: str) -> tuple[str, ...]:
     expanded: list[str] = []
     for index, region_id in enumerate(requested):
         members = (region_id,) if region_id in known_targets else tuple(
@@ -469,173 +280,52 @@ def _expand_merge_regions(
     return tuple(expanded)
 
 
-def _validate_split_divider(value: object, pointer: str) -> None:
-    divider = _mapping(value, pointer)
-    divider_type = _required_str(divider, "type", pointer)
-    if divider_type == "line":
-        _reject_unknown_keys(divider, {"type", "points"}, pointer)
-        points = divider.get("points")
-        if not isinstance(points, Sequence) or isinstance(points, (str, bytes)) or len(points) != 2:
-            raise PlanValidationError(f"{pointer}/points", "must contain exactly two points")
-        normalized: list[tuple[float, float]] = []
-        for index, point in enumerate(points):
-            if not isinstance(point, Sequence) or isinstance(point, (str, bytes)) or len(point) != 2:
-                raise PlanValidationError(f"{pointer}/points/{index}", "must be an [x, y] point")
-            if not all(_finite_number(coordinate) for coordinate in point):
-                raise PlanValidationError(f"{pointer}/points/{index}", "coordinates must be finite numbers")
-            normalized.append((float(point[0]), float(point[1])))
-        if normalized[0] == normalized[1]:
-            raise PlanValidationError(f"{pointer}/points", "must define two distinct points")
-        return
-    if divider_type == "path":
-        _reject_unknown_keys(divider, {"type", "d"}, pointer)
-        d = _required_str(divider, "d", pointer)
-        if not d.strip():
-            raise PlanValidationError(f"{pointer}/d", "must not be empty")
-        return
-    raise PlanValidationError(f"{pointer}/type", "must be 'line' or 'path'")
-
-
-def _region_target_source_regions(regions: Sequence[VectorRegion]) -> dict[str, frozenset[str]]:
-    if isinstance(regions, (str, bytes)):
-        raise PlanValidationError("/ops", "base drawing must expose vector regions")
+def _region_target_source_regions(drawing: Drawing) -> dict[str, frozenset[str]]:
     source_regions: dict[str, frozenset[str]] = {}
 
-    def visit(region: VectorRegion, root_id: str, legacy_id: str, sources: frozenset[str]) -> None:
+    def visit(region: DrawingRegion) -> None:
         if region.is_leaf:
-            target_id = _leaf_target_id(root_id, region, legacy_id)
-            if target_id in source_regions:
+            if region.id in source_regions:
                 raise PlanValidationError("/ops", "base drawing contains duplicate target ids")
-            source_regions[target_id] = sources
+            source_regions[region.id] = frozenset(region.source_region_ids or (region.id,))
             return
         for child in region.children:
-            visit(child, root_id, f"{legacy_id}-{child.id}", sources)
+            visit(child)
 
-    for region in regions:
-        if type(region.drawing_id) is not str:
-            raise PlanValidationError("/ops", "base drawing regions require stable drawing ids")
-        visit(region, region.drawing_id, region.drawing_id, frozenset(region.source_regions or (region.drawing_id,)))
+    for region in drawing.regions:
+        visit(region)
     return source_regions
 
 
-def _target_commands(regions: Sequence[VectorRegion]) -> dict[str, tuple[str, int, int, TraceCommand]]:
-    commands: dict[str, tuple[str, int, int, TraceCommand]] = {}
+def _target_commands(drawing: Drawing) -> dict[str, tuple[str, int, int, PathCommand]]:
+    commands: dict[str, tuple[str, int, int, PathCommand]] = {}
 
-    def visit(region: VectorRegion, root_id: str, legacy_id: str) -> None:
+    def index_path(region_id: str, path: PathGeometry, subpath: int) -> None:
+        for command_index, command in enumerate(path.path.commands):
+            if command.id in commands:
+                raise PlanValidationError("/ops", "retained drawing contains duplicate path command ids")
+            commands[command.id] = (region_id, subpath, command_index, command)
+
+    def visit(region: DrawingRegion) -> None:
         if region.is_leaf:
-            target_id = _leaf_target_id(root_id, region, legacy_id)
-            assert region.current is not None
-            if region.current.kind != "path":
+            geometry = region.geometry
+            if isinstance(geometry, PathGeometry):
+                index_path(region.id, geometry, 0)
+            elif isinstance(geometry, PathGeometryWithCutouts):
+                index_path(region.id, geometry.outer, 0)
+                for subpath, cutout in enumerate(geometry.cutouts, start=1):
+                    index_path(region.id, cutout, subpath)
+            elif isinstance(geometry, PathGeometryWithSymmetry):
+                index_path(region.id, geometry.half, 0)
+            elif isinstance(geometry, CloneGeometry):
                 return
-            subpath = -1
-            index = 0
-            for command in svg_path_commands(str(region.current.params["d"]), target_id):
-                if command.command == "M":
-                    subpath += 1
-                    index = 0
-                if command.id in commands:
-                    raise PlanValidationError("/ops", "retained drawing contains duplicate path command ids")
-                commands[command.id] = (target_id, subpath, index, command)
-                index += 1
             return
         for child in region.children:
-            visit(child, root_id, f"{legacy_id}-{child.id}")
+            visit(child)
 
-    for region in regions:
-        if type(region.drawing_id) is not str:
-            raise PlanValidationError("/ops", "base drawing regions require stable drawing ids")
-        visit(region, region.drawing_id, region.drawing_id)
+    for region in drawing.regions:
+        visit(region)
     return commands
-
-
-def _leaf_target_id(root_id: str, region: VectorRegion, legacy_id: str) -> str:
-    """Use a retained compact leaf handle; fall back for legacy in-memory trees."""
-    candidate = region.drawing_id
-    if isinstance(candidate, str) and (
-        candidate.startswith(f"{root_id}-")
-        or (candidate == root_id and legacy_id == root_id)
-    ):
-        return candidate
-    return legacy_id
-
-
-def _validate_target(op: Mapping[object, object], pointer: str, targets: set[str]) -> str:
-    target = _required_str(op, "target", pointer)
-    if target not in targets:
-        raise PlanValidationError(f"{pointer}/target", "unknown target")
-    return target
-
-
-def _required_str(mapping: Mapping[object, object], key: str, pointer: str) -> str:
-    value = mapping.get(key)
-    if type(value) is not str:
-        raise PlanValidationError(f"{pointer}/{key}" if pointer else f"/{key}", "must be a string")
-    return value
-
-
-def _mapping(value: object, pointer: str) -> Mapping[object, object]:
-    if not isinstance(value, Mapping):
-        raise PlanValidationError(pointer, "must be an object")
-    return value
-
-
-def _strings(value: object, pointer: str, *, nonempty: bool) -> tuple[str, ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
-        raise PlanValidationError(pointer, "must be an array")
-    if nonempty and not value:
-        raise PlanValidationError(pointer, "must not be empty")
-    result: list[str] = []
-    for index, item in enumerate(value):
-        if type(item) is not str:
-            raise PlanValidationError(f"{pointer}/{index}", "must be a string")
-        result.append(item)
-    return tuple(result)
-
-
-def _reject_unknown_keys(mapping: Mapping[object, object], allowed: set[str], pointer: str) -> None:
-    for key in mapping:
-        if type(key) is not str or key not in allowed:
-            raise PlanValidationError(f"{pointer}/{_escape(str(key))}", "unknown field")
-
-
-def _color(value: object, pointer: str) -> None:
-    if type(value) is not str or not _HEX_COLOR.fullmatch(value):
-        raise PlanValidationError(pointer, "must be a #RRGGBB color")
-
-
-def _finite_number(value: object) -> bool:
-    return type(value) in (int, float) and math.isfinite(float(value))
-
-
-def _tolerances(value: object, pointer: str) -> dict[str, float]:
-    """Validate optional fitting tolerances at plan or operation scope."""
-    tolerances = _mapping(value, pointer)
-    result: dict[str, float] = {}
-    for key in _TOLERANCE_KEYS:
-        if key not in tolerances:
-            continue
-        raw = tolerances[key]
-        if not _finite_number(raw) or float(raw) < 0:
-            raise PlanValidationError(f"{pointer}/{key}", "must be a finite number greater than or equal to zero")
-        result[key] = float(raw)
-    return result
-
-
-def _first_repeat(items: Sequence[str]) -> int:
-    seen: set[str] = set()
-    for index, item in enumerate(items):
-        if item in seen:
-            return index
-        seen.add(item)
-    raise AssertionError("expected a repeated item")
-
-
-def _freeze(value: object) -> object:
-    if isinstance(value, Mapping):
-        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return tuple(_freeze(item) for item in value)
-    return value
 
 
 def _escape(token: object) -> str:

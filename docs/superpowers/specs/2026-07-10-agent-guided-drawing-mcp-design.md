@@ -6,14 +6,14 @@
 ## Goal
 
 Replace the logo-specific MCP surface with one drawing-oriented entry point.
-`trace_drawing` either runs the existing one-shot automatic idealizer or creates
-an interactive trace that an agent refines through versioned plans.
+`trace_drawing` creates a retained trace that an agent can refine through
+versioned plans, with optional automatic refinement as its first child version.
 
 ```text
 trace_drawing(image, { refine: "auto", ... })
-  -> one-shot idealized SVG + preview + diagnostics
+  -> drawing_id + pre-optimizer v0 + automatic v1 + review artifacts
 
-trace_drawing(image, { refine: "interactive", ... })
+trace_drawing(image, { refine: "none", ... })
   -> drawing_id + version v0 + trace paths + labeled region map
 
 refine_drawing(plan)
@@ -22,13 +22,13 @@ refine_drawing(plan)
 
 ## Product boundary
 
-Only `trace_drawing(refine="interactive")` is stateful and MCP-server-local. It retains the
-immutable trace artifact plus the native `VectorRegion` roots for every retained
-version. A root carries its optimizer ID, current/original geometry, fill,
-z-order, raster evidence, stable `drawing_id`, and `source_regions` provenance.
+The drawing workflow is stateful and MCP-server-local. It retains an immutable
+`Drawing` snapshot for every version. A `DrawingRegion` carries canonical typed
+geometry, fill, z-order, stable region ID, and region-level source provenance.
+Raster masks, Skia footprints, and optimizer IDs are private engine evidence;
+they are not fields on the scene contract.
 `refine_drawing` accepts no image and reads the opaque `drawing_id` from the
-plan. Auto calls do not allocate a drawing ID, retain state, or participate in
-versioning.
+plan. Both trace modes allocate a drawing ID and participate in versioning.
 
 Each drawing belongs to the originating FastMCP `Context.session`. A drawing ID
 is cryptographically random, valid only within that session, and expires after
@@ -41,11 +41,11 @@ provide a portable trace import/export format.
 
 `refine` is required and has exactly two values:
 
-- `auto`: run the established automatic idealization pipeline once and return
-  SVG, preview, and diagnostics. It replaces `idealize_logo` and
-  `idealize_logo_data`.
-- `interactive`: create the retained trace artifact described below. It is the
-  only mode that returns `drawing_id` and may be followed by `refine_drawing`.
+- `auto`: retain pre-optimizer v0, run automatic optimization as immutable v1,
+  and return both outputs plus the review artifacts. Later plans may branch
+  from either version.
+- `none`: retain and return only pre-optimizer v0 so an agent can inspect and
+  refine the decomposition without automatic geometry decisions.
 
 The shared image-reference, preprocess contract, and six trace options remain
 unchanged. Automatic mode maps `max_colors`, `trace_level`,
@@ -55,9 +55,9 @@ not carry forward logo-only flattening or manual symmetry toggles.
 `render_idealized_logo` is renamed `render_drawing` and accepts either result
 shape.
 
-## Interactive trace contract
+## Retained trace contract
 
-Interactive `trace_drawing` uses the existing secure image resolver and preprocessor,
+`trace_drawing` uses the existing secure image resolver and preprocessor,
 then retains both deterministic raw paths and a compact agent-facing root
 forest. Raw paths are produced by palette segmentation, contour extraction, and
 path fitting; roots use the one-shot pipeline's size filtering and soft-surface
@@ -65,7 +65,7 @@ merge so an agent does not need to reason about every palette fragment. It does
 **not** run primitive recognition, symmetry detection, clone detection, or
 other optimizer passes.
 
-Before interactive `v0` is retained, its compact root forest is automatically
+Before `v0` is retained, its compact root forest is automatically
 stitched so neighboring retained regions share reconciled boundaries. This does
 not alter the on-demand `raw_trace` artifact. Agents may still invoke `stitch`
 after later geometry, merge, or split edits create new neighboring edges.
@@ -76,7 +76,7 @@ Bézier representation of that evidence. It is deliberately free of semantic
 interpretation while remaining compact enough for stable command IDs and agent
 reasoning.
 
-### Interactive trace options
+### Trace options
 
 ```json
 {
@@ -187,12 +187,13 @@ are branch paths: the first, second, and third refinements of `v0` are `v0.0`,
 next child segment atomically, so agents provide only `base_version` and cannot
 collide when submitting alternatives concurrently.
 
-Each version stores its parent version, accepted plan, immutable tuple of native
-`VectorRegion` roots, and optional plan `label`. SVG, preview, labeled SVG, and
-the target report are rendered on demand from those roots. There is no parallel
-`DrawingScene` or `RenderTarget` tree. Agents can branch from any retained
+Each version stores its parent version, accepted plan, immutable `Drawing`
+snapshot, private engine evidence, and optional plan `label`. SVG, preview,
+labeled SVG, and the target report are rendered on demand from the `Drawing`.
+There is no parallel `DrawingScene`, `VectorRegion`, or `RenderTarget` public
+tree. Agents can branch from any retained
 version and present sibling alternatives without retracing the original raster.
-Each operation is a pure transform that returns fresh affected `VectorRegion`
+Each operation is a pure transform that returns fresh affected `DrawingRegion`
 objects; the complete plan is atomically committed as one child drawing version.
 No operation mutates the base version or creates a separately persisted partial
 version.
@@ -225,6 +226,24 @@ align(target, reference, axes)
 stitch(targets?, epsilon?, max_error?)
 set_z_order(targets[])
 ```
+
+`set_geometry(assignment.type="path")` is a composite drawing action. The engine applies
+its nested path actions in order, placing each returned `PathGeometry` into a
+fresh drawing snapshot before invoking the next action. This lets a later path
+action reference commands produced or retained by an earlier one.
+
+The engine also exposes `apply_path_action(PathActionRequest) ->
+PathActionResult` directly. The request contains the current `Drawing`, target
+region ID, action, and fitting tolerances so cross-region command references
+can be resolved without a parallel command-lineage map. The optimizer may call
+this operation directly; it remains an orchestrator rather than a second path
+implementation.
+
+Drawing actions may lower to the same path machinery internally without
+changing the public plan hierarchy. `merge` and `split` create a new outline
+and refit it; `set_symmetry` half-fits, mirrors, and unions a path; `stitch`
+reconciles corresponding region boundaries. `align`, `set_clone`, and fill
+assignment remain region operations.
 
 - `merge` creates a semantic target from regions, retains their combined
   source-region ancestry, and serializes their `SkPath` boolean union as one
@@ -265,7 +284,7 @@ regions. Inspect the returned report, then address any derived hyphenated
 children in a new versioned plan. Explicitly selected intrinsically symmetric
 geometry, such as a cap or rounded trapezoid, is retained as one region and
 reported as `mode: "intrinsic"` rather than being split into a redundant pair.
-Clone `<use>` relationships remain symbolic through interactive and one-shot
+Clone `<use>` relationships remain symbolic through retained trace modes
 output unless explicit SVG flattening is requested. A self-symmetry mirror
 `<use>` is the exception: it is baked to a concrete path immediately before
 `simplify` or `stitch`, so polish passes see both sides of a shared seam and
@@ -273,8 +292,8 @@ cannot leave an anti-aliased hairline.
 
 Automatic one-shot refinement runs the existing optimizer pass sequence,
 including occlusion, compound splitting, symmetry, clones, simplification, and
-stitching. Interactive tracing remains raw; interactive plans opt into automatic
-behavior through the ordered `detect_*` scene operations.
+stitching. Version v0 remains pre-optimizer; plans may opt into individual
+automatic behaviors through ordered `detect_*` drawing actions.
 
 ### Path actions
 
@@ -322,13 +341,13 @@ for replacing or creating commands.
 
 ## Execution model
 
-The trace module produces an internal `DrawingState` and a public,
-JSON-safe summary. The plan executor transforms only cached `VectorRegion`
-roots, fits requested geometry to raw contour evidence, maps declared fills to
-the existing fill classes, and runs named `detect_*` operations through the
-existing optimizer passes. It does not mutate the stored trace. Each accepted
-plan creates an immutable version, so the agent may issue multiple branches for
-one drawing.
+The trace module produces an immutable canonical `Drawing`, private engine
+evidence, and a public JSON-safe summary. The plan executor transforms the
+cached `DrawingRegion` tree. The selected engine uses private evidence to fit
+requested geometry and run named `detect_*` operations; it returns new typed
+geometry rather than exposing optimizer records. It does not mutate the stored
+trace. Each accepted plan creates an immutable version, so the agent may issue
+multiple branches for one drawing.
 
 The refinement result includes its new version ID, artifact references, and
 target-level geometry/fill/provenance summaries. Call

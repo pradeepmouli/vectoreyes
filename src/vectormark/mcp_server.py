@@ -16,7 +16,7 @@ from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import CallToolResult, ImageContent, TextContent
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from .mcp_image import (
     DEFAULT_COLORS,
@@ -29,6 +29,7 @@ from .mcp_image import (
 )
 from .pipeline import Options, _flatten_on_white, idealize
 from .drawing_plan import PlanValidationError, parse_plan
+from .drawing_actions import DrawingPlan
 from .drawing_refine import (
     auto_refine,
     drawing_summary,
@@ -381,8 +382,8 @@ mcp = FastMCP(
         "operation improves it. Use trace.regions[*].id as the authoritative, plan-addressable target IDs; "
         "path-local operations use command IDs exposed on each retained target geometry. A path fit operation may refit one retained "
         "command by its version-scoped command ID (for example r1.p1.c14), or fit a span between two retained boundary commands. Use fit.type to force exactly one "
-        "line, quadratic, cubic, or keep command; an explicit type=cubic may inflect. Use fit.strategy for a recursive fit that may emit multiple commands: quadratic and cubic are inflection-safe; progressive selects Q/C, and progressive_allow_lines selects L/Q/C. Retain or remove existing spans and then simplify or stitch "
-        "their joins. There is no arbitrary insert-segment operation and plans must not author exported SVG coordinates. Use snap to make a shared endpoint "
+        "line, quadratic, cubic, or keep command; an explicit type=cubic may inflect. Use fit.strategy for a recursive fit that may emit multiple commands: quadratic and cubic are inflection-safe; progressive selects Q/C, and progressive_allow_lines selects L/Q/C. Retain or remove existing spans and then use path-local simplify or normalize_corners to clean them. "
+        "There is no arbitrary insert-segment operation and plans must not author exported SVG coordinates. Use snap to make a shared endpoint "
         "exactly coincide with another segment endpoint; use align only for intentional one-axis alignment. When refine='auto', "
         "automatic detection has already run: do not use detect_* as a default follow-up; use it only when the "
         "review panel identifies a specific missed relationship worth reconsidering. To create semantic material regions, "
@@ -391,293 +392,6 @@ mcp = FastMCP(
         "are refined from the resulting child version."
     ),
 )
-
-
-class _PlanSchema(BaseModel):
-    """Static refinement-plan contract exposed to MCP clients.
-
-    Live drawing validation remains in ``drawing_plan``: target IDs, trace command
-    ownership, command contiguity, and version rules need the traced drawing.
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class PlanDefaults(_PlanSchema):
-    epsilon: float | None = Field(None, description="Primitive/polygon fitting tolerance in pixels.")
-    max_error: float | None = Field(None, description="Maximum path-fit residual in pixels.")
-
-
-class AxisSpec(_PlanSchema):
-    theta: float = Field(description="Symmetry-axis angle in radians.")
-    cx: float = Field(description="X coordinate of a point on the symmetry axis.")
-    cy: float = Field(description="Y coordinate of a point on the symmetry axis.")
-
-
-class FlatFillSpec(_PlanSchema):
-    type: Literal["flat"]
-    color: str = Field(description="CSS #RRGGBB fill color.")
-
-
-class LinearGradientFillSpec(_PlanSchema):
-    type: Literal["linear_gradient"]
-    geometry: dict[str, float] = Field(description="Gradient endpoints: x1, y1, x2, y2.")
-    stops: list[tuple[float, str]] = Field(description="Ordered [offset, #RRGGBB] gradient stops.")
-
-
-class RadialGradientFillSpec(_PlanSchema):
-    type: Literal["radial_gradient"]
-    geometry: dict[str, float] = Field(description="Radial gradient geometry: cx, cy, r.")
-    stops: list[tuple[float, str]] = Field(description="Ordered [offset, #RRGGBB] gradient stops.")
-
-
-class RasterFillSpec(_PlanSchema):
-    type: Literal["raster"]
-    geometry: dict[str, float] = Field(description="Raster placement: x, y, w, h.")
-    png_b64: str = Field(description="Base64-encoded PNG data.")
-
-
-FillSpec = Annotated[
-    FlatFillSpec | LinearGradientFillSpec | RadialGradientFillSpec | RasterFillSpec,
-    Field(discriminator="type"),
-]
-
-
-class PrimitiveGeometrySpec(_PlanSchema):
-    type: Literal["circle", "ellipse", "rect", "rounded_rect", "polygon", "trapezoid", "rounded_trapezoid", "cap"]
-
-
-class PathFitOp(_PlanSchema):
-    op: Literal["fit"]
-    target: str | None = Field(None, description="One retained, version-scoped command ID to refit, for example r1.p1.c14.")
-    between: tuple[str, str] | None = Field(
-        None,
-        description="Two retained boundary command IDs [left, right]. Commands strictly between them are replaced by fitted geometry from left's end to right's start.",
-    )
-    type: Literal["line", "quadratic", "cubic", "keep"] | None = Field(
-        None,
-        description="Force exactly one output command. quadratic and cubic are one-command fits; an explicit cubic may inflect. keep preserves one target command.",
-    )
-    strategy: Literal["quadratic", "cubic", "progressive", "progressive_allow_lines"] | None = Field(
-        None,
-        description="Recursive residual-driven fit that may emit multiple commands. quadratic emits Qs; cubic emits inflection-safe curves; progressive chooses Q/C; progressive_allow_lines chooses L/Q/C.",
-    )
-
-    @model_validator(mode="after")
-    def exactly_one_target_form(self) -> PathFitOp:
-        if (self.target is None) == (self.between is None):
-            raise ValueError("fit requires exactly one of target or between")
-        if (self.type is None) == (self.strategy is None):
-            raise ValueError("fit requires exactly one of type or strategy")
-        return self
-
-
-class PathMatchLengthOp(_PlanSchema):
-    op: Literal["match_length"]
-    target: str = Field(description="Retained, version-scoped command to resize.")
-    reference: str = Field(description="Retained, version-scoped command whose length is matched.")
-
-
-class PathMatchOp(_PlanSchema):
-    op: Literal["match"]
-    target: str = Field(description="Retained, version-scoped command to reconstruct.")
-    reference: str = Field(description="Retained, version-scoped command to copy.")
-    transform: tuple[float, float, float, float, float, float] = Field(
-        description="SVG affine transform [a, b, c, d, e, f] from the reference command to the target command."
-    )
-
-
-class PathSetParallelOp(_PlanSchema):
-    op: Literal["set_parallel"]
-    target: str = Field(description="Retained, version-scoped command to fit as a parallel line.")
-    reference: str = Field(description="Retained command supplying the supporting-line direction, never its length.")
-    distance: float | None = Field(None, description="Optional signed perpendicular offset. Omit to fit the offset from the target's existing geometry.")
-
-
-class PathAlignOp(_PlanSchema):
-    op: Literal["align"]
-    target: str = Field(description="Retained, version-scoped command whose endpoint is aligned.")
-    reference: str = Field(description="Retained, version-scoped command supplying the endpoint coordinate.")
-    axes: list[Literal["x", "y"]] = Field(min_length=1, description="Endpoint axes to align: x, y, or both.")
-
-
-class PathSnapOp(_PlanSchema):
-    op: Literal["snap"]
-    target: str = Field(description="Retained, version-scoped command whose endpoint is snapped.")
-    reference: str = Field(description="Retained, version-scoped command supplying the exact shared endpoint.")
-
-
-class PathRemoveOp(_PlanSchema):
-    op: Literal["remove"]
-    target: str = Field(description="Retained, version-scoped command to remove while preserving following geometry.")
-
-
-class PathBreakOp(_PlanSchema):
-    op: Literal["break"]
-    target: str = Field(description="The current fitted command to end with a sharp discontinuity.")
-
-
-class PathCloseOp(_PlanSchema):
-    op: Literal["close"]
-
-
-class PathSimplifyOp(_PlanSchema):
-    op: Literal["simplify"]
-
-
-class PathStitchOp(_PlanSchema):
-    op: Literal["stitch"]
-
-
-PathOp = Annotated[
-    PathFitOp | PathMatchLengthOp | PathMatchOp | PathSetParallelOp | PathAlignOp | PathSnapOp | PathRemoveOp | PathBreakOp | PathCloseOp | PathSimplifyOp | PathStitchOp,
-    Field(discriminator="op"),
-]
-
-
-class PathGeometrySpec(_PlanSchema):
-    type: Literal["path"]
-    ops: list[PathOp] = Field(
-        min_length=1,
-        description="Path-local program. Fit one retained command with target or replace a contiguous span with between, then optionally match, align, snap, close, simplify, or stitch.",
-    )
-
-
-GeometrySpec = Annotated[PrimitiveGeometrySpec | PathGeometrySpec, Field(discriminator="type")]
-
-
-class _ToleranceOp(_PlanSchema):
-    epsilon: float | None = Field(None, description="Per-operation fitting tolerance in pixels.")
-    max_error: float | None = Field(None, description="Per-operation maximum fit residual in pixels.")
-
-
-class MergeOp(_PlanSchema):
-    op: Literal["merge"]
-    id: str = Field(description="New semantic group ID.")
-    regions: list[str] = Field(
-        min_length=1,
-        description="Current retained region IDs to union. A single branch/root ID expands to all of its current addressable children.",
-    )
-
-
-class SplitLineDivider(_PlanSchema):
-    type: Literal["line"]
-    points: tuple[tuple[float, float], tuple[float, float]] = Field(
-        description="Two distinct points defining an infinite splitting line."
-    )
-
-
-class SplitPathDivider(_PlanSchema):
-    type: Literal["path"]
-    d: str = Field(min_length=1, description="One open SVG path whose first and last endpoints lie on the target boundary.")
-
-
-SplitDivider = Annotated[SplitLineDivider | SplitPathDivider, Field(discriminator="type")]
-
-
-class SplitOp(_PlanSchema):
-    op: Literal["split"]
-    target: str = Field(description="Current retained region or merged group to split; must be the final operation in a plan.")
-    divider: SplitDivider = Field(description="The explicit infinite line or open path used to divide the target.")
-
-
-class DetectPrimitivesOp(_ToleranceOp):
-    op: Literal["detect_primitives"]
-    target: str | None = Field(None, description="Optional target; omit to inspect all current targets.")
-
-
-class DetectSymmetryOp(_ToleranceOp):
-    op: Literal["detect_symmetry"]
-    target: str | None = Field(None, description="Optional target; symmetry operations must be terminal.")
-
-
-class DetectClonesOp(_ToleranceOp):
-    op: Literal["detect_clones"]
-    target: str | None = Field(None, description="Optional target; omit to inspect all current targets.")
-
-
-class SimplifyOp(_ToleranceOp):
-    op: Literal["simplify"]
-    target: str | None = Field(None, description="Optional current target; omit to simplify all current targets.")
-
-
-class StitchOp(_ToleranceOp):
-    op: Literal["stitch"]
-    target: str | None = Field(None, description="Optional current target; omit to reconcile all shared boundaries.")
-
-
-class NormalizeCornersOp(_ToleranceOp):
-    op: Literal["normalize_corners"]
-    target: str | None = Field(
-        None,
-        description="Optional current target; omit to reduce every recognized rounded corner to one endpoint-preserving quadratic.",
-    )
-
-
-class SetGeometryOp(_ToleranceOp):
-    op: Literal["set_geometry"]
-    target: str = Field(description="Current retained region or merged group ID.")
-    geometry: GeometrySpec
-
-
-class SetFillOp(_PlanSchema):
-    op: Literal["set_fill"]
-    target: str = Field(description="Current retained region or merged group ID.")
-    fill: FillSpec
-
-
-class SetZOrderOp(_PlanSchema):
-    op: Literal["set_z_order"]
-    targets: list[str] = Field(min_length=1, description="All current targets in back-to-front paint order.")
-
-
-class CloneOp(_PlanSchema):
-    op: Literal["clone"]
-    source: str = Field(description="Existing source target ID.")
-    target: str = Field(description="Existing target ID replaced by a transformed clone.")
-    transform: tuple[float, float, float, float, float, float] = Field(
-        description="SVG affine transform [a, b, c, d, e, f] from source to target."
-    )
-
-
-class AlignOp(_PlanSchema):
-    op: Literal["align"]
-    target: str = Field(description="Current retained region to translate.")
-    reference: str = Field(description="Current retained region whose bounds center is used as the reference.")
-    axes: list[Literal["x", "y"]] = Field(min_length=1, description="Axes to align: x, y, or both.")
-
-
-class SetSymmetryOp(_PlanSchema):
-    op: Literal["set_symmetry"]
-    source: str = Field(description="Existing source target ID.")
-    target: str = Field(description="Existing target ID replaced by source mirrored around axis.")
-    axis: AxisSpec
-
-
-PlanOp = Annotated[
-    MergeOp | SplitOp | DetectPrimitivesOp | DetectSymmetryOp | DetectClonesOp | SimplifyOp | StitchOp | NormalizeCornersOp
-    | SetGeometryOp | SetFillOp | SetZOrderOp | CloneOp | AlignOp | SetSymmetryOp,
-    Field(discriminator="op"),
-]
-
-
-class RefinementPlanInput(_PlanSchema):
-    """The statically typed public contract for ``refine_drawing``."""
-
-    version: Literal["vectormark.plan.v1"]
-    drawing_id: str = Field(min_length=1, description="Live drawing ID returned by trace_drawing.")
-    base_version: str = Field(pattern=r"^v\d+(?:\.\d+)*$", description="Existing version to branch from, such as v0 or v0.1.")
-    label: str | None = Field(None, max_length=200, description="Optional human-readable branch label.")
-    defaults: PlanDefaults = Field(default_factory=PlanDefaults, description="Default fitting tolerances for operations.")
-    ops: list[PlanOp] = Field(
-        description="Ordered semantic transformations. IDs refer to the selected base version; path geometry uses retained command IDs such as r1.p1.c14.",
-        json_schema_extra={
-            "examples": [[
-                {"op": "set_geometry", "target": "r1", "geometry": {"type": "circle"}},
-                {"op": "detect_symmetry", "target": "r1"},
-            ]]
-        },
-    )
 
 
 class _DrawingOutputSchema(BaseModel):
@@ -1140,27 +854,28 @@ def retrace_drawing(
         "Inspect the trace_drawing review_panel first and use its source/trace/current/region-map/diff comparison to justify plan operations; "
         "labeled_svg identifies the exact retained targets for this base version. "
         "Each path target geometry supplies version-scoped command IDs. Use path op fit with target to refit one retained command, or with "
-        "between=[left,right] to replace commands strictly between two retained boundaries; then use simplify and stitch to clean joins. "
-        "Use normalize_corners to reduce a recognized rounded corner to one endpoint-preserving quadratic, globally or for one target. There is no arbitrary insert-segment op and "
+        "between=[left,right] to replace commands strictly between two retained boundaries. Path-local simplify and normalize_corners live inside "
+        "set_geometry.assignment.ops; top-level stitch reconciles shared boundaries between regions. There is no arbitrary insert-segment op and "
         "do not author exported SVG coordinates. "
         "Make the final SVG a designer-quality replacement for the original render. Use the review diff to remove any visible structural, "
         "geometric, alignment, proportion, or fill mismatch; do not stop merely because the result is close. Normal differences caused by "
         "raster versus SVG antialiasing, resampling, or continuous-gradient approximation are acceptable. "
         "omitting an operation preserves the target. For a refine='auto' base version, do not submit detect_* operations "
         "as a routine follow-up: use them only to investigate a concrete missed relationship visible in the review panel. "
+        "Use set_clone(source,target,transforms) for clone relationships and set_symmetry(target,axis) for explicit self-symmetry. "
         "For a material split, merge one semantic root to union all of its children, then submit a terminal split with an explicit divider; "
         "inspect and address its newly created children from the next version."
     ),
     meta=_DRAWING_WIDGET_META,
 )
 def refine_drawing(
-    plan: RefinementPlanInput, ctx: Context | None = None
+    plan: DrawingPlan, ctx: Context | None = None
 ) -> Annotated[CallToolResult, RefinedDrawingOutput]:
     if ctx is None:
         raise ToolError("[DRAWING_CONTEXT_REQUIRED] refinement requires an MCP session context")
     try:
-        plan_payload = plan.model_dump(exclude_none=True) if isinstance(plan, RefinementPlanInput) else plan
-        parsed = parse_plan(plan_payload)
+        parsed = plan if isinstance(plan, DrawingPlan) else parse_plan(plan)
+        plan_payload = parsed.model_dump(exclude_none=True)
         drawing, version = _DRAWINGS.get(ctx.session, parsed.drawing_id, parsed.base_version)
         assert version.regions is not None
         trace = version.trace or drawing.trace

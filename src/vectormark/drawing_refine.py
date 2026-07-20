@@ -18,6 +18,7 @@ from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, R
 from .components import decompose_components
 from .contour import outer_contour, region_contours, region_corner_radius
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
+from .drawing_adapter import drawing_from_vector_regions
 from .drawing_trace import TraceResult, svg_path_commands
 from .emit import apply_affine_point, render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
 from .fill_fit import fit_fill
@@ -846,13 +847,21 @@ def refine(
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
     regions = tuple(base)
-    validate_plan(plan, trace, regions)
+    validate_plan(
+        plan,
+        drawing_from_vector_regions(
+            plan.drawing_id,
+            width=trace.width,
+            height=trace.height,
+            regions=regions,
+        ),
+    )
     z_order: tuple[str, ...] | None = None
 
-    for index, raw in enumerate(plan.ops):
+    for index, action in enumerate(plan.ops):
         before = regions
-        op = raw
-        name = op["op"]
+        op = action.model_dump(exclude_none=True)
+        name = action.op
         epsilon, max_error = _tolerances(trace, plan, op)
         if name == "merge":
             regions = _group_regions(regions, op)
@@ -863,18 +872,25 @@ def refine(
                 raise PlanValidationError(f"/ops/{index}/divider", str(error)) from error
         elif name in {"detect_primitives", "detect_symmetry", "detect_clones"}:
             regions = _run_detection(regions, trace, name, op.get("target"), epsilon=epsilon, max_error=max_error)
-        elif name in {"simplify", "stitch", "normalize_corners"}:
-            regions = _run_detection(regions, trace, name, op.get("target"), epsilon=epsilon, max_error=max_error)
+        elif name == "stitch":
+            regions = _run_detection(
+                regions,
+                trace,
+                name,
+                op.get("targets"),
+                epsilon=epsilon,
+                max_error=max_error,
+            )
         elif name == "set_symmetry":
             regions = _set_symmetry(regions, op)
-        elif name == "clone":
+        elif name == "set_clone":
             regions = _clone(regions, op)
         elif name == "align":
             regions = _align(regions, op)
         elif name == "set_geometry":
             targets = _targets(regions)
             target = targets[op["target"]]
-            geometry = op["geometry"]
+            geometry = op["assignment"]
             try:
                 shape = (
                     _path_shape(
@@ -889,7 +905,7 @@ def refine(
                     else _primitive_shape(target, geometry["type"], epsilon=epsilon, max_error=max_error)
                 )
             except ValueError as error:
-                raise PlanValidationError(f"/ops/{index}/geometry/type", str(error)) from error
+                raise PlanValidationError(f"/ops/{index}/assignment/type", str(error)) from error
             regions = _replace_leaf(
                 regions,
                 target.id,
@@ -902,8 +918,15 @@ def refine(
             path_ops = geometry.get("ops", ()) if geometry["type"] == "path" else ()
             if any(path_op["op"] == "simplify" for path_op in path_ops):
                 regions = _run_detection(regions, trace, "simplify", target.id, epsilon=epsilon, max_error=max_error)
-            if any(path_op["op"] == "stitch" for path_op in path_ops):
-                regions = _run_detection(regions, trace, "stitch", target.id, epsilon=epsilon, max_error=max_error)
+            if any(path_op["op"] == "normalize_corners" for path_op in path_ops):
+                regions = _run_detection(
+                    regions,
+                    trace,
+                    "normalize_corners",
+                    target.id,
+                    epsilon=epsilon,
+                    max_error=max_error,
+                )
         elif name == "set_fill":
             target_id = op["target"]
             fill = _fill(op["fill"])
@@ -968,22 +991,27 @@ def _run_detection(
     else:
         raise ValueError(f"unknown detection operation: {operation}")
 
-    selected_id = target_id if type(target_id) is str else None
-    selected_region_id: int | None = None
-    if selected_id is not None:
-        selected_region_id = _targets(regions)[selected_id].region.id
+    selected_ids = (
+        (target_id,)
+        if type(target_id) is str
+        else tuple(target_id)
+        if isinstance(target_id, Sequence) and not isinstance(target_id, (str, bytes))
+        else ()
+    )
+    if selected_ids:
+        selected_region_ids = {_targets(regions)[selected_id].region.id for selected_id in selected_ids}
         original_pass = pass_fn
 
         def pass_fn(objects, masks):  # type: ignore[no-redef]
             proposals = original_pass(objects, masks)
             if operation != "detect_clones":
-                return [proposal for proposal in proposals if selected_region_id in proposal.obj_ids]
+                return [proposal for proposal in proposals if selected_region_ids.intersection(proposal.obj_ids)]
             return [
                 proposal
                 for proposal in proposals
-                if selected_region_id in proposal.obj_ids
+                if selected_region_ids.intersection(proposal.obj_ids)
                 or any(
-                    replacement.diagnostics.get("clones", {}).get("matched_source") == selected_region_id
+                    replacement.diagnostics.get("clones", {}).get("matched_source") in selected_region_ids
                     for replacement in proposal.new_objects
                 )
             ]
@@ -1114,9 +1142,19 @@ def _clone(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> Drawing
     source = targets[op["source"]].region
     target = targets[op["target"]].region
     assert source.current is not None and source.fill is not None and target.current is not None and target.fill is not None
-    transform = tuple(float(value) for value in op["transform"])
-    shape = Shape("use", {"href_obj_id": source.id, "transform": transform})
-    footprint = _transform_footprint(source.footprint, transform, target.footprint)
+    transforms = tuple(_affine_tuple(transform) for transform in op["transforms"])
+    footprints = tuple(
+        _transform_footprint(source.footprint, transform, target.footprint)
+        for transform in transforms
+    )
+    if len(transforms) == 1:
+        shape = Shape("use", {"href_obj_id": source.id, "transform": transforms[0]})
+        footprint = footprints[0]
+    else:
+        if not all(isinstance(footprint, SkPath) for footprint in footprints):
+            raise ValueError("multi-transform clones require polygonal footprints")
+        footprint = unary_union([footprint for footprint in footprints if isinstance(footprint, SkPath)])
+        shape = Shape("path", {"d": footprint.to_svg_d()})
     return _replace_leaf(
         regions,
         op["target"],
@@ -1124,9 +1162,13 @@ def _clone(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> Drawing
             shape,
             fill=target.fill,
             footprint=footprint,
-            diagnostics={"clone": {"source_id": source.id, "transform": transform}},
+            diagnostics={"clone": {"source_id": source.id, "transforms": transforms}},
         ),
     )
+
+
+def _affine_tuple(spec: Mapping[str, object]) -> tuple[float, float, float, float, float, float]:
+    return tuple(float(spec[key]) for key in ("a", "b", "c", "d", "tx", "ty"))  # type: ignore[return-value]
 
 
 def _transform_footprint(
@@ -1141,20 +1183,45 @@ def _transform_footprint(
 
 
 def _set_symmetry(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
-    """Set a mirror-pair relationship from an agent-supplied reflection axis."""
+    """Reconstruct one target from the best-fitting half around an explicit axis."""
     targets = _targets(regions)
-    source = targets[op["source"]].region
-    assert source.current is not None and source.fill is not None
+    target = targets[op["target"]].region
+    assert target.current is not None and target.fill is not None
+    if not isinstance(target.footprint, SkPath):
+        raise ValueError("set_symmetry requires a polygonal footprint")
     axis = op["axis"]
-    matrix = _reflection_matrix(float(axis["theta"]), float(axis["cx"]), float(axis["cy"]))
-    reflected = bake_shape_transform(source.current, matrix)
+    point = axis["point"]
+    theta = math.radians(float(axis["angle_degrees"]))
+    cx, cy = float(point[0]), float(point[1])
+    matrix = _reflection_matrix(theta, cx, cy)
+    direction = (math.cos(theta), math.sin(theta))
+    parts = _split_footprint_by_line(
+        target.footprint,
+        (cx, cy),
+        (cx + direction[0], cy + direction[1]),
+    )
+    if len(parts) != 2:
+        raise ValueError("symmetry axis must divide the target into two non-empty halves")
+    candidates: list[tuple[float, SkPath]] = []
+    for half in parts:
+        reflected = _transform_footprint(half, matrix, half)
+        if not isinstance(reflected, SkPath):
+            continue
+        reconstructed = unary_union([half, reflected])
+        residual = target.footprint.symmetric_difference(reconstructed).area / max(target.footprint.area, 1.0)
+        candidates.append((float(residual), reconstructed))
+    if not candidates:
+        raise ValueError("symmetry reconstruction produced no valid geometry")
+    residual, footprint = min(candidates, key=lambda item: item[0])
+    shape = Shape("path", {"d": footprint.to_svg_d()})
     return _replace_leaf(
         regions,
         op["target"],
         lambda region: region.with_current(
-            reflected,
-            fill=source.fill,
-            diagnostics={"symmetry": {"mode": "pair", "source_id": source.id, "axis": dict(axis)}},
+            shape,
+            fill=target.fill,
+            footprint=footprint,
+            diagnostics={"symmetry": {"mode": "explicit_self", "axis": dict(axis), "residual": residual}},
         ),
     )
 
@@ -1958,7 +2025,7 @@ def _path_shape_from_segment_fits(
         if op["op"] == "match_length"
     }
     matches = {
-        op["target"]: (op["reference"], tuple(op["transform"]))
+        op["target"]: (op["reference"], _affine_tuple(op["transform"]))
         for op in geometry["ops"]
         if op["op"] == "match"
     }
@@ -2195,8 +2262,8 @@ def _segment_references(targets: Mapping[str, _Target]) -> dict[str, tuple[objec
 def _tolerances(trace: TraceResult, plan: DrawingPlan, op: Mapping[str, object]) -> tuple[float, float]:
     """Resolve trace defaults, plan defaults, then an operation override."""
     defaults = plan.defaults
-    epsilon = float(defaults.get("epsilon", trace.options.simplify_tolerance))
-    max_error = float(defaults.get("max_error", trace.options.curve_tolerance))
+    epsilon = float(defaults.epsilon if defaults.epsilon is not None else trace.options.simplify_tolerance)
+    max_error = float(defaults.max_error if defaults.max_error is not None else trace.options.curve_tolerance)
     return float(op.get("epsilon", epsilon)), float(op.get("max_error", max_error))
 
 
@@ -2205,10 +2272,22 @@ def _fill(spec: Mapping[str, object]) -> Fill:
     if kind == "flat":
         return FlatFill(spec["color"])
     if kind == "linear_gradient":
-        return LinearGradientFill(dict(spec["geometry"]), list(spec["stops"]))
+        start, end = spec["start"], spec["end"]
+        return LinearGradientFill(
+            {"x1": start[0], "y1": start[1], "x2": end[0], "y2": end[1]},
+            [(stop["offset"], stop["color"]) for stop in spec["stops"]],
+        )
     if kind == "radial_gradient":
-        return RadialGradientFill(dict(spec["geometry"]), list(spec["stops"]))
-    return RasterFill(dict(spec["geometry"]), spec["png_b64"])
+        center = spec["center"]
+        return RadialGradientFill(
+            {"cx": center[0], "cy": center[1], "r": spec["radius"]},
+            [(stop["offset"], stop["color"]) for stop in spec["stops"]],
+        )
+    origin = spec["origin"]
+    return RasterFill(
+        {"x": origin[0], "y": origin[1], "w": spec["width"], "h": spec["height"]},
+        spec["png_base64"],
+    )
 
 
 def _public_fill(fill: Fill | None) -> dict[str, object]:

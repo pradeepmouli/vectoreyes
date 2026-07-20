@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol
 
 from .drawing import Drawing
-from .drawing_actions import DrawingAction, DrawingActionResult
+from .drawing_actions import DrawingAction, DrawingActionResult, PathAction
 from .drawing_trace import TraceOptions
 from .path_geometry import PathGeometry
 
@@ -96,6 +96,42 @@ class FitPathResult:
         object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
 
 
+@dataclass(frozen=True)
+class PathActionRequest:
+    """Apply one command-addressed action to a region's current path.
+
+    The complete drawing is supplied so relationship actions can resolve
+    command references owned by other regions. ``region_id`` identifies the
+    path being changed; the engine must reject a branch or non-path target.
+    """
+
+    drawing: Drawing
+    region_id: str
+    action: PathAction
+    epsilon: float
+    max_error: float
+
+    def __post_init__(self) -> None:
+        if not self.region_id:
+            raise ValueError("path-action region ID must not be empty")
+        if self.epsilon < 0 or self.max_error < 0:
+            raise ValueError("path-action tolerances must be non-negative")
+
+
+@dataclass(frozen=True)
+class PathActionResult:
+    """Fresh path geometry returned by one path-action execution."""
+
+    geometry: PathGeometry
+    affected_command_ids: tuple[str, ...] = ()
+    diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if len(set(self.affected_command_ids)) != len(self.affected_command_ids):
+            raise ValueError("affected command IDs must be unique")
+        object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
+
+
 class DrawingEngine(Protocol):
     """Deterministic pre-optimizer and geometry-operation implementation."""
 
@@ -105,5 +141,8 @@ class DrawingEngine(Protocol):
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
         """Refit a closed line path using the supplied fitting strategy."""
 
+    def apply_path_action(self, request: PathActionRequest) -> PathActionResult:
+        """Apply one nested path action using the current drawing for references."""
+
     def apply_action(self, drawing: Drawing, action: DrawingAction) -> DrawingActionResult:
-        """Apply one deterministic action and return a fresh drawing snapshot."""
+        """Apply one drawing action, delegating nested path actions as needed."""

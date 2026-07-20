@@ -44,7 +44,7 @@ def _unique(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
 class FitPathAction(ActionContract):
     """Replace one command or one command-bounded span with fitted geometry."""
 
-    op: Literal["fit"] = "fit"
+    op: Literal["fit"]
     target: str | None = Field(None, min_length=1, description="One retained version-scoped command ID.")
     between: tuple[str, str] | None = Field(
         None,
@@ -67,19 +67,19 @@ class FitPathAction(ActionContract):
 
 
 class RemovePathAction(ActionContract):
-    op: Literal["remove"] = "remove"
+    op: Literal["remove"]
     target: str = Field(min_length=1, description="Retained command removed before its neighbours are rejoined.")
 
 
 class MatchPathAction(ActionContract):
-    op: Literal["match"] = "match"
+    op: Literal["match"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
-    transform: "AffineTransformInput | None" = None
+    transform: "AffineTransformInput"
 
 
 class SetParallelPathAction(ActionContract):
-    op: Literal["set_parallel"] = "set_parallel"
+    op: Literal["set_parallel"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     distance: float | None = Field(
@@ -89,13 +89,13 @@ class SetParallelPathAction(ActionContract):
 
 
 class MatchLengthPathAction(ActionContract):
-    op: Literal["match_length"] = "match_length"
+    op: Literal["match_length"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
 
 
 class AlignPathAction(ActionContract):
-    op: Literal["align"] = "align"
+    op: Literal["align"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     axes: tuple[AxisName, ...] = Field(min_length=1, max_length=2)
@@ -107,36 +107,36 @@ class AlignPathAction(ActionContract):
 
 
 class SnapPathAction(ActionContract):
-    op: Literal["snap"] = "snap"
+    op: Literal["snap"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
 
 
 class BreakPathAction(ActionContract):
-    op: Literal["break"] = "break"
+    op: Literal["break"]
     target: str = Field(min_length=1, description="Fitted command after which tangent continuity is not enforced.")
 
 
 class ReversePathAction(ActionContract):
-    op: Literal["reverse"] = "reverse"
+    op: Literal["reverse"]
     target: str = Field(min_length=1)
 
 
 class MirrorPathAction(ActionContract):
-    op: Literal["mirror"] = "mirror"
+    op: Literal["mirror"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     axis: "SymmetryAxisInput"
 
 
 class SimplifyPathAction(ActionContract):
-    op: Literal["simplify"] = "simplify"
+    op: Literal["simplify"]
     epsilon: float | None = Field(None, ge=0)
     max_error: float | None = Field(None, ge=0)
 
 
 class NormalizeCornersPathAction(ActionContract):
-    op: Literal["normalize_corners"] = "normalize_corners"
+    op: Literal["normalize_corners"]
 
 
 PathAction = Annotated[
@@ -165,7 +165,7 @@ class PrimitiveAssignment(ActionContract):
 class PathAssignment(ActionContract):
     """Intent to produce a path by applying actions to retained commands."""
 
-    type: Literal["path"] = "path"
+    type: Literal["path"]
     ops: tuple[PathAction, ...] = Field(min_length=1)
 
 
@@ -184,7 +184,7 @@ class GradientStopInput(ActionContract):
 
 
 class FlatFillAssignment(ActionContract):
-    type: Literal["flat"] = "flat"
+    type: Literal["flat"]
     color: str
 
     @model_validator(mode="after")
@@ -195,7 +195,7 @@ class FlatFillAssignment(ActionContract):
 
 
 class LinearGradientFillAssignment(ActionContract):
-    type: Literal["linear_gradient"] = "linear_gradient"
+    type: Literal["linear_gradient"]
     start: tuple[float, float]
     end: tuple[float, float]
     stops: tuple[GradientStopInput, ...] = Field(min_length=1)
@@ -208,7 +208,7 @@ class LinearGradientFillAssignment(ActionContract):
 
 
 class RadialGradientFillAssignment(ActionContract):
-    type: Literal["radial_gradient"] = "radial_gradient"
+    type: Literal["radial_gradient"]
     center: tuple[float, float]
     radius: float = Field(gt=0)
     stops: tuple[GradientStopInput, ...] = Field(min_length=1)
@@ -222,7 +222,7 @@ class RadialGradientFillAssignment(ActionContract):
 
 
 class RasterFillAssignment(ActionContract):
-    type: Literal["raster"] = "raster"
+    type: Literal["raster"]
     origin: tuple[float, float]
     width: float = Field(gt=0)
     height: float = Field(gt=0)
@@ -263,7 +263,7 @@ class AffineTransformInput(ActionContract):
 
 
 class LineDivider(ActionContract):
-    type: Literal["line"] = "line"
+    type: Literal["line"]
     points: tuple[tuple[float, float], tuple[float, float]]
 
     @model_validator(mode="after")
@@ -274,7 +274,7 @@ class LineDivider(ActionContract):
 
 
 class PathDivider(ActionContract):
-    type: Literal["path"] = "path"
+    type: Literal["path"]
     d: str = Field(min_length=1, description="Open SVG divider whose endpoints lie on the target boundary.")
 
 
@@ -282,28 +282,28 @@ SplitDivider = Annotated[LineDivider | PathDivider, Field(discriminator="type")]
 
 
 class DetectPrimitivesAction(ActionContract):
-    op: Literal["detect_primitives"] = "detect_primitives"
+    op: Literal["detect_primitives"]
     target: str | None = Field(None, min_length=1)
     epsilon: float | None = Field(None, ge=0)
     max_error: float | None = Field(None, ge=0)
 
 
 class DetectSymmetryAction(ActionContract):
-    op: Literal["detect_symmetry"] = "detect_symmetry"
+    op: Literal["detect_symmetry"]
     target: str | None = Field(None, min_length=1)
     epsilon: float | None = Field(None, ge=0)
     max_error: float | None = Field(None, ge=0)
 
 
 class DetectClonesAction(ActionContract):
-    op: Literal["detect_clones"] = "detect_clones"
+    op: Literal["detect_clones"]
     target: str | None = Field(None, min_length=1)
     epsilon: float | None = Field(None, ge=0)
     max_error: float | None = Field(None, ge=0)
 
 
 class MergeAction(ActionContract):
-    op: Literal["merge"] = "merge"
+    op: Literal["merge"]
     id: str = Field(min_length=1, description="ID assigned to the merged region.")
     regions: tuple[str, ...] = Field(
         min_length=1,
@@ -317,13 +317,13 @@ class MergeAction(ActionContract):
 
 
 class SplitAction(ActionContract):
-    op: Literal["split"] = "split"
+    op: Literal["split"]
     target: str = Field(min_length=1)
     divider: SplitDivider
 
 
 class SetGeometryAction(ActionContract):
-    op: Literal["set_geometry"] = "set_geometry"
+    op: Literal["set_geometry"]
     target: str = Field(min_length=1)
     assignment: GeometryAssignment
     epsilon: float | None = Field(None, ge=0)
@@ -331,13 +331,13 @@ class SetGeometryAction(ActionContract):
 
 
 class SetFillAction(ActionContract):
-    op: Literal["set_fill"] = "set_fill"
+    op: Literal["set_fill"]
     target: str = Field(min_length=1)
     fill: FillAssignment
 
 
 class SetCloneAction(ActionContract):
-    op: Literal["set_clone"] = "set_clone"
+    op: Literal["set_clone"]
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
     transforms: tuple[AffineTransformInput, ...] = Field(min_length=1)
@@ -350,13 +350,13 @@ class SetCloneAction(ActionContract):
 
 
 class SetSymmetryAction(ActionContract):
-    op: Literal["set_symmetry"] = "set_symmetry"
+    op: Literal["set_symmetry"]
     target: str = Field(min_length=1)
     axis: SymmetryAxisInput
 
 
 class AlignAction(ActionContract):
-    op: Literal["align"] = "align"
+    op: Literal["align"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
     axes: tuple[AxisName, ...] = Field(min_length=1, max_length=2)
@@ -370,7 +370,7 @@ class AlignAction(ActionContract):
 
 
 class StitchAction(ActionContract):
-    op: Literal["stitch"] = "stitch"
+    op: Literal["stitch"]
     targets: tuple[str, ...] | None = Field(
         None,
         min_length=1,
@@ -387,7 +387,7 @@ class StitchAction(ActionContract):
 
 
 class SetZOrderAction(ActionContract):
-    op: Literal["set_z_order"] = "set_z_order"
+    op: Literal["set_z_order"]
     targets: tuple[str, ...] = Field(min_length=1, description="Complete region paint order, back to front.")
 
     @model_validator(mode="after")
@@ -413,6 +413,29 @@ DrawingAction = Annotated[
 ]
 
 
+class PlanDefaults(ActionContract):
+    """Plan-wide fitting tolerances inherited by compatible actions."""
+
+    epsilon: float | None = Field(None, ge=0)
+    max_error: float | None = Field(None, ge=0)
+
+
+class DrawingPlan(ActionContract):
+    """One immutable, version-branching program over a retained drawing."""
+
+    version: Literal["vectormark.plan.v1"]
+    drawing_id: str = Field(min_length=1, description="Live drawing ID returned by trace_drawing.")
+    base_version: str = Field(
+        pattern=r"^v\d+(?:\.\d+)*$",
+        description="Existing immutable version to branch from, such as v0 or v0.1.",
+    )
+    label: str | None = Field(None, max_length=200)
+    defaults: PlanDefaults = Field(default_factory=PlanDefaults)
+    ops: tuple[DrawingAction, ...] = Field(
+        description="Ordered drawing actions; nested path actions live only in set_geometry(path)."
+    )
+
+
 @dataclass(frozen=True)
 class DrawingActionResult:
     """Immutable engine result for one successfully applied drawing action."""
@@ -435,4 +458,3 @@ class DrawingActionResult:
 
 MatchPathAction.model_rebuild()
 MirrorPathAction.model_rebuild()
-
