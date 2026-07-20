@@ -150,20 +150,14 @@ PathAction = Annotated[
 ]
 
 
-class PrimitiveAssignment(ActionContract):
-    """Intent to fit one target as a native shape primitive."""
+class FitPrimitiveGeometryAction(ActionContract):
+    """Replace the target region geometry with a fitted native primitive."""
 
+    op: Literal["fit_primitive"]
     type: PrimitiveKind
 
 
-class PathAssignment(ActionContract):
-    """Intent to produce a path by applying actions to retained commands."""
-
-    type: Literal["path"]
-    ops: tuple[PathAction, ...] = Field(min_length=1)
-
-
-GeometryAssignment = Annotated[PrimitiveAssignment | PathAssignment, Field(discriminator="type")]
+GeometryAction = FitPrimitiveGeometryAction | PathAction
 
 
 class GradientStopInput(ActionContract):
@@ -316,12 +310,19 @@ class SplitAction(ActionContract):
     divider: SplitDivider
 
 
-class SetGeometryAction(ActionContract):
-    op: Literal["set_geometry"]
+class UpdateGeometryAction(ActionContract):
+    op: Literal["update_geometry"]
     target: str = Field(min_length=1)
-    assignment: GeometryAssignment
+    ops: tuple[GeometryAction, ...] = Field(min_length=1)
     epsilon: float | None = Field(None, ge=0)
     max_error: float | None = Field(None, ge=0)
+
+    @model_validator(mode="after")
+    def primitive_replacement_is_atomic(self) -> "UpdateGeometryAction":
+        primitive_ops = [op for op in self.ops if isinstance(op, FitPrimitiveGeometryAction)]
+        if primitive_ops and len(self.ops) != 1:
+            raise ValueError("fit_primitive must be the only operation in update_geometry")
+        return self
 
 
 class SetFillAction(ActionContract):
@@ -330,14 +331,14 @@ class SetFillAction(ActionContract):
     fill: FillAssignment
 
 
-class SetCloneAction(ActionContract):
-    op: Literal["set_clone"]
+class AssignCloneAction(ActionContract):
+    op: Literal["assign_clone"]
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
     transforms: tuple[AffineTransformInput, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def distinct_regions(self) -> "SetCloneAction":
+    def distinct_regions(self) -> "AssignCloneAction":
         if self.source == self.target:
             raise ValueError("clone source and target must differ")
         return self
@@ -396,9 +397,9 @@ DrawingAction = Annotated[
     | DetectClonesAction
     | MergeAction
     | SplitAction
-    | SetGeometryAction
+    | UpdateGeometryAction
     | SetFillAction
-    | SetCloneAction
+    | AssignCloneAction
     | SetSymmetryAction
     | AlignAction
     | StitchAction
@@ -426,7 +427,7 @@ class DrawingPlan(ActionContract):
     label: str | None = Field(None, max_length=200)
     defaults: PlanDefaults = Field(default_factory=PlanDefaults)
     ops: tuple[DrawingAction, ...] = Field(
-        description="Ordered drawing actions; nested path actions live only in set_geometry(path)."
+        description="Ordered drawing actions; region-local geometry actions live inside update_geometry."
     )
 MatchPathAction.model_rebuild()
 MirrorPathAction.model_rebuild()

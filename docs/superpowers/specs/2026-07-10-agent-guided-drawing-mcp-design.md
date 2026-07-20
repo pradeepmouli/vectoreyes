@@ -170,7 +170,7 @@ run within one raw subpath. Validation errors are returned as `INVALID_PLAN`
 with a JSON pointer and actionable message.
 
 `defaults.epsilon` and `defaults.max_error` override the retained trace
-defaults for the plan. `set_geometry`, `detect_primitives`, and
+defaults for the plan. `update_geometry`, `detect_primitives`, and
 `detect_symmetry` may each supply either field directly; an operation value
 overrides the plan default. `epsilon` governs simplification/primitive fitting
 and `max_error` bounds Bézier fitting. Both must be finite and non-negative.
@@ -218,17 +218,17 @@ detect_symmetry(target?)
 detect_clones(target?)
 merge(id, regions[])
 split(target, divider)
-set_geometry(target, assignment)
+update_geometry(target, ops[])
 set_fill(target, fill)
-set_clone(source, target, transforms[])
+assign_clone(source, target, transforms[])
 set_symmetry(target, axis)
 align(target, reference, axes)
 stitch(targets?, epsilon?, max_error?)
 set_z_order(targets[])
 ```
 
-`set_geometry(assignment.type="path")` is a composite drawing action. The engine applies
-its nested path actions in order, placing each returned `PathGeometry` into a
+`update_geometry` is a composite drawing action. The engine applies its nested
+geometry actions in order, placing each returned geometry into a
 fresh drawing snapshot before invoking the next action. This lets a later path
 action reference commands produced or retained by an earlier one.
 
@@ -252,7 +252,7 @@ scene, plan, store, or MCP contracts.
 Drawing actions may lower to the same path machinery internally without
 changing the public plan hierarchy. `merge` and `split` create a new outline
 and refit it; `set_symmetry` half-fits, mirrors, and unions a path; `stitch`
-reconciles corresponding region boundaries. `align`, `set_clone`, and fill
+reconciles corresponding region boundaries. `align`, `assign_clone`, and fill
 assignment remain region operations.
 
 - `merge` creates a semantic target from regions, retains their combined
@@ -263,11 +263,12 @@ assignment remain region operations.
 - `split` divides a target using either an infinite line from two points or a
   supplied divider path. It creates addressable child regions for the next
   versioned plan and invalidates their fills.
-- `set_geometry` accepts either a primitive assignment (`circle`, `ellipse`,
-  `rect`, `rounded_rect`, or `polygon`) or a path assignment containing the
-  nested path actions below. The engine resolves that intent to concrete typed
-  geometry; agents do not author final SVG coordinates.
-- `set_clone` establishes a source/target relationship and applies one or more
+- `update_geometry` owns an ordered region-local geometry program. Its
+  command-addressed operations update retained path geometry; its atomic
+  `fit_primitive` operation replaces the target with a fitted `circle`,
+  `ellipse`, `rect`, `rounded_rect`, or `polygon`. Agents do not author final
+  SVG coordinates.
+- `assign_clone` establishes a source/target relationship and applies one or more
   transforms. The target becomes `CloneGeometry`; its fill remains independent
   of the source, so visually related clones may use different fills.
 - `set_symmetry` establishes self-symmetry for a target from an explicit axis.
@@ -305,13 +306,14 @@ including occlusion, compound splitting, symmetry, clones, simplification, and
 stitching. Version v0 remains pre-optimizer; plans may opt into individual
 automatic behaviors through ordered `detect_*` drawing actions.
 
-### Path actions
+### Geometry actions
 
-For `set_geometry` with `type: "path"`, the assignment owns an ordered `ops`
-array. These are the only nested actions because they address version-scoped
-command IDs rather than drawing-region IDs:
+`update_geometry` owns an ordered `ops` array. `fit_primitive` is an atomic
+replacement and must be the only nested action. The remaining operations
+address version-scoped path command IDs and are applied sequentially:
 
 ```text
+fit_primitive(type)
 fit(target | between, type | strategy)
 remove(target)
 match(target, reference, transform?)

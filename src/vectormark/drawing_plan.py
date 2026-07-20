@@ -37,7 +37,7 @@ _SCHEMA_VARIANT_TOKENS = frozenset({
     "align", "break", "detect_clones", "detect_primitives", "detect_symmetry",
     "fit", "flat", "linear_gradient", "match", "match_length", "merge",
     "mirror", "normalize_corners", "path", "radial_gradient", "raster",
-    "remove", "reverse", "set_clone", "set_fill", "set_geometry",
+    "remove", "reverse", "assign_clone", "set_fill", "update_geometry", "fit_primitive",
     "set_parallel", "set_symmetry", "set_z_order", "simplify", "snap",
     "split", "stitch", "line", "circle", "ellipse", "rect", "rounded_rect",
     "polygon",
@@ -126,19 +126,19 @@ def validate_plan(plan: DrawingPlan, drawing: Drawing) -> None:
                 _known_target(str(target_id), known_targets, f"{pointer}/targets/{target_index}")
             continue
 
-        if name == "set_geometry":
+        if name == "update_geometry":
             target_id = str(op["target"])
             _known_target(target_id, known_targets, f"{pointer}/target")
-            assignment = op["assignment"]
-            if assignment["type"] == "path":
-                _validate_path_ops(assignment["ops"], f"{pointer}/assignment/ops", commands, target_id)
+            geometry_ops = op["ops"]
+            if geometry_ops[0]["op"] != "fit_primitive":
+                _validate_path_ops(geometry_ops, f"{pointer}/ops", commands, target_id)
             continue
 
         if name == "set_fill":
             _known_target(str(op["target"]), known_targets, f"{pointer}/target")
             continue
 
-        if name == "set_clone":
+        if name == "assign_clone":
             source, target = str(op["source"]), str(op["target"])
             _known_target(source, known_targets, f"{pointer}/source")
             _known_target(target, known_targets, f"{pointer}/target")

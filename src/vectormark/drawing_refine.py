@@ -883,17 +883,26 @@ def refine(
             )
         elif name == "set_symmetry":
             regions = _set_symmetry(regions, op)
-        elif name == "set_clone":
+        elif name == "assign_clone":
             regions = _clone(regions, op)
         elif name == "align":
             regions = _align(regions, op)
-        elif name == "set_geometry":
+        elif name == "update_geometry":
             targets = _targets(regions)
             target = targets[op["target"]]
-            geometry = op["assignment"]
+            geometry_ops = op["ops"]
+            primitive = geometry_ops[0] if geometry_ops[0]["op"] == "fit_primitive" else None
+            geometry = {"type": "path", "ops": geometry_ops}
             try:
                 shape = (
-                    _path_shape(
+                    _primitive_shape(
+                        target,
+                        primitive["type"],
+                        epsilon=epsilon,
+                        max_error=max_error,
+                    )
+                    if primitive is not None
+                    else _path_shape(
                         trace,
                         target,
                         geometry,
@@ -901,21 +910,20 @@ def refine(
                         epsilon=epsilon,
                         max_error=max_error,
                     )
-                    if geometry["type"] == "path"
-                    else _primitive_shape(target, geometry["type"], epsilon=epsilon, max_error=max_error)
                 )
             except ValueError as error:
-                raise PlanValidationError(f"/ops/{index}/assignment/type", str(error)) from error
+                raise PlanValidationError(f"/ops/{index}/ops", str(error)) from error
+            geometry_kind = primitive["type"] if primitive is not None else "path"
             regions = _replace_leaf(
                 regions,
                 target.id,
                 lambda region: region.with_current(
                     shape,
                     footprint=to_polygon(shape),
-                    diagnostics={"geometry": {"explicit": geometry["type"]}},
+                    diagnostics={"geometry": {"explicit": geometry_kind}},
                 ),
             )
-            path_ops = geometry.get("ops", ()) if geometry["type"] == "path" else ()
+            path_ops = geometry_ops if primitive is None else ()
             if any(path_op["op"] == "simplify" for path_op in path_ops):
                 regions = _run_detection(regions, trace, "simplify", target.id, epsilon=epsilon, max_error=max_error)
             if any(path_op["op"] == "normalize_corners" for path_op in path_ops):
