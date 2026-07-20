@@ -239,6 +239,16 @@ can be resolved without a parallel command-lineage map. The optimizer may call
 this operation directly; it remains an orchestrator rather than a second path
 implementation.
 
+Evidence-based drawing operations use
+`apply_action(DrawingActionRequest[Evidence]) ->
+DrawingActionResult[Evidence]`. The request pairs the immutable `Drawing` with
+opaque, immutable engine evidence and resolved tolerances. The result returns
+both a fresh drawing and fresh evidence. `trace_drawing` establishes that pair
+as `TraceDrawingResult[Evidence]`. For the Python engine the evidence contains
+raster masks, Skia footprints, source pixels, and optimizer bookkeeping; a
+native engine may use a different private representation without changing the
+scene, plan, store, or MCP contracts.
+
 Drawing actions may lower to the same path machinery internally without
 changing the public plan hierarchy. `merge` and `split` create a new outline
 and refit it; `set_symmetry` half-fits, mirrors, and unions a path; `stitch`

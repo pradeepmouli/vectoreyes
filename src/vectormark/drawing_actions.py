@@ -11,15 +11,9 @@ from __future__ import annotations
 import base64
 import binascii
 import re
-from collections.abc import Mapping
-from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import Annotated, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from .drawing import Drawing
-
 
 AxisName: TypeAlias = Literal["x", "y"]
 PrimitiveKind: TypeAlias = Literal["circle", "ellipse", "rect", "rounded_rect", "polygon"]
@@ -434,27 +428,5 @@ class DrawingPlan(ActionContract):
     ops: tuple[DrawingAction, ...] = Field(
         description="Ordered drawing actions; nested path actions live only in set_geometry(path)."
     )
-
-
-@dataclass(frozen=True)
-class DrawingActionResult:
-    """Immutable engine result for one successfully applied drawing action."""
-
-    drawing: Drawing
-    affected_region_ids: tuple[str, ...] = ()
-    created_region_ids: tuple[str, ...] = ()
-    retired_region_ids: tuple[str, ...] = ()
-    diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False, repr=False)
-
-    def __post_init__(self) -> None:
-        for label, values in (
-            ("affected region IDs", self.affected_region_ids),
-            ("created region IDs", self.created_region_ids),
-            ("retired region IDs", self.retired_region_ids),
-        ):
-            _unique(values, label=label)
-        object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
-
-
 MatchPathAction.model_rebuild()
 MirrorPathAction.model_rebuild()

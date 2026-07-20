@@ -11,15 +11,16 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Protocol
+from typing import Generic, Literal, Protocol, TypeVar
 
 from .drawing import Drawing
-from .drawing_actions import DrawingAction, DrawingActionResult, PathAction
+from .drawing_actions import DrawingAction, PathAction
 from .drawing_trace import TraceOptions
 from .path_geometry import PathGeometry
 
 
 PixelFormat = Literal["rgb8", "rgba8"]
+EvidenceT = TypeVar("EvidenceT")
 
 
 @dataclass(frozen=True)
@@ -54,10 +55,11 @@ class TraceDrawingRequest:
 
 
 @dataclass(frozen=True)
-class TraceDrawingResult:
+class TraceDrawingResult(Generic[EvidenceT]):
     """The v0 drawing plus diagnostics from the deterministic trace pipeline."""
 
     drawing: Drawing
+    evidence: EvidenceT
     diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -132,10 +134,47 @@ class PathActionResult:
         object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
 
 
-class DrawingEngine(Protocol):
+@dataclass(frozen=True)
+class DrawingActionRequest(Generic[EvidenceT]):
+    """Execute one drawing action against a scene and its engine evidence."""
+
+    drawing: Drawing
+    evidence: EvidenceT
+    action: DrawingAction
+    epsilon: float
+    max_error: float
+
+    def __post_init__(self) -> None:
+        if self.epsilon < 0 or self.max_error < 0:
+            raise ValueError("drawing-action tolerances must be non-negative")
+
+
+@dataclass(frozen=True)
+class DrawingActionResult(Generic[EvidenceT]):
+    """Fresh scene and evidence returned by one drawing action."""
+
+    drawing: Drawing
+    evidence: EvidenceT
+    affected_region_ids: tuple[str, ...] = ()
+    created_region_ids: tuple[str, ...] = ()
+    retired_region_ids: tuple[str, ...] = ()
+    diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False, repr=False)
+
+    def __post_init__(self) -> None:
+        for label, values in (
+            ("affected region IDs", self.affected_region_ids),
+            ("created region IDs", self.created_region_ids),
+            ("retired region IDs", self.retired_region_ids),
+        ):
+            if len(set(values)) != len(values):
+                raise ValueError(f"{label} must be unique")
+        object.__setattr__(self, "diagnostics", MappingProxyType(dict(self.diagnostics)))
+
+
+class DrawingEngine(Protocol[EvidenceT]):
     """Deterministic pre-optimizer and geometry-operation implementation."""
 
-    def trace_drawing(self, request: TraceDrawingRequest) -> TraceDrawingResult:
+    def trace_drawing(self, request: TraceDrawingRequest) -> TraceDrawingResult[EvidenceT]:
         """Trace source pixels through root fit and initial stitch into v0."""
 
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
@@ -144,5 +183,5 @@ class DrawingEngine(Protocol):
     def apply_path_action(self, request: PathActionRequest) -> PathActionResult:
         """Apply one nested path action using the current drawing for references."""
 
-    def apply_action(self, drawing: Drawing, action: DrawingAction) -> DrawingActionResult:
+    def apply_action(self, request: DrawingActionRequest[EvidenceT]) -> DrawingActionResult[EvidenceT]:
         """Apply one drawing action, delegating nested path actions as needed."""
