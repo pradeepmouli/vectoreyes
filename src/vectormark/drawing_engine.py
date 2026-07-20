@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import Literal, Protocol
 
 from .drawing import Drawing
+from .drawing_actions import DrawingAction, DrawingActionResult
 from .drawing_trace import TraceOptions
 from .path_geometry import PathGeometry
 
@@ -104,3 +105,5 @@ class DrawingEngine(Protocol):
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
         """Refit a closed line path using the supplied fitting strategy."""
 
+    def apply_action(self, drawing: Drawing, action: DrawingAction) -> DrawingActionResult:
+        """Apply one deterministic action and return a fresh drawing snapshot."""
