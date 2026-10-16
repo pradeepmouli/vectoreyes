@@ -1,4 +1,6 @@
 from dataclasses import replace
+from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
@@ -15,6 +17,8 @@ from vectormark.fit import Shape
 from vectormark.optimizer.vector_region import VectorRegion
 import vectormark.drawing_replay as replay_module
 from vectormark.drawing_state import DrawingStore, VersionCandidate
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
 def fixture():
@@ -217,3 +221,123 @@ def test_public_corner_action_resolves_plan_and_action_settings():
     assert application.settings.purpose == 'both'
     assert application.settings.execution == 'exploratory'
     assert application.recipe.options.max_error == 2.
+
+
+def test_selected_fit_is_reused_when_extending_recipe_without_calling_fitter(monkeypatch):
+    import vectormark.drawing_refine as refine_module
+    evidence, paint, base = fixture()
+    calls = []
+    def varying_fit(*args, **kwargs):
+        calls.append(len(calls) + 1)
+        return Shape('rect', dict(x=1., y=1., w=float(2 + calls[-1]), h=4.))
+    monkeypatch.setattr(refine_module, '_primitive_shape', varying_fit)
+    def plan(ops):
+        return DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+            drawing_id='drw_test', base_version='v0', ops=ops))
+    fit = dict(op='fit_primitive', target='r1', type='rect',
+        settings=dict(purpose='design_fidelity', execution='exploratory'))
+    selected = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan([fit])).recipe
+    first = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=selected)
+    assert calls == [1]
+    child = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=selected, plan=plan([dict(op='set_fill', target='r1',
+            fill=dict(type='flat', color='#FF0000'))])).recipe
+    child_result = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=child)
+    assert calls == [1]
+    assert child_result.drawing.regions[0].geometry == first.drawing.regions[0].geometry
+    reproposed = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan([fit])).recipe
+    second = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=reproposed)
+    assert calls == [1, 2]
+    assert second.drawing.regions[0].geometry != first.drawing.regions[0].geometry
+
+
+def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkeypatch):
+    import vectormark.drawing_refine as refine_module
+    evidence, paint, base = fixture()
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0',
+        ops=[dict(op='fit_primitive', target='r1', type='rect')]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    operation = recipe.operations[0]
+    monkeypatch.setattr(refine_module, '_primitive_shape',
+        lambda *args, **kwargs: pytest.fail('selected fit was regenerated'))
+    changed = replace(operation, settings=operation.settings.model_copy(update={'max_error': 2.}))
+    changed_recipe = replace(recipe, steps=tuple(changed if step is operation else step for step in recipe.steps))
+    with pytest.raises(ValueError, match='selected geometry dependencies changed'):
+        replay_module.propose_effective_recipe(drawing_id='drw_test',
+            evidence=evidence, paint=paint, recipe=changed_recipe)
+    changed_paint = build_paint_evidence(RasterImage(8, 8, 'rgb8', bytes([0]) * 8 * 8 * 3))
+    with pytest.raises(ValueError, match='selected geometry dependencies changed'):
+        replay_module.propose_effective_recipe(drawing_id='drw_test',
+            evidence=evidence, paint=changed_paint, recipe=recipe)
+    changed_upstream = replace(recipe, settings=recipe.settings.model_copy(update={'purpose': 'both'}))
+    with pytest.raises(ValueError, match='selected geometry dependencies changed'):
+        replay_module.propose_effective_recipe(drawing_id='drw_test',
+            evidence=evidence, paint=paint, recipe=changed_upstream)
+
+
+@pytest.mark.parametrize('method', ['fit_path', 'update_geometry'])
+def test_selected_path_geometry_replays_without_running_path_fitter(method, monkeypatch):
+    import test_drawing_corner_store_replay as helpers
+    import vectormark.drawing_refine as refine_module
+    store, base, paint, evidence = helpers._source_store()
+    commands = base.drawing.regions[0].geometry.path.commands
+    action = dict(op=method, target='r1')
+    if method == 'update_geometry':
+        action['ops'] = [dict(op='fit', between=[commands[0].id, commands[1].id], type='quadratic')]
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id=base.drawing.drawing_id, base_version=base.id, ops=[action]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base.effective_recipe, plan=plan).recipe
+    assert recipe.operations[0].selected_geometry is not None
+    expected = replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
+        evidence=evidence, paint=paint, recipe=recipe)
+    def fail(*args, **kwargs):
+        pytest.fail('selected path was refitted')
+    monkeypatch.setattr(refine_module, '_fit_target_path', fail)
+    monkeypatch.setattr(refine_module, '_path_shape', fail)
+    actual = replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert actual.drawing == expected.drawing
+    assert actual.replay.path_correspondence == expected.replay.path_correspondence
+
+
+def test_selected_fit_preserves_canonical_corner_diagnostics():
+    evidence, paint, base = fixture()
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0', ops=[dict(op='fit_path', target='r1')]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    operation = recipe.operations[0]
+    uncached = replace(recipe, steps=tuple(
+        replace(step, selected_geometry=None) if step is operation else step
+        for step in recipe.steps))
+    selected = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    generated = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=uncached)
+    assert selected.drawing.regions[0].geometry == generated.drawing.regions[0].geometry
+    assert selected.drawing.regions[0].diagnostics == generated.drawing.regions[0].diagnostics
+
+
+def test_selected_fit_preserves_unrelated_symmetry_materialization():
+    import test_retained_symmetry_export as symmetry_helpers
+    import test_drawing_recipe_actions as helpers
+    forest = symmetry_helpers._forest()
+    target = VectorRegion.from_shape(id=3,
+        shape=Shape('rect', dict(x=42., y=2., w=4., h=4.)), fill=FlatFill('#112233'),
+        z=2, raster=np.ones((24, 48), dtype=bool), drawing_id='r3', source_regions=('r3',))
+    evidence, paint, base = helpers._direct_recipe_fixture((*forest, target), width=48, height=24)
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0', ops=[dict(op='fit_primitive', target='r3', type='rect')]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    selected = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert not selected.drawing.regions[0].children

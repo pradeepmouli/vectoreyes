@@ -20,9 +20,12 @@ from .corner_recipe import (
 from .drawing import Drawing
 from .drawing_adapter import drawing_from_vector_regions, vector_region_address_index
 from .drawing_actions import (
+    ActionSettings,
     ActionSettingsOverride,
     AddCornerAction,
     DrawingPlan,
+    FitPathDrawingAction,
+    FitPrimitiveAction,
     RemoveCornerAction,
     ReplaceCornerAction,
     SetFillAction,
@@ -40,12 +43,14 @@ from .drawing_recipe import (
     NamedOutputBinding,
     ReplayRecord,
     RecipeOperation,
+    SelectedGeometryOutcome,
     RecipeStep,
     ResolvedCornerEdit,
     ResolveOriginalPaintOperation,
     SourcePathBinding,
     VersionPathSelection,
     drawing_revision,
+    geometry_outcome_dependencies,
     snapshot_geometry_evidence,
     snapshot_paint_evidence,
     validate_replay_record,
@@ -75,8 +80,10 @@ from .optimizer.automatic_replay import (
     bind_intent,
     input_revision,
     replay_batches,
+    shape_from_primitive_geometry,
 )
 from .optimizer.topology import normalize_retained_topology
+from .optimizer.symmetry_materialize import materialize_self_symmetry
 from .optimizer.vector_region import VectorRegion, _parse_subpaths, to_polygon
 from .optimizer.passes.seams import _command_id as seam_command_id
 from .optimizer.passes.seams import _path_id as seam_path_id
@@ -87,6 +94,7 @@ from .path_geometry import (
     PathGeometryWithCutouts,
     CompoundPathGeometry,
     PathGeometryWithSymmetry,
+    PrimitiveGeometry,
     geometry_from_svg_d,
     parse_svg_paths,
 )
@@ -807,6 +815,14 @@ def _execute_public_operation(
     recipe: EffectiveDrawingRecipe,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
 ) -> DrawingRegions:
+    if operation.selected_geometry is not None:
+        expected = geometry_outcome_dependencies(
+            operation, evidence=evidence, paint=paint, upstream=recipe,
+            input_revision=input_revision(list(regions)),
+        )
+        if expected != operation.selected_geometry.dependency_revision:
+            raise ValueError("selected geometry dependencies changed; submit a new fit proposal")
+        return _apply_selected_geometry(operation.selected_geometry, regions)
     action = operation.action
     if isinstance(action, (AddCornerAction, ReplaceCornerAction, RemoveCornerAction)):
         raise ValueError("corner edits must use their source-bound recipe executor")
@@ -836,6 +852,61 @@ def _execute_public_operation(
             if isinstance(action, UpdateGeometryAction) else None
         ),
     )
+
+
+def _selected_geometry_shape(outcome: SelectedGeometryOutcome) -> Shape:
+    geometry = outcome.geometry
+    if isinstance(geometry, PrimitiveGeometry):
+        shape = shape_from_primitive_geometry(geometry)
+        return Shape(shape.kind, {**dict(outcome.shape_metadata), **shape.params})
+    return Shape("path", {
+        **dict(outcome.shape_metadata), "d": geometry.to_svg_d(),
+        "canonical_path_geometry": geometry,
+    })
+
+
+def _apply_selected_geometry(
+    outcome: SelectedGeometryOutcome, regions: DrawingRegions,
+) -> DrawingRegions:
+    shape = _selected_geometry_shape(outcome)
+    prepared = normalize_retained_topology(materialize_self_symmetry(regions))
+    return normalize_retained_topology(_replace_target_region(
+        prepared, outcome.target_region_id,
+        lambda region: region.with_current(
+            shape, footprint=to_polygon(shape), diagnostics=outcome.diagnostics,
+        ),
+    ))
+
+
+def _retain_selected_fit(
+    operation: RecipeOperation, before: DrawingRegions, after: DrawingRegions,
+    *, evidence: GeometryEvidence, paint: PaintEvidence, upstream: EffectiveDrawingRecipe,
+) -> tuple[RecipeOperation, DrawingRegions]:
+    if not isinstance(operation.action, (FitPrimitiveAction, FitPathDrawingAction, UpdateGeometryAction)):
+        return operation, after
+    target_id = operation.action.target
+    target = next(leaf for root in after for leaf in root.leaves() if leaf.drawing_id == target_id)
+    drawing = drawing_from_vector_regions("selected-fit", width=1, height=1, regions=after)
+    selected = next(leaf for root in drawing.regions for leaf in root.leaves() if leaf.id == target_id)
+    if not isinstance(selected.geometry, (PrimitiveGeometry, PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+        raise ValueError("fit outcome is not concrete primitive or path geometry")
+    outcome = SelectedGeometryOutcome(
+        dependency_revision=geometry_outcome_dependencies(
+            operation, evidence=evidence, paint=paint, upstream=upstream,
+            input_revision=input_revision(list(before)),
+        ),
+        target_region_id=target_id, geometry=selected.geometry,
+        diagnostics=selected.diagnostics,
+    )
+    core_params = _selected_geometry_shape(outcome).params
+    assert target.current is not None
+    outcome = replace(outcome, shape_metadata={
+        key: value for key, value in target.current.params.items()
+        if key not in core_params
+    })
+    # Capture and reuse traverse the same representation boundary, so following
+    # steps bind to exactly the same geometry and metadata in either case.
+    return replace(operation, selected_geometry=outcome), _apply_selected_geometry(outcome, before)
 
 
 def _fit_source_spans(
@@ -1472,6 +1543,10 @@ def extend_recipe_with_plan(
                     evidence, paint, operation, regions, rgb=None,
                     recipe=replace(base_recipe, steps=tuple(steps)),
                     corner_replays=corner_replays,
+                )
+                operation, regions = _retain_selected_fit(
+                    operation, before_operation, regions, evidence=evidence,
+                    paint=paint, upstream=replace(base_recipe, steps=tuple(steps)),
                 )
                 steps.append(operation)
                 _register_public_outputs(

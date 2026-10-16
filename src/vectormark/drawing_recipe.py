@@ -49,7 +49,10 @@ from .material_pretrace import GradientSupport, MaterialPretraceResult
 from .optimizer.automatic_replay import ReplayBatch, input_revision
 from .optimizer.vector_region import VectorRegion
 from .path_fit_evidence import FitPathCorrespondence
-from .path_geometry import AffineTransform
+from .path_geometry import (
+    AffineTransform, PrimitiveGeometry, PathGeometry,
+    PathGeometryWithCutouts, CompoundPathGeometry,
+)
 
 
 ENGINE_REVISION = "python-drawing.v1"
@@ -430,6 +433,23 @@ RecipeTargetBinding: TypeAlias = EvidenceTargetBinding | NamedOutputBinding
 
 
 @dataclass(frozen=True)
+class SelectedGeometryOutcome:
+    """One chosen geometry value, not a second drawing or execution scene."""
+
+    dependency_revision: str
+    target_region_id: str
+    geometry: PrimitiveGeometry | PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry
+    shape_metadata: Mapping[str, object] = field(default_factory=dict)
+    diagnostics: Mapping[str, object] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.dependency_revision or not self.target_region_id:
+            raise ValueError("selected geometry bindings must not be empty")
+        object.__setattr__(self, "shape_metadata", freeze_value(self.shape_metadata))
+        object.__setattr__(self, "diagnostics", freeze_value(self.diagnostics))
+
+
+@dataclass(frozen=True)
 class RecipeOperation:
     id: str
     origin: RecipeOrigin
@@ -438,6 +458,7 @@ class RecipeOperation:
     bindings: tuple[RecipeTargetBinding, ...]
     status: ApplicationStatus = "applied"
     diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False)
+    selected_geometry: SelectedGeometryOutcome | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -589,6 +610,18 @@ def validate_replay_record(
         raise ValueError("replay paint revision mismatch")
     if replay.output_revision != drawing_revision(drawing):
         raise ValueError("replay output revision mismatch")
+
+
+def geometry_outcome_dependencies(
+    operation: RecipeOperation, *, evidence: GeometryEvidence, paint: PaintEvidence,
+    upstream: EffectiveDrawingRecipe, input_revision: str,
+) -> str:
+    """Conservatively bind a chosen fit to all inputs that could affect it."""
+    return _digest((
+        "selected-geometry.v1", evidence.revision, evidence.engine_revision,
+        paint.revision, upstream.revision, input_revision, operation.id,
+        operation.origin, operation.action, operation.settings, operation.bindings,
+    ))
 
 
 def drawing_revision(drawing: Drawing) -> str:

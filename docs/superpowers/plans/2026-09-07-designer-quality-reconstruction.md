@@ -441,9 +441,26 @@ scoped review found no actionable findings. The full source suite passes again
 engine/test prerequisites; unrelated UI, plugin, corpus and local tooling remain
 outside that commit.
 
-Still pending: per-operation selected-outcome reuse across a changed recipe and
-the concrete shared `DrawingEngine` migration. Whole-drawing reproduction must
-not be mistaken for that finer-grained dependency/reuse contract.
+Selected-fit reuse is now implemented for primitive fits, whole-path fits and
+direct path edits. Each operation retains one chosen canonical geometry value,
+not a second drawing tree. Its dependency identity binds evidence/engine/paint,
+intent, resolved settings, target bindings, upstream recipe and working input.
+Extending a recipe reuses that result without fitting; changed dependencies fail
+explicitly rather than silently regenerate. A fresh fit declaration deliberately
+selects a fresh outcome. The dependency scope is conservative: unrelated upstream
+changes can also invalidate reuse until target-local dependency analysis exists.
+
+Canonical corner diagnostics and ordinary symmetry/topology preparation are
+preserved across reuse. Fifteen retained contract tests pass, including controlled
+varying proposals, path correspondence, stale settings/paint/upstream inputs and
+the two review-driven metadata/materialization regressions. Post-fix full-suite
+verification passes: 910 tests, 951 warnings. No fitting defaults or error budgets
+changed. This checkpoint is source-tested; it is not a native rebuild/deployment
+or a visual-quality acceptance.
+
+Still pending: generic outcome reuse beyond fitted geometry, and the concrete
+shared `DrawingEngine` migration. This checkpoint does not claim to cache every
+corner, automatic or relationship operation result.
 
 Use the existing contract direction:
 
