@@ -1,3 +1,6 @@
+from dataclasses import replace
+import json
+
 import numpy as np
 import pytest
 
@@ -75,6 +78,19 @@ def test_trace_result_public_dict_excludes_pixel_arrays():
     assert "mask" not in public["regions"][0]
     assert "region_map_svg" not in public
     assert result.to_public_dict(include_region_map=True)["region_map_svg"] == result.region_map_svg
+
+
+def test_trace_result_public_dict_detaches_nested_frozen_background_as_json_native_data():
+    result = PythonTraceEngine().trace(_two_region_image(), TraceOptions())
+    nested = {"samples": [{"rgb": [1, 2, 3]}]}
+    result = replace(result, background={"mode": "test", "metadata": nested})
+
+    public = result.to_public_dict()
+    json.dumps(public)
+    public["geometry"]["background"]["metadata"]["samples"][0]["rgb"][0] = 99
+
+    assert nested["samples"][0]["rgb"] == [1, 2, 3]
+    assert result.background["metadata"]["samples"][0]["rgb"] == [1, 2, 3]
 
 
 def test_trace_result_region_arrays_are_read_only():

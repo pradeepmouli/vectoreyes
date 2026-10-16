@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 from ...fit import Shape, _parse_path_commands, _smooth_quadratic_path_d
+from ..automatic_replay import SmoothPathOperation, draft_input_ref, operation_intent
 from ..framework import Proposal
 from ..vector_region import VectorRegion, to_polygon
 
@@ -106,11 +107,14 @@ def smooth_pass(
         shape = _smoothed_shape(obj.current, max_boundary_error=max_error)
         if shape is None:
             continue
+        target_ref = draft_input_ref(obj.id)
+        action = SmoothPathOperation(target_ref, max_error)
         proposals.append(Proposal(
             (obj.id,),
             [obj.with_current(
                 shape,
                 footprint=to_polygon(shape),
             )],
+            intent=operation_intent(action, (target_ref,), (obj.id,)),
         ))
     return proposals

@@ -12,6 +12,7 @@ from ..candidate import Fill
 from ..emit import shape_to_path_d
 from ..fit import Shape
 from ..skia_geometry import SkPath, unary_union
+from ..types import CoverageField
 
 _NUM = r"-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 _PATH_TOKEN = re.compile(rf"[MLQCAZ]|{_NUM}")
@@ -210,7 +211,7 @@ class VectorRegion:
     color_hex: str | None = None
     drawing_id: str | None = None
     source_regions: tuple[str, ...] = ()
-    coverage: np.ndarray | None = field(default=None, compare=False)
+    coverage: CoverageField | np.ndarray | None = field(default=None, compare=False)
     diagnostics: Mapping[str, Any] = field(default_factory=dict, compare=False)
 
     def __init__(
@@ -228,7 +229,7 @@ class VectorRegion:
         color_hex: str | None = None,
         drawing_id: str | None = None,
         source_regions: Sequence[str] = (),
-        coverage: np.ndarray | None = None,
+        coverage: CoverageField | np.ndarray | None = None,
         diagnostics: Mapping[str, Any] | None = None,
     ) -> None:
         child_tuple = tuple(children)
@@ -258,7 +259,7 @@ class VectorRegion:
         object.__setattr__(self, "color_hex", color_hex)
         object.__setattr__(self, "drawing_id", drawing_id)
         object.__setattr__(self, "source_regions", tuple(str(region) for region in source_regions))
-        object.__setattr__(self, "coverage", None if coverage is None else np.asarray(coverage).copy())
+        object.__setattr__(self, "coverage", coverage if isinstance(coverage, CoverageField) else None if coverage is None else np.asarray(coverage).copy())
         object.__setattr__(self, "diagnostics", dict(diagnostics or {}))
 
     @classmethod
@@ -275,7 +276,7 @@ class VectorRegion:
         color_hex: str | None = None,
         drawing_id: str | None = None,
         source_regions: Sequence[str] = (),
-        coverage: np.ndarray | None = None,
+        coverage: CoverageField | np.ndarray | None = None,
         diagnostics: Mapping[str, Any] | None = None,
     ) -> "VectorRegion":
         return cls(
@@ -309,6 +310,7 @@ class VectorRegion:
         drawing_id: str | None = None,
         source_regions: Sequence[str] = (),
         diagnostics: Mapping[str, Any] | None = None,
+        original: Shape | None = None,
     ) -> "VectorRegion":
         if not children:
             raise ValueError("branch VectorRegion requires at least one child")
@@ -325,6 +327,7 @@ class VectorRegion:
             drawing_id=drawing_id,
             source_regions=source_regions,
             diagnostics=diagnostics,
+            original=original,
         )
 
     @property
@@ -414,6 +417,7 @@ class VectorRegion:
             drawing_id=self.drawing_id,
             source_regions=self.source_regions,
             diagnostics=merged_diagnostics,
+            original=self.original,
         )
 
     def with_children(
@@ -431,12 +435,15 @@ class VectorRegion:
             id=self.id,
             children=children,
             z=self.z,
+            raster=self.raster,
+            footprint=self.footprint,
             fill=self.fill,
             source_label=self.source_label,
             color_hex=self.color_hex,
             drawing_id=self.drawing_id,
             source_regions=self.source_regions,
             diagnostics=merged_diagnostics,
+            original=self.original,
         )
 
 

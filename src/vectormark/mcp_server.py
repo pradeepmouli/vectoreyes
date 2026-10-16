@@ -6,21 +6,28 @@ import base64
 import io
 import json
 import os
-from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from contextlib import asynccontextmanager
+from dataclasses import asdict, dataclass, replace
+from importlib.metadata import version
+from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import numpy as np
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import CallToolResult, ImageContent, TextContent
+from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
+from fastmcp.server.http import StreamableHTTPASGIApp
+from fastmcp.server.providers.skills import SkillsDirectoryProvider
+from mcp.server.streamable_http_manager import RequestBodyLimitMiddleware
+from mcp.types import CallToolResult, ImageContent, ResourceLink, TextContent
 from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic.json_schema import SkipJsonSchema
 
 from .mcp_image import (
     DEFAULT_COLORS,
     DEFAULT_MAX_SIZE_PX,
+    MAX_INPUT_BYTES,
     ImageError,
     preprocess_image,
     preprocess_image_with_alpha,
@@ -28,10 +35,34 @@ from .mcp_image import (
     svg_output_facts,
 )
 from .pipeline import Options, _flatten_on_white, idealize
+from .refinement_settings import RefinementPasses
+from .output_settings import DrawingOutputSettings
+from .background import BackgroundColor
 from .drawing_plan import PlanValidationError, parse_plan
-from .drawing_actions import DrawingPlan
+from .drawing_actions import ActionSettings, DrawingPlan
+from .drawing_engine import RasterImage
+from .drawing_recipe import (
+    EffectiveDrawingRecipe,
+    ResolveOriginalPaintOperation,
+    build_geometry_evidence,
+    build_paint_evidence,
+    recipe_json_value,
+)
+from .drawing_replay import (
+    extend_recipe_with_plan,
+    raster_pixels,
+    propose_effective_recipe,
+)
+from .drawing_render import (
+    drawing_summary as canonical_drawing_summary,
+    render_drawing as render_canonical_drawing,
+    render_labeled_drawing,
+    render_path_map,
+    render_command_map,
+)
 from .drawing_refine import (
     auto_refine,
+    auto_refine_with_intent,
     drawing_summary,
     labeled_drawing_svg,
     refine,
@@ -39,10 +70,18 @@ from .drawing_refine import (
     root_regions,
     refill_all_regions_from_source,
     stitch_regions,
+    stitch_regions_with_intent,
 )
-from .drawing_state import DrawingNotFound, DrawingStore
+from .drawing_state import (
+    DrawingManifest,
+    DrawingNotFound,
+    DrawingStore,
+    VersionCandidate,
+)
 from .drawing_trace import PythonTraceEngine, TraceOptions
-from .color import infer_max_colors, white_canvas_mask
+from .color import infer_max_sampling_colors, white_canvas_mask
+from .material_pretrace import preprocess_material_trace
+from .json_value import to_json_value
 
 # Transport is chosen at startup. stdio = local, full-trust (your own machine, your
 # files). Any HTTP transport is potentially network-reachable, so the filesystem tools
@@ -50,6 +89,9 @@ from .color import infer_max_colors, white_canvas_mask
 # the byte-in/SVG-out tools are exposed. See docs/mcp.md.
 _TRANSPORT = (os.environ.get("VECTORMARK_MCP_TRANSPORT") or "stdio").strip()
 _LOCAL_TRUST = _TRANSPORT == "stdio"
+# HTTP carries a base64 image plus its JSON envelope. Keep the transport limit
+# above the image resolver's decoded-byte limit, not MCP's smaller default.
+_MAX_MCP_REQUEST_BYTES = 4 * ((MAX_INPUT_BYTES + 2) // 3) + 1024 * 1024
 
 WIDGET_URI = "ui://vectormark/logo-widget.html"
 _DRAWING_WIDGET_META = {
@@ -77,8 +119,13 @@ _WIDGET_BUILD_REQUIRED_HTML = """
 
 
 def _read_widget_html() -> str:
+    packaged = files("vectormark").joinpath("assets", "mcp-app.html")
+    if packaged.is_file():
+        return packaged.read_text(encoding="utf-8")
+    # Editable installs read the Vite output directly; wheels carry the same
+    # bytes as package data and never depend on the checkout's directory layout.
     if _WIDGET_HTML_PATH.is_file():
-        return _WIDGET_HTML_PATH.read_text()
+        return _WIDGET_HTML_PATH.read_text(encoding="utf-8")
     return _WIDGET_BUILD_REQUIRED_HTML
 
 
@@ -116,7 +163,7 @@ def idealize_logo_file(
     options = Options(
         epsilon=epsilon,
         max_error=max_error,
-        max_colors=colors,
+        max_sampling_colors=colors,
         flatten=flatten,
         no_symmetry=no_symmetry,
     )
@@ -172,7 +219,7 @@ def idealize_logo_bytes(
     options = Options(
         epsilon=epsilon,
         max_error=max_error,
-        max_colors=colors,
+        max_sampling_colors=colors,
         flatten=flatten,
         no_symmetry=no_symmetry,
     )
@@ -207,19 +254,26 @@ def _render_preview_png(svg: str, width: int, height: int, warnings: list[str]) 
 def _render_review_panel_png(
     source_rgb: np.ndarray,
     trace,
-    v0_regions,
+    baseline_svg: str,
     current_svg: str,
     labeled_svg: str,
     warnings: list[str],
     *,
+    baseline_version: str,
+    parent_svg: str | None = None,
+    parent_version: str | None = None,
+    requested_base_svg: str | None = None,
+    requested_base_version: str | None = None,
     geometry_guide_rgb: np.ndarray | None = None,
+    path_map_svg: str | None = None,
 ) -> bytes | None:
     """Render the source, retained trace, current output, and target map for review."""
     try:
         import resvg_py
 
-        def render_svg(svg: str) -> Image.Image:
-            png = resvg_py.svg_to_bytes(svg_string=svg, width=trace.width, height=trace.height)
+        def render_svg(svg: str, *, native_size: bool = False) -> Image.Image:
+            dimensions = {} if native_size else {"width": trace.width, "height": trace.height}
+            png = resvg_py.svg_to_bytes(svg_string=svg, **dimensions)
             rgba = Image.open(io.BytesIO(bytes(png))).convert("RGBA")
             image = Image.new("RGB", rgba.size, "white")
             image.paste(rgba, mask=rgba.getchannel("A"))
@@ -244,28 +298,69 @@ def _render_review_panel_png(
             "Difference map\\n\\nblack = matching pixels\\nbrighter = larger source-SVG mismatch\\n\\nDifferences are amplified 4x for review.",
             fill="white", font=ImageFont.load_default(), spacing=6,
         )
-        v0_svg = render_drawing_regions(trace, v0_regions).svg
+        no_parent = Image.new("RGB", source.size, "#E5E7EB")
+        ImageDraw.Draw(no_parent).multiline_text(
+            (16, 16),
+            "No retained parent\n(source baseline)",
+            fill="#374151",
+            font=ImageFont.load_default(),
+            spacing=6,
+        )
+        baseline_label = f"selected baseline ({baseline_version})"
+        parent_label = (
+            f"actual parent ({parent_version})"
+            if parent_version is not None
+            else "actual parent: none"
+        )
         if geometry_guide_rgb is None:
             frames = (
                 (source, "source (MCP preprocess)"),
-                (render_svg(v0_svg), "MCP trace v0"),
+                (render_svg(baseline_svg), baseline_label),
+                (
+                    render_svg(parent_svg) if parent_svg is not None else no_parent,
+                    parent_label,
+                ),
                 (current, "current refined SVG"),
-                (render_svg(labeled_svg), "addressable region map"),
+                (render_svg(labeled_svg, native_size=True), "addressable region map"),
                 (difference, "absolute source-SVG diff (4x)"),
-                (legend, "difference legend"),
             )
         else:
             guide = Image.fromarray(np.asarray(geometry_guide_rgb, dtype=np.uint8)).convert("RGB")
+            requested_label = f"requested base ({requested_base_version})"
+            if requested_base_version == parent_version:
+                requested_label = (
+                    f"requested base / actual parent ({requested_base_version})"
+                )
+            if baseline_version == parent_version:
+                baseline_label = (
+                    f"selected baseline / actual parent ({baseline_version})"
+                )
+            lineage_frames = [
+                (
+                    render_svg(requested_base_svg)
+                    if requested_base_svg is not None
+                    else no_parent,
+                    requested_label,
+                ),
+                (render_svg(baseline_svg), baseline_label),
+            ]
+            if (
+                parent_version not in {requested_base_version, baseline_version}
+                and parent_svg is not None
+            ):
+                lineage_frames.append((render_svg(parent_svg), parent_label))
             frames = (
                 (source, "original source"),
                 (guide, "geometry guide (labels only)"),
-                (render_svg(v0_svg), "guide trace"),
+                *lineage_frames,
                 (current, "original-filled final SVG"),
-                (render_svg(labeled_svg), "addressable region map"),
                 (difference, "absolute source-SVG diff (4x; black = match)"),
             )
+        if path_map_svg is not None:
+            frames = (*frames, (render_svg(path_map_svg, native_size=True), "addressable path segments"))
         font = ImageFont.load_default()
-        panel = Image.new("RGB", (1140, 640), "white")
+        rows = (len(frames) + 2) // 3
+        panel = Image.new("RGB", (1140, rows * 320), "white")
         for index, (image, label) in enumerate(frames):
             panel.paste(tile(image, label, font), ((index % 3) * 380, (index // 3) * 320))
         output = io.BytesIO()
@@ -296,7 +391,7 @@ def idealize_logo_image(
     opts = Options(
         epsilon=options.get("epsilon", 1.5),
         max_error=options.get("max_error", 1.0),
-        max_colors=options.get("colors", DEFAULT_COLORS),
+        max_sampling_colors=options.get("colors", DEFAULT_COLORS),
         min_region_size=options.get("min_region_size", 16),
         min_region_fraction=options.get("min_region_fraction", 0.02),
         flatten=options.get("flatten", False),
@@ -335,7 +430,7 @@ def idealize_logo_image(
             "quantized": meta.quantized,
         },
         "vectormark": {
-            "colors": opts.max_colors,
+            "colors": opts.max_sampling_colors,
             "flatten": opts.flatten,
             "no_symmetry": opts.no_symmetry,
             "epsilon": opts.epsilon,
@@ -357,7 +452,12 @@ def idealize_logo_image(
 
 mcp = FastMCP(
     "vectormark",
+    version=version("vectormark"),
+    dereference_schemas=False,
     instructions=(
+        "Read skill://designer-reconstruction/SKILL.md for the reconstruction workflow and worked refinement plans. "
+        "For trace_drawing supply exactly one of image (ChatGPT file with download_url and file_id) or image_data (direct PNG path, URL, data_uri, or base64). "
+        "For retrace_drawing use geometry_guide for a host file or geometry_guide_data for direct input; never put direct input in a file-param field. "
         "Convert rendered raster artwork into clean, editable SVG. The final SVG must be a designer-quality reconstruction: "
         "at the target size its rendering should be visually indistinguishable from the supplied render, so the raster can be "
         "discarded and the vector drawing can become the source of truth. Treat the source-minus-SVG diff as a fidelity gate: "
@@ -367,11 +467,11 @@ mcp = FastMCP(
         "whose final fills are re-fitted from the original source RGB; refine='none' returns only v0 and retains "
         "unrefined trace roots when you need to judge the raw decomposition before any automatic cleanup. Use retrace_drawing only when you can supply "
         "a better palette-labelled geometry guide; its guide colours are temporary labels and all final fills are still fitted from the original source. "
-        "For trace options, use max_colors='auto' when palette complexity is unknown: it selects the smallest 8/16/32/64 palette whose perceptual improvement "
+        "For trace options, use max_sampling_colors='auto' when palette complexity is unknown: it selects the smallest 8/16/32/64 palette whose perceptual improvement "
         "has flattened. Use a fixed integer when a known material count matters. fit_strategy='quadratic' is the stable default; 'progressive' protects "
         "pre-fit straight sides, then uses Q/C recursive fitting for the remaining spans; 'progressive_allow_lines' also permits new straight L segments during recursion. "
-        "For either refine mode, inspect the returned five-panel review image before making plan decisions: it shows the preprocessed "
-        "source, retained trace v0, current SVG (v1 when auto refinement is enabled), addressable region map, and amplified source-minus-SVG diff. "
+        "For either refine mode, inspect the returned lineage review image before making plan decisions: it shows the preprocessed "
+        "source, selected retained baseline, actual parent (or an explicit no-parent state), current SVG, addressable region map, and amplified source-minus-SVG diff. "
         "Use it together with the "
         "labeled_svg and raw_trace artifacts, then make semantic "
         "judgments about every retained region (primitive, path geometry, symmetry, clones, fill, "
@@ -392,6 +492,10 @@ mcp = FastMCP(
         "are refined from the resulting child version."
     ),
 )
+mcp.add_provider(SkillsDirectoryProvider(
+    roots=Path(__file__).parent / "assets" / "skills",
+    supporting_files="resources",
+))
 
 
 class _DrawingOutputSchema(BaseModel):
@@ -403,25 +507,254 @@ class _DrawingOutputSchema(BaseModel):
 class DrawingArtifactsOutput(_DrawingOutputSchema):
     svg: str = Field(description="Rendered SVG for this drawing version.")
     preview: str = Field(description="Clean PNG preview for visual review.")
-    review_panel: str = Field(description="Five-panel PNG: source, retained trace v0, current SVG, addressable region map, and amplified source-minus-SVG diff.")
+    review_panel: str = Field(description="Lineage-aware PNG comparing source, selected baseline, actual parent, current SVG, addressable geometry context, and amplified source-minus-SVG diff.")
     labeled_svg: str = Field(description="SVG region map. It labels the public, plan-addressable retained region IDs for this version.")
+    path_map: str = Field(description="SVG map of individual L/Q/C/A segments with colors and an exact command-ID side legend.")
+    command_map: str = Field(description="SVG map of individual command endpoints for path operations.")
     raw_trace: str = Field(description="Raw trace provenance artifact.")
     plan: str = Field(description="JSON provenance for the operation that created this version.")
     versions: str = Field(description="JSON manifest of every live version and branch for this drawing.")
 
 
+class PointOutput(RootModel[tuple[float, float]]):
+    pass
+
+
+class CornerBoundaryOutput(_DrawingOutputSchema):
+    editable: bool
+
+
+class MoveCommandOutput(_DrawingOutputSchema):
+    id: str
+    type: Literal["move"]
+    end: PointOutput
+    corner_boundary: CornerBoundaryOutput
+
+
+class LineCommandOutput(MoveCommandOutput):
+    type: Literal["line"]
+
+
+class QuadraticCommandOutput(MoveCommandOutput):
+    type: Literal["quadratic"]
+    control: PointOutput
+
+
+class CubicCommandOutput(MoveCommandOutput):
+    type: Literal["cubic"]
+    control_1: PointOutput
+    control_2: PointOutput
+
+
+class ArcCommandOutput(MoveCommandOutput):
+    type: Literal["arc"]
+    rx: float
+    ry: float
+    rotation_degrees: float
+    large_arc: bool
+    sweep: bool
+
+
+PathCommandOutput = Annotated[
+    MoveCommandOutput
+    | LineCommandOutput
+    | QuadraticCommandOutput
+    | CubicCommandOutput
+    | ArcCommandOutput,
+    Field(discriminator="type"),
+]
+
+
+class CornerAnchorOutput(_DrawingOutputSchema):
+    id: str
+    type: Literal["corner"]
+    entry_command_id: str
+    exit_command_id: str
+    owned_command_ids: list[str]
+    radius: float | None
+
+
+class InflectionAnchorOutput(_DrawingOutputSchema):
+    id: str
+    type: Literal["inflection"]
+    command_ids: list[str]
+
+
+class ExtremumAnchorOutput(InflectionAnchorOutput):
+    type: Literal["extremum"]
+
+
+class JunctionAnchorOutput(InflectionAnchorOutput):
+    type: Literal["junction"]
+    reference_junction_id: str
+
+
+PathAnchorOutput = Annotated[
+    CornerAnchorOutput
+    | InflectionAnchorOutput
+    | ExtremumAnchorOutput
+    | JunctionAnchorOutput,
+    Field(discriminator="type"),
+]
+
+
+class CornerFeatureOutput(_DrawingOutputSchema):
+    feature_id: str = Field(description="Short displayed corner ID scoped to this drawing version and path; use it in corner plans, not a source provenance hash.")
+    role: str
+    command_id: str = Field(description="Fitted command ID in the same displayed path and drawing version.")
+
+
+class CornerEditAvailabilityOutput(_DrawingOutputSchema):
+    supported: bool
+    reason: Literal["no_exact_retained_source_output_correspondence"] | None
+
+
+class PathDetailOutput(_DrawingOutputSchema):
+    id: str
+    d: str
+    commands: list[PathCommandOutput]
+    anchors: list[PathAnchorOutput]
+    corner_features: list[CornerFeatureOutput]
+    corner_edit: CornerEditAvailabilityOutput
+
+
+class PathGeometryOutput(PathDetailOutput):
+    type: Literal["path"]
+
+
+class CutoutPathGeometryOutput(_DrawingOutputSchema):
+    type: Literal["path_with_cutouts"]
+    d: str
+    fill_rule: Literal["evenodd"]
+    paths: list[PathDetailOutput]
+
+
+class CompoundPathGeometryOutput(_DrawingOutputSchema):
+    type: Literal["compound_path"]
+    d: str
+    fill_rule: Literal["nonzero", "evenodd"]
+    topology_pending: Literal[True]
+    reason: str
+    paths: list[PathDetailOutput]
+
+
+class SymmetryAxisOutput(_DrawingOutputSchema):
+    point: PointOutput
+    angle_degrees: float
+
+
+class SymmetricPathGeometryOutput(_DrawingOutputSchema):
+    type: Literal["symmetric_path"]
+    half: PathDetailOutput
+    axis: SymmetryAxisOutput
+
+
+class AffineTransformOutput(_DrawingOutputSchema):
+    a: float
+    b: float
+    c: float
+    d: float
+    tx: float
+    ty: float
+
+
+class CloneGeometryOutput(_DrawingOutputSchema):
+    type: Literal["clone"]
+    source_region_id: str
+    transforms: list[AffineTransformOutput]
+
+
+class CircleParametersOutput(_DrawingOutputSchema):
+    center: PointOutput
+    radius: float
+
+
+class EllipseParametersOutput(_DrawingOutputSchema):
+    center: PointOutput
+    radius_x: float
+    radius_y: float
+
+
+class RectangleParametersOutput(_DrawingOutputSchema):
+    origin: PointOutput
+    width: float
+    height: float
+
+
+class RoundedRectangleParametersOutput(RectangleParametersOutput):
+    radius_x: float
+    radius_y: float
+
+
+class PolygonParametersOutput(_DrawingOutputSchema):
+    vertices: list[PointOutput]
+
+
+class CircleGeometryOutput(_DrawingOutputSchema):
+    type: Literal["circle"]
+    parameters: CircleParametersOutput
+
+
+class EllipseGeometryOutput(_DrawingOutputSchema):
+    type: Literal["ellipse"]
+    parameters: EllipseParametersOutput
+
+
+class RectangleGeometryOutput(_DrawingOutputSchema):
+    type: Literal["rectangle"]
+    parameters: RectangleParametersOutput
+
+
+class RoundedRectangleGeometryOutput(_DrawingOutputSchema):
+    type: Literal["roundedrectangle"]
+    parameters: RoundedRectangleParametersOutput
+
+
+class PolygonGeometryOutput(_DrawingOutputSchema):
+    type: Literal["polygon"]
+    parameters: PolygonParametersOutput
+
+
+CanonicalGeometryOutput = Annotated[
+    PathGeometryOutput
+    | CutoutPathGeometryOutput
+    | CompoundPathGeometryOutput
+    | SymmetricPathGeometryOutput
+    | CloneGeometryOutput
+    | CircleGeometryOutput
+    | EllipseGeometryOutput
+    | RectangleGeometryOutput
+    | RoundedRectangleGeometryOutput
+    | PolygonGeometryOutput,
+    Field(discriminator="type"),
+]
+
+
 class DrawingTargetOutput(_DrawingOutputSchema):
+    cutout: bool = Field(False, description="This region is exported as transparent negative space because its fill matches the retained background color.")
     id: str
     root_id: str = Field(description="Public semantic root ID. Use this single ID in merge.regions to union all of this root's current children.")
     source_regions: list[str]
-    geometry: str
+    geometry: CanonicalGeometryOutput = Field(
+        description="Canonical structured geometry, including version-scoped path and command addresses when applicable."
+    )
     fill: str
     z: float
     diagnostics: dict[str, Any]
 
 
+class DrawingGroupOutput(_DrawingOutputSchema):
+    id: str
+    child_ids: list[str]
+    diagnostics: dict[str, Any] = Field(default_factory=dict)
+
+
 class DrawingReportOutput(_DrawingOutputSchema):
+    output_settings: DrawingOutputSettings = Field(default_factory=DrawingOutputSettings)
+    export: dict[str, str | int] | None = None
+    background: BackgroundColor | None = None
     targets: list[DrawingTargetOutput]
+    groups: list[DrawingGroupOutput] = Field(default_factory=list)
 
 
 class TraceRegionOutput(_DrawingOutputSchema):
@@ -437,13 +770,14 @@ class TraceSummaryOutput(_DrawingOutputSchema):
     height: int
     options: dict[str, Any]
     regions: list[TraceRegionOutput]
+    groups: list[DrawingGroupOutput] = Field(default_factory=list)
 
 
 class TraceVersionOutput(_DrawingOutputSchema):
-    """One immutable drawing version produced by ``trace_drawing``."""
+    """One immutable canonical drawing version returned by a drawing tool."""
 
-    version: str = Field(description="Version ID for this output: v0 is always the pre-optimizer trace; v1 is the automatic refinement when requested.")
-    parent_version: str | None = Field(description="Parent version, or null for the pre-optimizer v0 trace.")
+    version: str = Field(description="Opaque version ID for this retained canonical Drawing.")
+    parent_version: str | None = Field(description="Actual retained parent version, or null for the source baseline.")
     artifacts: DrawingArtifactsOutput
     report: DrawingReportOutput
 
@@ -451,33 +785,83 @@ class TraceVersionOutput(_DrawingOutputSchema):
 class TraceDrawingOutput(_DrawingOutputSchema):
     """Trace envelope with one pre-optimizer output and optional automatic child."""
 
-    drawing_id: str | None = None
+    drawing_id: str
     outputs: list[TraceVersionOutput] = Field(
-        default_factory=list,
         description="Ordered immutable trace outputs: [v0] for refine='none', or [v0, v1] for refine='auto'.",
     )
-    version: str | None = None
-    trace: TraceSummaryOutput | None = None
-    artifacts: DrawingArtifactsOutput | None = None
-    report: DrawingReportOutput | None = None
-    svg: str | None = None
-    width: int | None = None
-    height: int | None = None
-    svg_bytes: int | None = None
-    preview_available: bool | None = None
-    diagnostics: dict[str, Any] | None = None
-    trace_options_schema: dict[str, Any] | None = Field(
-        None,
+    version: str
+    parent_version: str | None = Field(
+        description="Actual parent of the selected current version."
+    )
+    requested_base_version: None = Field(
+        description="Source tracing has no caller-selected retained base."
+    )
+    baseline_version: str = Field(
+        description="Retained geometry baseline used by review and replay."
+    )
+    trace: TraceSummaryOutput
+    trace_options: "TraceDrawingOptions" = Field(
+        description="Complete validated settings used for this trace request, including defaults and preprocessing. Kept separate from resolved trace diagnostics such as the automatic palette size.",
+    )
+    artifacts: DrawingArtifactsOutput
+    report: DrawingReportOutput
+    trace_options_schema: dict[str, Any] = Field(
         description="Pydantic-generated schema for the trace options. The MCP app uses its enum values to render trace controls.",
     )
+
+
+class RetracedDrawingOutput(_DrawingOutputSchema):
+    drawing_id: str
+    version: str
+    parent_version: str
+    requested_base_version: str = Field(
+        description="Version explicitly selected by the caller."
+    )
+    baseline_version: str = Field(
+        description="Retained geometry baseline used by review and replay."
+    )
+    outputs: list[TraceVersionOutput] = Field(
+        description="Ordered versions published atomically by this call; guide retrace returns baseline then optimized child.",
+    )
+    artifacts: DrawingArtifactsOutput
+    report: DrawingReportOutput
 
 
 class RefinedDrawingOutput(_DrawingOutputSchema):
     drawing_id: str
     version: str
     parent_version: str
+    requested_base_version: str = Field(
+        description="Version explicitly selected by the caller."
+    )
+    baseline_version: str = Field(
+        description="Retained geometry baseline used by review and replay."
+    )
+    outputs: list[TraceVersionOutput] = Field(
+        description="Versions published atomically by this call; semantic refine returns one child."
+    )
     artifacts: DrawingArtifactsOutput
     report: DrawingReportOutput
+
+
+class SourcePolylinePointOutput(_DrawingOutputSchema):
+    id: str
+    end: tuple[float, float]
+
+
+class SourcePolylineCornerOutput(_DrawingOutputSchema):
+    id: str
+    entry_command_id: str
+    exit_command_id: str
+    owned_command_ids: list[str]
+
+
+class SourcePolylineOutput(_DrawingOutputSchema):
+    region_id: str
+    path_id: str
+    source_path_id: str
+    commands: list[SourcePolylinePointOutput]
+    corners: list[SourcePolylineCornerOutput]
 
 
 class DrawingArtifactOutput(_DrawingOutputSchema):
@@ -486,6 +870,7 @@ class DrawingArtifactOutput(_DrawingOutputSchema):
     mime_type: Literal["image/svg+xml", "application/json", "image/png"]
     svg: str | None = None
     trace: dict[str, Any] | None = None
+    source_paths: list[SourcePolylineOutput] | None = None
     plan: dict[str, Any] | None = None
     versions: list[dict[str, Any]] | None = None
 
@@ -499,8 +884,28 @@ class RenderedSvgOutput(_DrawingOutputSchema):
     svg: str
 
 
+def _validated_drawing_result(
+    schema: type[BaseModel], result: dict[str, object], review_panel: bytes
+) -> CallToolResult:
+    """Validate the exact public envelope before its version becomes visible."""
+    payload = schema.model_validate(result).model_dump(mode="json")
+    return CallToolResult(
+        content=[
+            TextContent(type="text", text=json.dumps(payload)),
+            ImageContent(
+                type="image",
+                data=base64.b64encode(review_panel).decode(),
+                mimeType="image/png",
+            ),
+        ],
+        structuredContent=payload,
+        isError=False,
+    )
+
+
 class ImageRef(BaseModel):
-    """A reference to the source image. Provide exactly one source. ChatGPT/host file
+    """A reference to a PNG source image. Other encoded formats are rejected.
+    Provide exactly one source. ChatGPT/host file
     params fill `download_url` (+ `file_id`); callers may instead pass a `path`, https
     `url`, `data_uri`, or bare `base64`."""
 
@@ -514,8 +919,42 @@ class ImageRef(BaseModel):
         None, description="Local filesystem path. Resolved only on the stdio/local-trust server; rejected over HTTP."
     )
     url: str | None = Field(None, description="Explicit https URL to fetch (SSRF-guarded).")
-    data_uri: str | None = Field(None, description="A data:image/...;base64,... URI.")
-    base64: str | None = Field(None, description="Bare base64-encoded image bytes (PNG/JPEG/WebP).")
+    data_uri: str | None = Field(None, description="A data:image/png;base64,... URI.")
+    base64: str | None = Field(None, description="Bare base64-encoded PNG bytes.")
+
+
+class PlatformImageRef(BaseModel):
+    """A ChatGPT-provided PNG file, never a local path or encoded image."""
+
+    model_config = ConfigDict(extra="forbid")
+    download_url: str = Field(min_length=1, description="Host-provided temporary file download URL.")
+    file_id: str = Field(min_length=1, description="Host-provided file identifier.")
+    mime_type: str = Field(default="image/png", description="Optional declared MIME type.")
+    file_name: str = Field(default="", description="Optional original filename.")
+
+
+class DirectImageRef(BaseModel):
+    """Explicit non-file-param PNG ingress; provide exactly one source."""
+
+    model_config = ConfigDict(extra="forbid")
+    path: str | None = Field(None, description="Local path, accepted only by trusted stdio servers.")
+    url: str | None = Field(None, description="HTTPS image URL, subject to SSRF validation.")
+    data_uri: str | None = Field(None, description="data:image/png;base64,...")
+    base64: str | None = Field(None, description="Bare base64-encoded PNG bytes.")
+
+
+def _select_image_ref(
+    image: PlatformImageRef | ImageRef | None,
+    image_data: DirectImageRef | None,
+) -> ImageRef:
+    """Normalize either public ingress route into the shared image resolver."""
+    if (image is None) == (image_data is None):
+        raise ToolError("[INVALID_ARGUMENT] provide exactly one host file or direct image source")
+    selected = image if image is not None else image_data
+    payload = selected.model_dump(exclude_none=True)
+    if image_data is not None and sum(bool(value) for value in payload.values()) != 1:
+        raise ToolError("[INVALID_ARGUMENT] direct image input requires exactly one of path, url, data_uri, or base64")
+    return ImageRef.model_validate(payload)
 
 
 class PreprocessOpts(BaseModel):
@@ -542,13 +981,21 @@ class IdealizeOptions(BaseModel):
     preprocess: PreprocessOpts = Field(default_factory=PreprocessOpts, description="Server-side preprocessing options.")
 
 
-class TraceDrawingOptions(BaseModel):
+class TraceDrawingOptions(DrawingOutputSettings):
+    corner_rounding: bool = Field(True, description="Protect detected rounded corner spans during v0 fitting. False keeps detected point boundaries instead; it does not disable corner detection or run corner normalization.")
+    background_color: str | None = Field(None, pattern=r"^#[0-9a-fA-F]{6}$", description="Explicit canvas/background color. Otherwise use boundary detection's inferred color. All matching final regions become transparent cutouts; remove_background=off disables this.")
+    background_tolerance: float = Field(32.0, ge=0, le=442, allow_inf_nan=False, description="Shared Euclidean RGB matching tolerance for boundary background detection and final cutouts.")
+    refinement_passes: RefinementPasses = Field(
+        default_factory=RefinementPasses,
+        description="Individual v1 automatic geometry passes. Omitted fields use engine defaults; ignored when refine=none. Order stays fixed. Final source-fill resolution is always performed.",
+    )
+    initial_stitch: bool = Field(True, description="Repair shared region boundaries in v0 before optional automatic refinement.")
     refine: Literal["auto", "none"] = Field(
         "none", description="Automatic refinement at trace time: none retains trace roots as v0; auto creates an auto-refined child version from those same roots."
     )
-    max_colors: int | Literal["auto"] = Field(
+    max_sampling_colors: int | Literal["auto"] = Field(
         16,
-        description="Maximum quantized palette colors, or auto to select the smallest 8/16/32/64 palette before perceptual improvement flattens.",
+        description="Maximum sampling palette for tracing/segmentation only; final fills are controlled separately. Auto infers a sampling palette.",
     )
     min_region_size: int = Field(16, ge=1, description="Absolute pixel-area floor for raw trace regions.")
     max_hole_area: int = Field(128, ge=0, description="Maximum area of an enclosed, locally color-compatible root-mask hole to fill before path fitting; zero disables this cleanup.")
@@ -562,9 +1009,26 @@ class TraceDrawingOptions(BaseModel):
         "quadratic",
         description="Raw path fitting: quadratic preserves the standard quadratic fitter; progressive protects pre-fit straight sides then uses Q/C recursion; progressive_allow_lines also permits L during recursion.",
     )
+    support_weighted_corners: bool = Field(
+        False,
+        description=(
+            "Preserve shallow rounded corners by accumulating adjacent same-direction turns and requiring a credible long exterior support edge. "
+            "This augments pre-fit corner evidence without globally relaxing the corner angle threshold or cornering smooth closed curves."
+        ),
+    )
+    gradient_pretrace: bool = Field(
+        False,
+        description=(
+            "Build a high-color material analysis, merge non-credible seams and continuous color fields, then trace a flat-color proxy. "
+            "The original raster remains authoritative for exterior geometry and final fills."
+        ),
+    )
     corner_normalize: bool = Field(
         False,
-        description="Auto-refinement toggle: canonicalize recognised rounded corners to one quadratic while keeping their endpoints fixed.",
+        description=(
+            "v1 auto-refinement toggle: canonicalize recognised rounded corners to one quadratic while keeping their endpoints fixed. "
+            "This never changes the pre-optimizer v0 trace."
+        ),
     )
     remove_background: Literal["auto", "off", "on"] = Field(
         "auto",
@@ -580,7 +1044,15 @@ def _trace_options_schema() -> dict[str, Any]:
     property definitions with a trace result lets the interactive widget render
     the same enum values when it offers a rerun.
     """
-    return TraceDrawingOptions.model_json_schema()["properties"]
+    schema = TraceDrawingOptions.model_json_schema()
+    properties = schema["properties"]
+    properties["refinement_passes"] = {
+        **properties["refinement_passes"],
+        **schema["$defs"]["RefinementPasses"],
+        "default": RefinementPasses().model_dump(),
+    }
+    properties["refinement_passes"].pop("$ref", None)
+    return properties
 
 
 def _drawing_artifact_refs(drawing_id: str, version_id: str) -> dict[str, str]:
@@ -591,24 +1063,15 @@ def _drawing_artifact_refs(drawing_id: str, version_id: str) -> dict[str, str]:
         "preview": base + ".png",
         "review_panel": base + ".review.png",
         "labeled_svg": base + ".labels.svg",
+        "path_map": base + ".paths.svg",
+        "command_map": base + ".commands.svg",
         "raw_trace": base + ".trace.json",
         "plan": base + ".plan.json",
         "versions": f"drawing://{drawing_id}/versions.json",
     }
 
 
-def _jsonable(value: object) -> Any:
-    """Convert immutable drawing provenance into JSON-safe public data."""
-    if isinstance(value, Mapping):
-        return {str(key): _jsonable(item) for key, item in value.items()}
-    if isinstance(value, list | tuple | set | frozenset):
-        return [_jsonable(item) for item in value]
-    if isinstance(value, np.generic):
-        return value.item()
-    return value
-
-
-def _version_manifest(drawing_id: str, drawing: Any) -> list[dict[str, Any]]:
+def _version_manifest(drawing_id: str, manifest: DrawingManifest) -> list[dict[str, Any]]:
     return [
         {
             "version": version.id,
@@ -616,14 +1079,30 @@ def _version_manifest(drawing_id: str, drawing: Any) -> list[dict[str, Any]]:
             "label": version.label,
             "artifacts": _drawing_artifact_refs(drawing_id, version.id),
         }
-        for version in drawing.versions.values()
+        for version in manifest.versions
     ]
+
+
+def _raster_image(rgb: np.ndarray) -> RasterImage:
+    height, width = rgb.shape[:2]
+    return RasterImage(width, height, "rgb8", np.ascontiguousarray(rgb).tobytes())
+
+
+def _resolved_action_settings(trace) -> ActionSettings:
+    return ActionSettings(
+        epsilon=trace.options.simplify_tolerance,
+        max_error=trace.options.curve_tolerance,
+        fit_strategy=trace.options.fit_strategy,
+    )
 
 
 class GeometryGuideOptions(BaseModel):
     """Trace controls for a palette-labelled geometry guide."""
+    corner_rounding: bool = Field(True, description="Protect detected rounded corner spans during guide fitting; false retains detected point boundaries without disabling detection.")
+    refinement_passes: RefinementPasses = Field(default_factory=RefinementPasses, description="Individual automatic geometry passes; omitted fields retain engine defaults.")
+    initial_stitch: bool = Field(True, description="Repair shared guide region boundaries before automatic refinement.")
 
-    max_colors: int = Field(16, ge=2, le=256, description="Maximum guide-label palette colors to retain.")
+    max_sampling_colors: int = Field(16, ge=2, le=256, description="Maximum guide-label palette colors to retain.")
     min_region_size: int = Field(16, ge=1, description="Absolute guide-label component area floor.")
     max_hole_area: int = Field(128, ge=0, description="Maximum guide-mask hole cleanup area before path fitting.")
     trace_level: Literal["pixel", "subpixel"] = Field("pixel", description="Guide boundary trace precision.")
@@ -653,14 +1132,14 @@ def _geometry_guide_trace(
     trace = PythonTraceEngine().trace(
         rgb,
         TraceOptions(
-            max_colors=options.max_colors,
+            max_sampling_colors=options.max_sampling_colors,
             min_region_size=options.min_region_size,
             max_hole_area=options.max_hole_area,
             trace_level=options.trace_level,
             simplify_tolerance=options.simplify_tolerance,
             curve_tolerance=options.curve_tolerance,
             fit_strategy=options.fit_strategy,
-            corner_normalize=options.corner_normalize,
+            corner_rounding=options.corner_rounding,
             remove_background="auto",
             source_has_alpha=False,
         ),
@@ -685,177 +1164,428 @@ def _trace_result(image: ImageRef, options: TraceDrawingOptions):
     # white-composited for material and fill analysis, and every later vector
     # pass is free to refine the fitted geometry; alpha is never retained as a
     # downstream clipping constraint.
-    white_canvas = white_canvas_mask(rgb)
-    effective_max_colors = (
-        infer_max_colors(rgb, exclude_mask=white_canvas)
-        if options.max_colors == "auto"
-        else options.max_colors
+    material_pretrace = (
+        preprocess_material_trace(rgb, min_region_size=options.min_region_size)
+        if options.gradient_pretrace
+        else None
     )
-    trace = PythonTraceEngine().trace(rgb, TraceOptions(max_colors=effective_max_colors,
-        requested_max_colors=options.max_colors,
-        reserve_white_background=options.max_colors == "auto" and white_canvas is not None,
-        min_region_size=options.min_region_size, max_hole_area=options.max_hole_area, trace_level=options.trace_level,
-        simplify_tolerance=options.simplify_tolerance, curve_tolerance=options.curve_tolerance,
-        fit_strategy=options.fit_strategy, corner_normalize=options.corner_normalize,
-        remove_background=options.remove_background,
-        source_has_alpha=meta.transparent), alpha=alpha)
+    trace_rgb = material_pretrace.material_proxy if material_pretrace is not None else rgb
+    white_canvas = white_canvas_mask(trace_rgb)
+    effective_max_sampling_colors = (
+        material_pretrace.resolved_max_sampling_colors
+        if options.max_sampling_colors == "auto" and material_pretrace is not None
+        else infer_max_sampling_colors(trace_rgb, exclude_mask=white_canvas)
+        if options.max_sampling_colors == "auto"
+        else options.max_sampling_colors
+    )
+    trace = PythonTraceEngine().trace(
+        trace_rgb,
+        TraceOptions(
+            max_sampling_colors=effective_max_sampling_colors,
+            requested_max_sampling_colors=options.max_sampling_colors,
+            reserve_white_background=options.max_sampling_colors == "auto" and white_canvas is not None,
+            min_region_size=options.min_region_size,
+            max_hole_area=options.max_hole_area,
+            trace_level=options.trace_level,
+            simplify_tolerance=options.simplify_tolerance,
+            curve_tolerance=options.curve_tolerance,
+            fit_strategy=options.fit_strategy,
+            support_weighted_corners=options.support_weighted_corners,
+            corner_rounding=options.corner_rounding,
+            remove_background=options.remove_background,
+            background_color=options.background_color,
+            background_tolerance=options.background_tolerance,
+            source_has_alpha=meta.transparent,
+        ),
+        alpha=alpha,
+        geometry_rgb=rgb,
+    )
+    if material_pretrace is not None:
+        trace = replace(trace, material_pretrace=material_pretrace)
     return trace, rgb
 
 
 @mcp.tool(
     title="Trace drawing",
+    output_schema=TraceDrawingOutput.model_json_schema(),
     description=(
-        "Trace a drawing into labeled raw paths and return a five-panel visual decision surface: source, trace v0, "
-        "current result, addressable region map, and amplified source-minus-SVG diff. Inspect that panel before choosing any refine_drawing plan. "
+      "Trace a drawing into labeled raw paths and return a lineage decision surface: source, selected baseline, "
+      "actual parent (or an explicit no-parent tile), current result, addressable region and segment maps, and amplified source-minus-SVG diff. Inspect that panel before choosing any refine_drawing plan. "
         "The final SVG must be a designer-quality replacement for the supplied render: eliminate visible design discrepancies, "
         "not merely achieve a close trace; renderer-level antialiasing and gradient residuals are the only acceptable diff. "
         "Both refine modes retain a live drawing: refine='auto' returns two immutable outputs, pre-optimizer v0 and automatic v1; "
         "refine='none' retains raw trace roots for diagnostic review. "
-        "Use max_colors='auto' when palette complexity is unknown. fit_strategy='quadratic' is the stable default; "
-        "'progressive' protects pre-fit straight sides then uses Q/C recursion, and 'progressive_allow_lines' also permits L/Q/C fitting during recursion. Set corner_normalize=true to canonicalize recognized rounded corners "
-        "to one endpoint-preserving quadratic during automatic refinement; command diagnostics identify corner anchors and count only free commands separately. "
+        "Use max_sampling_colors='auto' when palette complexity is unknown. fit_strategy='quadratic' is the stable default; "
+        "'progressive' protects pre-fit straight sides then uses Q/C recursion, and 'progressive_allow_lines' also permits L/Q/C fitting during recursion. "
+        "Set corner_normalize=true to canonicalize recognized rounded corners to one endpoint-preserving quadratic in v1 automatic refinement; v0 is unchanged. "
+        "Set support_weighted_corners=true when a shallow rounded corner is distributed across adjacent trace vertices; "
+        "the detector aggregates that turn only when it meets a credible long support edge. "
+        "Set gradient_pretrace=true for gradient-heavy artwork: it traces a simplified material proxy while retaining the original raster for geometry and fills. "
+        "Command diagnostics identify corner anchors and count only free commands separately. "
         "Interactive traces retain a live drawing for refine_drawing."
+        " Supply exactly one of image (host file with required download_url and file_id) or image_data (one direct path, url, data_uri, or base64 PNG source)."
     ),
     meta={**_DRAWING_WIDGET_META, "openai/fileParams": ["image"]},
 )
 def trace_drawing(
-    image: ImageRef, options: TraceDrawingOptions | None = None, ctx: Context | None = None
-) -> Annotated[CallToolResult, TraceDrawingOutput]:
+    image: PlatformImageRef | SkipJsonSchema[None] = None,
+    options: TraceDrawingOptions | None = None,
+    ctx: Context | None = None,
+    *,
+    image_data: DirectImageRef | None = None,
+) -> CallToolResult:
     options = options or TraceDrawingOptions()
     if ctx is None:
         raise ToolError("[DRAWING_CONTEXT_REQUIRED] tracing requires an MCP session context")
+    drawing_id = _DRAWINGS.new_drawing_id()
     try:
-        trace, rgb = _trace_result(image, options)
+        trace, rgb = _trace_result(_select_image_ref(image, image_data), options)
     except ImageError as err:
         raise ToolError(f"[{err.error_code}] {err.message}") from err
-    v0_regions = stitch_regions(trace, root_regions(trace, rgb, min_region_fraction=options.min_region_fraction))
-    drawing = _DRAWINGS.create(ctx.session, trace, regions=v0_regions, source_rgb=rgb)
-    v0_rendered = render_drawing_regions(trace, v0_regions)
-    outputs = [{
-        "version": "v0",
-        "parent_version": None,
-        "artifacts": _drawing_artifact_refs(drawing.id, "v0"),
-        "report": dict(v0_rendered.report),
-    }]
-    regions = v0_regions
-    version_id = "v0"
-    if options.refine == "auto":
-        regions = auto_refine(trace, v0_regions, rgb=rgb)
-        child = _DRAWINGS.append(
-            ctx.session,
-            drawing.id,
-            "v0",
-            plan={
-                "version": "vectormark.auto.v1",
-                "base_version": "v0",
-                "passes": [
-                    "primitives", "occlusion", "split", "primitives", "clones", "straighten",
-                    "linelet_simplify", "smooth", "symmetry", "stitch",
-                ],
-            },
-            regions=regions,
-            label="auto",
-            version_id="v1",
+    rooted = root_regions(trace, rgb, min_region_fraction=options.min_region_fraction, allow_gradients=options.allow_gradients)
+    trace = rooted.trace
+    source = _raster_image(rgb)
+    background = (
+        BackgroundColor(color=str(trace.background["color"]), tolerance=float(trace.background["tolerance"]))
+        if trace.background.get("applied") and trace.background.get("color")
+        else None
+    )
+    paint = build_paint_evidence(source, background=background, output_settings=DrawingOutputSettings(**{name: getattr(options, name) for name in DrawingOutputSettings.model_fields}))
+    evidence = build_geometry_evidence(
+        kind="source",
+        trace=trace,
+        geometry_source=source,
+        trace_roots=rooted.regions,
+    )
+    settings = _resolved_action_settings(trace)
+    stitched = stitch_regions_with_intent(trace, evidence.trace_roots, enabled=options.initial_stitch)
+    v0_recipe = EffectiveDrawingRecipe(
+        evidence_revision=evidence.revision,
+        engine_revision=evidence.engine_revision,
+        settings=settings,
+        steps=(
+            *stitched.batches,
+            ResolveOriginalPaintOperation(
+                scope="retain",
+                share_root_gradients=trace.material_pretrace is None,
+            ),
+        ),
+    )
+    v0_execution = propose_effective_recipe(
+        drawing_id=drawing_id,
+        evidence=evidence,
+        paint=paint,
+        recipe=v0_recipe,
+    )
+    candidates = [
+        VersionCandidate(
+            drawing=v0_execution.drawing,
+            evidence=evidence,
+            submitted_plan=None,
+            submitted_edits=(),
+            effective_recipe=v0_recipe,
+            replay=v0_execution.replay,
+            label="source baseline",
+            baseline_candidate_index=0,
         )
-        version_id = child.id
-        rendered_auto = render_drawing_regions(trace, regions)
-        outputs.append({
-            "version": child.id,
-            "parent_version": "v0",
-            "artifacts": _drawing_artifact_refs(drawing.id, child.id),
-            "report": dict(rendered_auto.report),
-        })
-    rendered = render_drawing_regions(trace, regions)
-    preview = _render_preview_png(rendered.svg, trace.width, trace.height, [])
-    labels_svg = labeled_drawing_svg(trace, regions)
-    assert drawing.versions["v0"].regions is not None
-    review_panel = _render_review_panel_png(rgb, trace, drawing.versions["v0"].regions, rendered.svg, labels_svg, [])
-    result = {"drawing_id": drawing.id, "outputs": outputs, "version": version_id, "trace": drawing_summary(trace, v0_regions),
-        "artifacts": _drawing_artifact_refs(drawing.id, version_id), "report": dict(rendered.report)}
-    result["trace_options_schema"] = _trace_options_schema()
-    content: list[TextContent | ImageContent] = [TextContent(type="text", text=json.dumps(result))]
-    if review_panel is not None:
-        content.append(ImageContent(type="image", data=base64.b64encode(review_panel).decode(), mimeType="image/png"))
-    return CallToolResult(content=content, structuredContent=result, isError=False)
+    ]
+    if options.refine == "auto":
+        automatic = auto_refine_with_intent(
+            trace,
+            v0_execution.regions,
+            rgb=rgb,
+            allow_gradients=options.allow_gradients,
+            corner_normalize=options.corner_normalize,
+            refinement_passes=options.refinement_passes,
+        )
+        v1_recipe = EffectiveDrawingRecipe(
+            evidence_revision=evidence.revision,
+            engine_revision=evidence.engine_revision,
+            settings=settings,
+            steps=(
+                *v0_recipe.steps,
+                *automatic.batches,
+                ResolveOriginalPaintOperation(
+                    scope="all",
+                    share_root_gradients=trace.material_pretrace is None,
+                ),
+            ),
+        )
+        v1_execution = propose_effective_recipe(
+            drawing_id=drawing_id,
+            evidence=evidence,
+            paint=paint,
+            recipe=v1_recipe,
+        )
+        candidates.append(
+            VersionCandidate(
+                drawing=v1_execution.drawing,
+                evidence=None,
+                submitted_plan=None,
+                submitted_edits=(),
+                effective_recipe=v1_recipe,
+                replay=v1_execution.replay,
+                label="auto",
+                baseline_candidate_index=0,
+            )
+        )
+        regions = automatic.regions
+
+    def prepare(published):
+        selected = published[-1]
+        baseline = published[0]
+        parent = next(
+            (item for item in published if item.id == selected.parent_id), None
+        )
+        rendered = render_canonical_drawing(
+            selected.drawing, selected.replay.path_correspondence
+        )
+        if _render_preview_png(rendered.svg, trace.width, trace.height, []) is None:
+            raise ValueError("preview rendering failed before publication")
+        labels_svg = render_labeled_drawing(selected.drawing)
+        baseline_svg = render_canonical_drawing(baseline.drawing).svg
+        review_panel = _render_review_panel_png(
+            rgb,
+            trace,
+            baseline_svg,
+            rendered.svg,
+            labels_svg,
+            [],
+            baseline_version=baseline.id,
+            path_map_svg=render_path_map(selected.drawing),
+            parent_svg=(
+                render_canonical_drawing(parent.drawing).svg
+                if parent is not None
+                else None
+            ),
+            parent_version=parent.id if parent is not None else None,
+        )
+        if review_panel is None:
+            raise ValueError("review panel rendering failed before publication")
+        outputs = [
+            {
+                "version": item.id,
+                "parent_version": item.parent_id,
+                "artifacts": _drawing_artifact_refs(drawing_id, item.id),
+                "report": canonical_drawing_summary(
+                    item.drawing, item.replay.path_correspondence
+                ),
+            }
+            for item in published
+        ]
+        result = {
+            "drawing_id": drawing_id,
+            "outputs": outputs,
+            "version": selected.id,
+            "parent_version": selected.parent_id,
+            "requested_base_version": None,
+            "baseline_version": selected.baseline_version_id,
+            "trace": drawing_summary(trace, stitched.regions),
+            "trace_options": options.model_dump(mode="json"),
+            "artifacts": _drawing_artifact_refs(drawing_id, selected.id),
+            "report": dict(rendered.report),
+            "trace_options_schema": _trace_options_schema(),
+        }
+        return _validated_drawing_result(TraceDrawingOutput, result, review_panel)
+
+    _published, response = _DRAWINGS.create_prepared(
+        drawing_id, paint, tuple(candidates), prepare=prepare
+    )
+    return response
 
 
 @mcp.tool(
     title="Retrace drawing from geometry guide",
+    output_schema=RetracedDrawingOutput.model_json_schema(),
     description=(
         "Create a child version from a palette-labelled geometry guide whose pixel dimensions exactly match the live trace canvas. "
         "The guide must use a transparent background and flat filled colors for intended regions; its colors are temporary labels, not final paint. "
         "VectorMark traces and auto-refines only that geometry, then discards every guide fill and fits all final fills from the original retained raster. "
-        "Use it when a semantic plan cannot express the intended geometry directly. Inspect the returned six-panel review before applying further semantic plans."
+        "Use it when a semantic plan cannot express the intended geometry directly. Inspect the returned lineage review, which distinguishes the requested base from the retained guide baseline and actual parent, before applying further semantic plans."
+        " Supply exactly one of geometry_guide (host file with required download_url and file_id) or geometry_guide_data (one direct path, url, data_uri, or base64 PNG source)."
     ),
     meta={**_DRAWING_WIDGET_META, "openai/fileParams": ["geometry_guide"]},
 )
 def retrace_drawing(
     drawing_id: str,
     base_version: str,
-    geometry_guide: ImageRef,
+    geometry_guide: PlatformImageRef | SkipJsonSchema[None] = None,
     options: GeometryGuideOptions | None = None,
     label: str | None = None,
     ctx: Context | None = None,
-) -> Annotated[CallToolResult, RefinedDrawingOutput]:
+    *,
+    geometry_guide_data: DirectImageRef | None = None,
+) -> CallToolResult:
     """Replace a version's geometry from an agent-proposed palette label map."""
     if ctx is None:
         raise ToolError("[DRAWING_CONTEXT_REQUIRED] geometry-guide retracing requires an MCP session context")
     options = options or GeometryGuideOptions()
     try:
-        drawing, version = _DRAWINGS.get(ctx.session, drawing_id, base_version)
-        assert drawing.source_rgb is not None
+        base, paint, _base_evidence = _DRAWINGS.load_replay(
+            drawing_id, base_version
+        )
         guide_trace, guide_rgb = _geometry_guide_trace(
-            geometry_guide, options, expected_width=drawing.trace.width, expected_height=drawing.trace.height
+            _select_image_ref(geometry_guide, geometry_guide_data),
+            options,
+            expected_width=int(paint.canvas.width),
+            expected_height=int(paint.canvas.height),
         )
-        guide_roots = stitch_regions(
+        rooted = root_regions(guide_trace, guide_rgb, preserve_material_labels=True, allow_gradients=False)
+        guide_trace = rooted.trace
+        guide_evidence = build_geometry_evidence(
+            kind="geometry-guide",
+            trace=guide_trace,
+            geometry_source=_raster_image(guide_rgb),
+            trace_roots=rooted.regions,
+        )
+        settings = _resolved_action_settings(guide_trace)
+        stitched = stitch_regions_with_intent(
+            guide_trace, guide_evidence.trace_roots, enabled=options.initial_stitch
+        )
+        baseline_recipe = EffectiveDrawingRecipe(
+            evidence_revision=guide_evidence.revision,
+            engine_revision=guide_evidence.engine_revision,
+            settings=settings,
+            steps=(
+                *stitched.batches,
+                ResolveOriginalPaintOperation(
+                    scope="all",
+                    share_root_gradients=guide_trace.material_pretrace is None,
+                ),
+            ),
+        )
+        baseline_execution = propose_effective_recipe(
+            drawing_id=drawing_id,
+            evidence=guide_evidence,
+            paint=paint,
+            recipe=baseline_recipe,
+        )
+        automatic = auto_refine_with_intent(
             guide_trace,
-            root_regions(guide_trace, guide_rgb, preserve_material_labels=True),
+            baseline_execution.regions,
+            corner_normalize=options.corner_normalize,
+            refinement_passes=options.refinement_passes,
         )
-        geometry = auto_refine(guide_trace, guide_roots)
-        regions = refill_all_regions_from_source(geometry, drawing.source_rgb)
-        child = _DRAWINGS.append(
-            ctx.session,
+        optimized_recipe = EffectiveDrawingRecipe(
+            evidence_revision=guide_evidence.revision,
+            engine_revision=guide_evidence.engine_revision,
+            settings=settings,
+            steps=(
+                *baseline_recipe.steps,
+                *automatic.batches,
+                ResolveOriginalPaintOperation(
+                    scope="all",
+                    share_root_gradients=guide_trace.material_pretrace is None,
+                ),
+            ),
+        )
+        optimized_execution = propose_effective_recipe(
+            drawing_id=drawing_id,
+            evidence=guide_evidence,
+            paint=paint,
+            recipe=optimized_recipe,
+        )
+        candidates = (
+            VersionCandidate(
+                drawing=baseline_execution.drawing,
+                evidence=guide_evidence,
+                submitted_plan=None,
+                submitted_edits=(),
+                effective_recipe=baseline_recipe,
+                replay=baseline_execution.replay,
+                label="geometry guide baseline",
+                baseline_candidate_index=0,
+            ),
+            VersionCandidate(
+                drawing=optimized_execution.drawing,
+                evidence=None,
+                submitted_plan=None,
+                submitted_edits=(),
+                effective_recipe=optimized_recipe,
+                replay=optimized_execution.replay,
+                label=label or "geometry guide auto",
+                baseline_candidate_index=0,
+            ),
+        )
+
+        def prepare(published):
+            baseline, child = published
+            rendered = render_canonical_drawing(
+                child.drawing, child.replay.path_correspondence
+            )
+            if _render_preview_png(
+                rendered.svg, guide_trace.width, guide_trace.height, []
+            ) is None:
+                raise ValueError("preview rendering failed before publication")
+            labels_svg = render_labeled_drawing(child.drawing)
+            baseline_svg = render_canonical_drawing(baseline.drawing).svg
+            requested_base_svg = render_canonical_drawing(base.drawing).svg
+            review_panel = _render_review_panel_png(
+                raster_pixels(paint.source),
+                guide_trace,
+                baseline_svg,
+                rendered.svg,
+                labels_svg,
+                [],
+                baseline_version=baseline.id,
+                parent_svg=baseline_svg,
+                parent_version=baseline.id,
+                requested_base_svg=requested_base_svg,
+                requested_base_version=base.id,
+                geometry_guide_rgb=guide_rgb,
+                path_map_svg=render_path_map(child.drawing),
+            )
+            if review_panel is None:
+                raise ValueError("review panel rendering failed before publication")
+            outputs = [
+                {
+                    "version": item.id,
+                    "parent_version": item.parent_id,
+                    "artifacts": _drawing_artifact_refs(drawing_id, item.id),
+                    "report": canonical_drawing_summary(
+                        item.drawing, item.replay.path_correspondence
+                    ),
+                }
+                for item in published
+            ]
+            result = {
+                "drawing_id": drawing_id,
+                "version": child.id,
+                "parent_version": child.parent_id,
+                "requested_base_version": base.id,
+                "baseline_version": child.baseline_version_id,
+                "outputs": outputs,
+                "artifacts": _drawing_artifact_refs(drawing_id, child.id),
+                "report": dict(rendered.report),
+            }
+            return _validated_drawing_result(
+                RetracedDrawingOutput, result, review_panel
+            )
+
+        _published, response = _DRAWINGS.append_prepared(
             drawing_id,
             base_version,
-            plan={
-                "version": "vectormark.geometry-guide.v1",
-                "base_version": base_version,
-                "guide": {"mode": "palette_labels", "fills": "original_source"},
-            },
-            regions=regions,
-            label=label or "geometry guide",
-            trace=guide_trace,
-            geometry_guide_rgb=guide_rgb,
+            candidates,
+            prepare=prepare,
         )
     except (DrawingNotFound, ValueError, KeyError) as err:
         raise ToolError(f"[{getattr(err, 'error_code', 'GEOMETRY_GUIDE_INVALID')}] {err}") from err
-    rendered = render_drawing_regions(guide_trace, regions)
-    labels_svg = labeled_drawing_svg(guide_trace, regions)
-    review_panel = _render_review_panel_png(
-        drawing.source_rgb, guide_trace, guide_roots, rendered.svg, labels_svg, [], geometry_guide_rgb=guide_rgb
-    )
-    result = {
-        "drawing_id": drawing_id,
-        "version": child.id,
-        "parent_version": base_version,
-        "artifacts": _drawing_artifact_refs(drawing_id, child.id),
-        "report": dict(rendered.report),
-    }
-    content: list[TextContent | ImageContent] = [TextContent(type="text", text=json.dumps(result))]
-    if review_panel is not None:
-        content.append(ImageContent(type="image", data=base64.b64encode(review_panel).decode(), mimeType="image/png"))
-    return CallToolResult(content=content, structuredContent=result, isError=False)
+    return response
 
 
 @mcp.tool(
     title="Refine drawing",
+    output_schema=RefinedDrawingOutput.model_json_schema(),
     description=(
         "Apply an ordered, strongly typed semantic plan to a live traced drawing and create a child version. "
-        "Inspect the trace_drawing review_panel first and use its source/trace/current/region-map/diff comparison to justify plan operations; "
+        "Inspect the lineage-aware review_panel first and use its source/baseline/actual-parent/current/region-map/segment-map/diff comparison to justify plan operations; "
         "labeled_svg identifies the exact retained targets for this base version. "
+        "Corner plans use only displayed feature IDs and fitted command IDs (for example r1.p0.corner2 and r1.p0.c4); source hashes are internal and not accepted as plan targets. "
         "Each path target geometry supplies version-scoped command IDs. Use path op fit with target to refit one retained command, or with "
-        "between=[left,right] to replace commands strictly between two retained boundaries. Path-local simplify and normalize_corners live inside "
-        "update_geometry.ops; use its nested fit_primitive operation to replace a target with a fitted primitive. Top-level stitch reconciles shared boundaries between regions. There is no arbitrary insert-segment op and "
+        "between=[A,B] to fit from the end of A to the end of B, replacing commands after A through B inclusive; A is unchanged. Path-local simplify and normalize_corners live inside "
+        "update_geometry.ops. Use top-level fit_path to refit a region's complete path and top-level fit_primitive to replace a region with a fitted primitive. "
+        "Plan settings inherit from the retained trace; each drawing action may provide a settings override, and nested update_geometry operations inherit it. "
+        "Top-level stitch reconciles shared boundaries between regions. There is no arbitrary insert-segment op and "
         "do not author exported SVG coordinates. "
         "Make the final SVG a designer-quality replacement for the original render. Use the review diff to remove any visible structural, "
         "geometric, alignment, proportion, or fill mismatch; do not stop merely because the result is close. Normal differences caused by "
@@ -870,102 +1600,293 @@ def retrace_drawing(
 )
 def refine_drawing(
     plan: DrawingPlan, ctx: Context | None = None
-) -> Annotated[CallToolResult, RefinedDrawingOutput]:
+) -> CallToolResult:
     if ctx is None:
         raise ToolError("[DRAWING_CONTEXT_REQUIRED] refinement requires an MCP session context")
     try:
         parsed = plan if isinstance(plan, DrawingPlan) else parse_plan(plan)
-        plan_payload = parsed.model_dump(exclude_none=True)
-        drawing, version = _DRAWINGS.get(ctx.session, parsed.drawing_id, parsed.base_version)
-        assert version.regions is not None
-        trace = version.trace or drawing.trace
-        base = version.regions
-        assert drawing.source_rgb is not None
-        regions = refine(trace, base, parsed, rgb=drawing.source_rgb)
-        child = _DRAWINGS.append(
-            ctx.session, parsed.drawing_id, parsed.base_version, plan=plan_payload, regions=regions, label=parsed.label,
-            trace=trace,
+        version, paint, evidence = _DRAWINGS.load_replay(
+            parsed.drawing_id, parsed.base_version
+        )
+        extension = extend_recipe_with_plan(
+            evidence=evidence,
+            paint=paint,
+            base_recipe=version.effective_recipe,
+            plan=parsed,
+        )
+        recipe = extension.recipe
+        execution = propose_effective_recipe(
+            drawing_id=parsed.drawing_id,
+            evidence=evidence,
+            paint=paint,
+            recipe=recipe,
+        )
+        baseline = _DRAWINGS.get_version(
+            parsed.drawing_id, version.baseline_version_id
+        )
+        candidate = VersionCandidate(
+            drawing=execution.drawing,
+            evidence=None,
+            submitted_plan=parsed,
+            submitted_edits=extension.submitted_edits,
+            effective_recipe=recipe,
+            replay=execution.replay,
+            label=parsed.label,
+            baseline_version_id=version.baseline_version_id,
+        )
+
+        def prepare(published):
+            (child,) = published
+            rendered = render_canonical_drawing(
+                child.drawing, child.replay.path_correspondence
+            )
+            if _render_preview_png(
+                rendered.svg,
+                int(child.drawing.canvas.width),
+                int(child.drawing.canvas.height),
+                [],
+            ) is None:
+                raise ValueError("preview rendering failed before publication")
+            labels_svg = render_labeled_drawing(child.drawing)
+            baseline_svg = render_canonical_drawing(baseline.drawing).svg
+            parent_svg = render_canonical_drawing(version.drawing).svg
+            review_panel = _render_review_panel_png(
+                raster_pixels(paint.source),
+                evidence.trace,
+                baseline_svg,
+                rendered.svg,
+                labels_svg,
+                [],
+                baseline_version=baseline.id,
+                parent_svg=parent_svg,
+                parent_version=version.id,
+                requested_base_svg=parent_svg,
+                requested_base_version=parsed.base_version,
+                path_map_svg=render_path_map(child.drawing),
+                geometry_guide_rgb=(
+                    raster_pixels(evidence.geometry_source)
+                    if evidence.kind == "geometry-guide"
+                    else None
+                ),
+            )
+            if review_panel is None:
+                raise ValueError("review panel rendering failed before publication")
+            result = {
+                "drawing_id": parsed.drawing_id,
+                "version": child.id,
+                "parent_version": child.parent_id,
+                "requested_base_version": parsed.base_version,
+                "baseline_version": child.baseline_version_id,
+                "outputs": [
+                    {
+                        "version": child.id,
+                        "parent_version": child.parent_id,
+                        "artifacts": _drawing_artifact_refs(
+                            parsed.drawing_id, child.id
+                        ),
+                        "report": canonical_drawing_summary(
+                            child.drawing, child.replay.path_correspondence
+                        ),
+                    }
+                ],
+                "artifacts": _drawing_artifact_refs(parsed.drawing_id, child.id),
+                "report": dict(rendered.report),
+            }
+            return _validated_drawing_result(
+                RefinedDrawingOutput, result, review_panel
+            )
+
+        _published, response = _DRAWINGS.append_prepared(
+            parsed.drawing_id,
+            parsed.base_version,
+            (candidate,),
+            prepare=prepare,
         )
     except (PlanValidationError, DrawingNotFound, ValueError, KeyError) as err:
         raise ToolError(f"[{getattr(err, 'error_code', 'PLAN_INVALID')}] {err}") from err
-    rendered = render_drawing_regions(trace, regions)
-    preview = _render_preview_png(rendered.svg, trace.width, trace.height, [])
-    labels_svg = labeled_drawing_svg(trace, regions)
-    assert drawing.versions["v0"].regions is not None
-    assert drawing.source_rgb is not None
-    review_panel = _render_review_panel_png(
-        drawing.source_rgb, trace, base, rendered.svg, labels_svg, [], geometry_guide_rgb=version.geometry_guide_rgb
-    )
-    result = {"drawing_id": parsed.drawing_id, "version": child.id, "parent_version": parsed.base_version,
-        "artifacts": _drawing_artifact_refs(parsed.drawing_id, child.id), "report": dict(rendered.report)}
-    content: list[TextContent | ImageContent] = [TextContent(type="text", text=json.dumps(result))]
-    if review_panel is not None:
-        content.append(ImageContent(type="image", data=base64.b64encode(review_panel).decode(), mimeType="image/png"))
-    return CallToolResult(content=content, structuredContent=result, isError=False)
+    return response
 
 
-@mcp.tool(title="Get drawing artifact", description="Fetch a rendered file, plan provenance, or version manifest for a live drawing.", meta=_DRAWING_WIDGET_META)
+@mcp.tool(title="Get drawing artifact", output_schema=DrawingArtifactOutput.model_json_schema(), description="Retrieve artifact contents for a live drawing without opening the review UI. For artifact='svg', structuredContent.svg contains the complete SVG text and mime_type is image/svg+xml; save that text verbatim to an .svg file and provide a downloadable file link when requested. A drawing:// reference is an artifact identifier, not an HTTP download URL. JSON artifacts return structured data; PNG artifacts return image content. labeled_svg colors regions with an exact-ID legend. path_map colors individual L/Q/C/A segments and includes separate segment and retained-anchor legends: point corners, rounded corner spans with entry/exit markers, and stored inflection/extremum/junction anchors. Anchor metadata includes exact source anchor IDs and referenced command IDs; no features are redetected. Use IDs, not hue guesses. command_map overlays version-scoped command IDs at their endpoints, including moves. Filter path_map and command_map with region_ids and command_types before selecting commands for refinement plans. Primitives and clones have no local path commands to label.")
 def get_drawing_artifact(
-    drawing_id: str, version: str = "v0", artifact: Literal["svg", "preview", "preview_png", "review_panel", "labeled_svg", "raw_trace", "plan", "versions"] = "svg",
+    drawing_id: str, version: str = "v0", artifact: Literal["svg", "preview", "preview_png", "review_panel", "labeled_svg", "path_map", "command_map", "raw_trace", "plan", "versions"] = "svg",
     ctx: Context | None = None,
-) -> Annotated[CallToolResult, DrawingArtifactOutput]:
+    region_ids: list[str] | None = None,
+    command_types: list[Literal["move", "line", "quadratic", "cubic", "arc"]] | None = None,
+) -> CallToolResult:
     if ctx is None:
         raise ToolError("[DRAWING_CONTEXT_REQUIRED] artifact retrieval requires an MCP session context")
     try:
-        drawing, stored = _DRAWINGS.get(ctx.session, drawing_id, version)
+        if artifact == "versions":
+            manifest = _DRAWINGS.get_manifest(drawing_id)
+            payload = _version_manifest(drawing_id, manifest)
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(payload))],
+                structuredContent={"mime_type": "application/json", "versions": payload},
+            )
+        stored = _DRAWINGS.get_version(drawing_id, version)
+        if artifact == "plan":
+            payload = {
+                "drawing_id": drawing_id,
+                "version": stored.id,
+                "parent_version": stored.parent_id,
+                "baseline_version": stored.baseline_version_id,
+                "label": stored.label,
+                "plan": recipe_json_value(stored.submitted_plan),
+                "submitted_plan": recipe_json_value(stored.submitted_plan),
+                "submitted_edits": recipe_json_value(stored.submitted_edits),
+                "effective_recipe": recipe_json_value(stored.effective_recipe),
+                "replay": recipe_json_value(stored.replay),
+            }
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps(payload))],
+                structuredContent={"mime_type": "application/json", "plan": payload},
+            )
+        if artifact == "raw_trace":
+            _selected, _paint, evidence = _DRAWINGS.load_replay(drawing_id, version)
+            payload = evidence.trace.to_public_dict(include_region_map=True)
+            source_paths = [
+                {
+                    "region_id": record.region_id,
+                    "path_id": record.path_id,
+                    "source_path_id": record.fit.source.path.id,
+                    "commands": [
+                        {"id": command.id, "end": list(command.end)}
+                        for command in record.fit.source.path.commands
+                    ],
+                    "corners": [
+                        {
+                            "id": anchor.id,
+                            "entry_command_id": anchor.entry_command_id,
+                            "exit_command_id": anchor.exit_command_id,
+                            "owned_command_ids": list(anchor.owned_command_ids),
+                        }
+                        for anchor in record.fit.source.anchors
+                    ],
+                }
+                for record in evidence.root_paths
+            ]
+            return CallToolResult(
+                content=[TextContent(type="text", text=json.dumps({"trace": payload, "source_paths": source_paths}))],
+                structuredContent={"mime_type": "application/json", "trace": payload, "source_paths": source_paths},
+            )
     except DrawingNotFound as err:
         raise ToolError("[DRAWING_NOT_FOUND] drawing or version is unavailable") from err
-    assert stored.regions is not None
-    regions = stored.regions
-    trace = stored.trace or drawing.trace
-    rendered = render_drawing_regions(trace, regions)
-    if artifact == "labeled_svg":
-        payload = labeled_drawing_svg(trace, regions)
+    if artifact == "command_map":
+        try:
+            payload = render_command_map(
+                stored.drawing, stored.replay.path_correspondence,
+                region_ids=tuple(region_ids or ()), command_types=tuple(command_types or ()),
+            )
+        except ValueError as err:
+            raise ToolError(f"[INVALID_ARGUMENT] {err}") from err
+        preview = _render_preview_png(payload, int(stored.drawing.canvas.width), int(stored.drawing.canvas.height), [])
+        content = [TextContent(type="text", text=payload)]
+        if preview is not None:
+            content.append(ImageContent(type="image", data=base64.b64encode(preview).decode(), mimeType="image/png"))
+        return CallToolResult(
+            content=content,
+            structuredContent={"mime_type": "image/svg+xml", "svg": payload},
+        )
+    if artifact in {"labeled_svg", "path_map"}:
+        try:
+            payload = render_path_map(stored.drawing, region_ids=tuple(region_ids or ()), command_types=tuple(command_types or ())) if artifact == "path_map" else render_labeled_drawing(stored.drawing)
+        except ValueError as err:
+            raise ToolError(f"[INVALID_ARGUMENT] {err}") from err
         return CallToolResult(content=[TextContent(type="text", text=payload)], structuredContent={"mime_type": "image/svg+xml", "svg": payload})
-    if artifact == "raw_trace":
-        payload = trace.to_public_dict(include_region_map=True)
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(payload))],
-            structuredContent={"mime_type": "application/json", "trace": payload},
-        )
-    if artifact == "plan":
-        payload = {
-            "drawing_id": drawing_id,
-            "version": stored.id,
-            "parent_version": stored.parent_id,
-            "label": stored.label,
-            "plan": _jsonable(stored.plan),
-        }
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(payload))],
-            structuredContent={"mime_type": "application/json", "plan": payload},
-        )
-    if artifact == "versions":
-        payload = _version_manifest(drawing_id, drawing)
-        return CallToolResult(
-            content=[TextContent(type="text", text=json.dumps(payload))],
-            structuredContent={"mime_type": "application/json", "versions": payload},
-        )
+    rendered = render_canonical_drawing(
+        stored.drawing, stored.replay.path_correspondence
+    )
     if artifact == "svg":
-        return CallToolResult(content=[TextContent(type="text", text=rendered.svg)], structuredContent={"mime_type": "image/svg+xml", "svg": rendered.svg})
+        return CallToolResult(
+            content=[
+                ResourceLink(
+                    type="resource_link",
+                    uri=f"drawing://{drawing_id}/{stored.id}.svg",
+                    name=f"{drawing_id}-{stored.id}.svg",
+                    mimeType="image/svg+xml",
+                    size=len(rendered.svg.encode("utf-8")),
+                    description="Exact SVG file; read this MCP resource to retrieve its contents. Not an HTTP URL.",
+                ),
+                TextContent(type="text", text=rendered.svg),
+            ],
+            structuredContent={"mime_type": "image/svg+xml", "svg": rendered.svg},
+        )
     if artifact in {"preview", "preview_png"}:
-        preview = _render_preview_png(rendered.svg, trace.width, trace.height, [])
+        preview = _render_preview_png(
+            rendered.svg,
+            int(stored.drawing.canvas.width),
+            int(stored.drawing.canvas.height),
+            [],
+        )
         if preview is None:
             raise ToolError("[PREVIEW_UNAVAILABLE] PNG preview renderer is unavailable")
         content = ImageContent(type="image", data=base64.b64encode(preview).decode(), mimeType="image/png")
         return CallToolResult(content=[content], structuredContent={"mime_type": "image/png"})
     if artifact == "review_panel":
-        assert drawing.versions["v0"].regions is not None
-        assert drawing.source_rgb is not None
+        _selected, paint, evidence = _DRAWINGS.load_replay(drawing_id, version)
+        baseline = _DRAWINGS.get_version(drawing_id, stored.baseline_version_id)
+        parent = (
+            _DRAWINGS.get_version(drawing_id, stored.parent_id)
+            if stored.parent_id is not None
+            else None
+        )
+        if stored.submitted_plan is not None:
+            requested_base_version = stored.submitted_plan.base_version
+        elif evidence.kind == "geometry-guide":
+            requested_base_version = (
+                stored.parent_id
+                if stored.id == baseline.id
+                else baseline.parent_id
+            )
+        else:
+            requested_base_version = None
+        requested_base = (
+            _DRAWINGS.get_version(drawing_id, requested_base_version)
+            if requested_base_version is not None
+            else None
+        )
         panel = _render_review_panel_png(
-            drawing.source_rgb, trace, regions, rendered.svg,
-            labeled_drawing_svg(trace, regions), [], geometry_guide_rgb=stored.geometry_guide_rgb,
+            raster_pixels(paint.source),
+            evidence.trace,
+            render_canonical_drawing(baseline.drawing).svg,
+            rendered.svg,
+            render_labeled_drawing(stored.drawing),
+            [],
+            baseline_version=baseline.id,
+            parent_svg=(
+                render_canonical_drawing(parent.drawing).svg
+                if parent is not None
+                else None
+            ),
+            parent_version=parent.id if parent is not None else None,
+            path_map_svg=render_path_map(stored.drawing),
+            requested_base_svg=(
+                render_canonical_drawing(requested_base.drawing).svg
+                if requested_base is not None
+                else None
+            ),
+            requested_base_version=(
+                requested_base.id if requested_base is not None else None
+            ),
+            geometry_guide_rgb=(
+                raster_pixels(evidence.geometry_source)
+                if evidence.kind == "geometry-guide"
+                else None
+            ),
         )
         if panel is None:
             raise ToolError("[REVIEW_PANEL_UNAVAILABLE] review panel renderer is unavailable")
         content = ImageContent(type="image", data=base64.b64encode(panel).decode(), mimeType="image/png")
         return CallToolResult(content=[content], structuredContent={"mime_type": "image/png"})
     raise ToolError("[ARTIFACT_UNKNOWN] artifact must be svg, preview, preview_png, review_panel, labeled_svg, raw_trace, plan, or versions")
+
+
+@mcp.resource("drawing://{drawing_id}/{version}.svg", mime_type="image/svg+xml")
+def drawing_svg_resource(drawing_id: str, version: str, ctx: Context) -> str:
+    """Read the same canonical SVG exposed by artifact retrieval, without UI."""
+    result = get_drawing_artifact(drawing_id, version, "svg", ctx)
+    return result.structured_content["svg"]
 
 
 def idealize_logo(image: ImageRef, options: IdealizeOptions | None = None) -> CallToolResult:
@@ -1064,19 +1985,57 @@ def logo_widget() -> str:
     return _read_widget_html()
 
 
+def _http_app():
+    """Preserve the SDK body limit until FastMCP exposes it in its factory."""
+    # Review panels and command maps can exceed the SDK client's 1 MiB SSE
+    # event cap. JSON POST responses preserve the complete tool envelope
+    # without depending on a client-specific EventSource limit override.
+    app = mcp.http_app(transport="streamable-http", json_response=True)
+    lifespan = app.router.lifespan_context
+
+    @asynccontextmanager
+    async def configured_lifespan(app):
+        async with lifespan(app) as state:
+            endpoints = [
+                route.app for route in app.routes
+                if isinstance(getattr(route, "app", None), StreamableHTTPASGIApp)
+            ]
+            if len(endpoints) != 1:
+                raise RuntimeError("FastMCP HTTP endpoint layout changed; review body-limit adapter")
+            manager = endpoints[0].session_manager
+            if manager is None or not isinstance(manager.asgi_app, RequestBodyLimitMiddleware):
+                raise RuntimeError("FastMCP body-limit middleware changed; review adapter")
+            # Both layers must agree: the manager passes this value to new
+            # transports, while its ASGI middleware rejects oversized requests.
+            manager.max_request_body_size = _MAX_MCP_REQUEST_BYTES
+            manager.asgi_app.max_body_size = _MAX_MCP_REQUEST_BYTES
+            yield state
+
+    app.router.lifespan_context = configured_lifespan
+    return app
+
+
 def main() -> None:
     """Run the server. Transport from VECTORMARK_MCP_TRANSPORT (stdio | sse |
     streamable-http; default stdio). For HTTP transports, VECTORMARK_MCP_HOST /
     VECTORMARK_MCP_PORT set the bind address (default 127.0.0.1:8000; the MCP endpoint
     is served at /mcp)."""
-    if _TRANSPORT != "stdio":
-        host = os.environ.get("VECTORMARK_MCP_HOST")
-        port = os.environ.get("VECTORMARK_MCP_PORT")
-        if host:
-            mcp.settings.host = host
-        if port:
-            mcp.settings.port = int(port)
-    mcp.run(_TRANSPORT)
+    if _TRANSPORT == "stdio":
+        mcp.run("stdio")
+    elif _TRANSPORT in {"streamable-http", "http"}:
+        import uvicorn
+
+        uvicorn.run(
+            _http_app(),
+            host=os.environ.get("VECTORMARK_MCP_HOST") or "127.0.0.1",
+            port=int(os.environ.get("VECTORMARK_MCP_PORT") or "8000"),
+        )
+    else:
+        mcp.run(
+            _TRANSPORT,
+            host=os.environ.get("VECTORMARK_MCP_HOST") or "127.0.0.1",
+            port=int(os.environ.get("VECTORMARK_MCP_PORT") or "8000"),
+        )
 
 
 if __name__ == "__main__":

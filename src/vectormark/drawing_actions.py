@@ -19,6 +19,10 @@ AxisName: TypeAlias = Literal["x", "y"]
 PrimitiveKind: TypeAlias = Literal["circle", "ellipse", "rect", "rounded_rect", "polygon"]
 FitType: TypeAlias = Literal["line", "quadratic", "cubic", "keep"]
 FitStrategy: TypeAlias = Literal["quadratic", "cubic", "progressive", "progressive_allow_lines"]
+PathFitStrategy: TypeAlias = Literal["quadratic", "progressive", "progressive_allow_lines"]
+OperationPurpose: TypeAlias = Literal["accuracy", "design_fidelity", "both"]
+ExecutionBehavior: TypeAlias = Literal["deterministic", "exploratory"]
+OperationOrigin: TypeAlias = Literal["trace", "automatic", "agent"]
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$")
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
@@ -29,6 +33,32 @@ class ActionContract(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, allow_inf_nan=False)
 
 
+class ActionSettings(ActionContract):
+    """Fully resolved settings supplied to one drawing action execution."""
+
+    epsilon: float = Field(ge=0)
+    max_error: float = Field(ge=0)
+    fit_strategy: PathFitStrategy
+    purpose: OperationPurpose = "accuracy"
+    execution: ExecutionBehavior = "deterministic"
+
+
+class ActionSettingsOverride(ActionContract):
+    """Partial settings inherited over retained and plan-level settings."""
+
+    epsilon: float | None = Field(None, ge=0)
+    max_error: float | None = Field(None, ge=0)
+    fit_strategy: PathFitStrategy | None = None
+    purpose: OperationPurpose | None = None
+    execution: ExecutionBehavior | None = None
+
+
+class DrawingActionContract(ActionContract):
+    """Base for top-level actions with an optional settings override."""
+
+    settings: ActionSettingsOverride = Field(default_factory=ActionSettingsOverride)
+
+
 def _unique(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
     if len(set(values)) != len(values):
         raise ValueError(f"{label} must be unique")
@@ -36,13 +66,17 @@ def _unique(values: tuple[str, ...], *, label: str) -> tuple[str, ...]:
 
 
 class FitPathAction(ActionContract):
-    """Replace one command or one command-bounded span with fitted geometry."""
+    """Refit current curves; gate curve-to-original-material-polyline distance.
+
+    Original-to-curve distance is diagnostic only. Exact retained endpoint
+    correspondence is required to select the original material span.
+    """
 
     op: Literal["fit"]
     target: str | None = Field(None, min_length=1, description="One retained version-scoped command ID.")
     between: tuple[str, str] | None = Field(
         None,
-        description="Ordered [left, right] retained boundary command IDs; commands strictly between them are replaced.",
+        description="Ordered [A, B] retained command IDs in one subpath. Fit from the end of A to the end of B, replacing commands after A through B inclusive. Adjacent IDs select B alone; A is unchanged.",
     )
     type: FitType | None = Field(None, description="One replacement command; an explicit cubic may inflect.")
     strategy: FitStrategy | None = Field(None, description="Recursive fitting that may emit multiple commands.")
@@ -125,8 +159,6 @@ class MirrorPathAction(ActionContract):
 
 class SimplifyPathAction(ActionContract):
     op: Literal["simplify"]
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
 
 
 class NormalizeCornersPathAction(ActionContract):
@@ -148,16 +180,6 @@ PathAction = Annotated[
     | NormalizeCornersPathAction,
     Field(discriminator="op"),
 ]
-
-
-class FitPrimitiveGeometryAction(ActionContract):
-    """Replace the target region geometry with a fitted native primitive."""
-
-    op: Literal["fit_primitive"]
-    type: PrimitiveKind
-
-
-GeometryAction = FitPrimitiveGeometryAction | PathAction
 
 
 class GradientStopInput(ActionContract):
@@ -237,8 +259,10 @@ FillAssignment = Annotated[
 
 
 class SymmetryAxisInput(ActionContract):
-    point: tuple[float, float]
-    angle_degrees: float
+    """Reflection line shared by detected-axis diagnostics and explicit actions."""
+
+    point: tuple[float, float] = Field(description="A point [x, y] on the reflection line in drawing coordinates.")
+    angle_degrees: float = Field(description="Line direction in degrees from the positive x axis; 90 is vertical.")
 
 
 class AffineTransformInput(ActionContract):
@@ -269,28 +293,22 @@ class PathDivider(ActionContract):
 SplitDivider = Annotated[LineDivider | PathDivider, Field(discriminator="type")]
 
 
-class DetectPrimitivesAction(ActionContract):
+class DetectPrimitivesAction(DrawingActionContract):
     op: Literal["detect_primitives"]
     target: str | None = Field(None, min_length=1)
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
 
 
-class DetectSymmetryAction(ActionContract):
+class DetectSymmetryAction(DrawingActionContract):
     op: Literal["detect_symmetry"]
     target: str | None = Field(None, min_length=1)
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
 
 
-class DetectClonesAction(ActionContract):
+class DetectClonesAction(DrawingActionContract):
     op: Literal["detect_clones"]
     target: str | None = Field(None, min_length=1)
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
 
 
-class MergeAction(ActionContract):
+class MergeAction(DrawingActionContract):
     op: Literal["merge"]
     id: str = Field(min_length=1, description="ID assigned to the merged region.")
     regions: tuple[str, ...] = Field(
@@ -304,34 +322,73 @@ class MergeAction(ActionContract):
         return self
 
 
-class SplitAction(ActionContract):
+class SplitAction(DrawingActionContract):
     op: Literal["split"]
     target: str = Field(min_length=1)
     divider: SplitDivider
 
 
-class UpdateGeometryAction(ActionContract):
+class FitPathDrawingAction(DrawingActionContract):
+    """Replace one region's complete geometry with a newly fitted path."""
+
+    op: Literal["fit_path"]
+    target: str = Field(min_length=1)
+
+
+class FitPrimitiveAction(DrawingActionContract):
+    """Replace one region's complete geometry with a fitted primitive."""
+
+    op: Literal["fit_primitive"]
+    target: str = Field(min_length=1)
+    type: PrimitiveKind
+
+
+class UpdateGeometryAction(DrawingActionContract):
     op: Literal["update_geometry"]
     target: str = Field(min_length=1)
-    ops: tuple[GeometryAction, ...] = Field(min_length=1)
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
-
-    @model_validator(mode="after")
-    def primitive_replacement_is_atomic(self) -> "UpdateGeometryAction":
-        primitive_ops = [op for op in self.ops if isinstance(op, FitPrimitiveGeometryAction)]
-        if primitive_ops and len(self.ops) != 1:
-            raise ValueError("fit_primitive must be the only operation in update_geometry")
-        return self
+    ops: tuple[PathAction, ...] = Field(min_length=1)
 
 
-class SetFillAction(ActionContract):
+class AddCornerAction(DrawingActionContract):
+    """Add one source-resolved corner declaration to an exact displayed path."""
+
+    op: Literal["add_corner"]
+    target: str = Field(min_length=1)
+    path_id: str = Field(min_length=1)
+    feature_id: str = Field(min_length=1)
+    entry_command_id: str = Field(min_length=1, description="Short fitted command ID displayed for this target/path in base_version, for example r1.p0.c4. Source provenance IDs are internal and are not accepted.")
+    exit_command_id: str = Field(min_length=1, description="Short fitted command ID in the same path and base version; equal to entry for a point corner, distinct for a rounded span.")
+    radius: float | None = Field(None, ge=0)
+
+
+class ReplaceCornerAction(DrawingActionContract):
+    """Move/resize one retained corner while preserving its feature identity."""
+
+    op: Literal["replace_corner"]
+    target: str = Field(min_length=1)
+    path_id: str = Field(min_length=1)
+    feature_id: str = Field(min_length=1, description="Displayed corner feature ID from the selected base version, for example r1.p0.corner2; not an internal source ID.")
+    entry_command_id: str = Field(min_length=1, description="Short fitted command ID displayed for this target/path in base_version, for example r1.p0.c4. Source provenance IDs are internal and are not accepted.")
+    exit_command_id: str = Field(min_length=1, description="Short fitted command ID in the same path and base version; equal to entry for a point corner, distinct for a rounded span.")
+    radius: float | None = Field(None, ge=0)
+
+
+class RemoveCornerAction(DrawingActionContract):
+    """Remove one retained active corner declaration by stable feature ID."""
+
+    op: Literal["remove_corner"]
+    target: str = Field(min_length=1)
+    path_id: str = Field(min_length=1)
+    feature_id: str = Field(min_length=1, description="Displayed corner feature ID from the selected base version, for example r1.p0.corner2; not an internal source ID.")
+
+
+class SetFillAction(DrawingActionContract):
     op: Literal["set_fill"]
     target: str = Field(min_length=1)
     fill: FillAssignment
 
 
-class AssignCloneAction(ActionContract):
+class AssignCloneAction(DrawingActionContract):
     op: Literal["assign_clone"]
     source: str = Field(min_length=1)
     target: str = Field(min_length=1)
@@ -344,13 +401,13 @@ class AssignCloneAction(ActionContract):
         return self
 
 
-class SetSymmetryAction(ActionContract):
+class SetSymmetryAction(DrawingActionContract):
     op: Literal["set_symmetry"]
     target: str = Field(min_length=1)
     axis: SymmetryAxisInput
 
 
-class AlignAction(ActionContract):
+class AlignAction(DrawingActionContract):
     op: Literal["align"]
     target: str = Field(min_length=1)
     reference: str = Field(min_length=1)
@@ -364,16 +421,13 @@ class AlignAction(ActionContract):
         return self
 
 
-class StitchAction(ActionContract):
+class StitchAction(DrawingActionContract):
     op: Literal["stitch"]
     targets: tuple[str, ...] | None = Field(
         None,
         min_length=1,
         description="Explicit regions to reconcile; omit to stitch applicable drawing roots.",
     )
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
-
     @model_validator(mode="after")
     def unique_targets(self) -> "StitchAction":
         if self.targets is not None:
@@ -381,7 +435,7 @@ class StitchAction(ActionContract):
         return self
 
 
-class SetZOrderAction(ActionContract):
+class SetZOrderAction(DrawingActionContract):
     op: Literal["set_z_order"]
     targets: tuple[str, ...] = Field(min_length=1, description="Complete region paint order, back to front.")
 
@@ -397,7 +451,12 @@ DrawingAction = Annotated[
     | DetectClonesAction
     | MergeAction
     | SplitAction
+    | FitPathDrawingAction
+    | FitPrimitiveAction
     | UpdateGeometryAction
+    | AddCornerAction
+    | ReplaceCornerAction
+    | RemoveCornerAction
     | SetFillAction
     | AssignCloneAction
     | SetSymmetryAction
@@ -406,13 +465,6 @@ DrawingAction = Annotated[
     | SetZOrderAction,
     Field(discriminator="op"),
 ]
-
-
-class PlanDefaults(ActionContract):
-    """Plan-wide fitting tolerances inherited by compatible actions."""
-
-    epsilon: float | None = Field(None, ge=0)
-    max_error: float | None = Field(None, ge=0)
 
 
 class DrawingPlan(ActionContract):
@@ -425,7 +477,7 @@ class DrawingPlan(ActionContract):
         description="Existing immutable version to branch from, such as v0 or v0.1.",
     )
     label: str | None = Field(None, max_length=200)
-    defaults: PlanDefaults = Field(default_factory=PlanDefaults)
+    settings: ActionSettingsOverride = Field(default_factory=ActionSettingsOverride)
     ops: tuple[DrawingAction, ...] = Field(
         description="Ordered drawing actions; region-local geometry actions live inside update_geometry."
     )

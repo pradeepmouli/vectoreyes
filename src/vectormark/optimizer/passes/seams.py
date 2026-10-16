@@ -7,8 +7,22 @@ import numpy as np
 
 from ..._fitcurve import cbezier, cubic_inflects, fit_quadratic_beziers
 from ...fit import Shape, _curve_controls_are_straight, _fmt
+from ..automatic_replay import (
+    ApplySeamConstraintsOperation,
+    AxisSeamConstraint,
+    EndpointAssignment,
+    EndpointConstraintStage,
+    PassInputRegionRef,
+    PathEndpointRef,
+    PathOpsUnderlapConstraint,
+    SeamCommandIndexCorrespondence,
+    SeamPathCorrespondence,
+    VertexClusterConstraint,
+    operation_intent,
+)
 from ..framework import Proposal
 from ..shape_transform import bake_shape_transform
+from ..symmetry_materialize import index_region_paths
 from ..vector_region import VectorRegion, _parse_subpaths, to_polygon
 from .simplify import _simplified_path_shape
 
@@ -19,6 +33,8 @@ from .simplify import _simplified_path_shape
 _SEAM_TOL = 3.0
 _JUNCTION_TOL = 6.5
 _MIN_SUBPATH_SPAN = 3.0
+_PATHOPS_UNION_RESIDUAL_TOL = 0.02
+_PATHOPS_MAX_INPUT_COMMANDS = 64
 
 
 @dataclass(frozen=True)
@@ -56,6 +72,167 @@ class _CoordinateRef:
     y_index: int
     x: float
     y: float
+
+
+@dataclass(frozen=True)
+class _EndpointMatch:
+    left: tuple[int, int, int, int, float, float]
+    right: tuple[int, int, int, int, float, float]
+    point: tuple[float, float]
+
+
+def _path_id(shape: Shape) -> str:
+    if shape.kind != "path":
+        raise ValueError("seam endpoint binding requires a path")
+    import hashlib
+
+    payload = str(shape.params.get("d", "")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _command_id(
+    subpath_index: int,
+    token_index: int,
+    command: str,
+    values: list[float],
+) -> str:
+    import hashlib
+
+    encoded = ":".join([
+        str(subpath_index),
+        str(token_index),
+        command,
+        *(float(value).hex() for value in values),
+    ])
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _subpath_revision(subpath: list[tuple[str, list[float]]]) -> str:
+    import hashlib
+
+    return hashlib.sha256(_subpath_d(subpath).encode("utf-8")).hexdigest()
+
+
+def seam_path_revision(d: str, subpath_index: int) -> str:
+    """Return the executor's exact revision for one ordered path component."""
+    paths = _parse_subpaths(d)
+    if not 0 <= subpath_index < len(paths):
+        raise ValueError("seam path revision subpath is out of range")
+    return _subpath_revision(paths[subpath_index])
+
+
+def _drawable_tokens(
+    subpath: list[tuple[str, list[float]]],
+) -> list[tuple[str, tuple[str, ...]]]:
+    return [
+        (command, tuple(float(value).hex() for value in values))
+        for command, values in subpath
+        if command != "Z"
+    ]
+
+
+def _unchanged_command_pairs(
+    before: list[tuple[str, tuple[str, ...]]],
+    after: list[tuple[str, tuple[str, ...]]],
+) -> tuple[SeamCommandIndexCorrespondence, ...]:
+    """Return an exact LCS of byte-identical commands, never a geometric guess."""
+    lengths = [[0] * (len(after) + 1) for _ in range(len(before) + 1)]
+    for left in range(len(before) - 1, -1, -1):
+        for right in range(len(after) - 1, -1, -1):
+            lengths[left][right] = (
+                1 + lengths[left + 1][right + 1]
+                if before[left] == after[right]
+                else max(lengths[left + 1][right], lengths[left][right + 1])
+            )
+    pairs: list[SeamCommandIndexCorrespondence] = []
+    left = right = 0
+    while left < len(before) and right < len(after):
+        if before[left] == after[right]:
+            pairs.append(SeamCommandIndexCorrespondence(left, right))
+            left += 1
+            right += 1
+        elif lengths[left + 1][right] >= lengths[left][right + 1]:
+            left += 1
+        else:
+            right += 1
+    return tuple(pairs)
+
+
+def _path_correspondence(
+    target: PassInputRegionRef,
+    before: Shape,
+    after: Shape,
+    *,
+    positional_mutation: bool,
+) -> tuple[SeamPathCorrespondence, ...]:
+    before_paths = _parse_subpaths(str(before.params.get("d", "")))
+    after_paths = _parse_subpaths(str(after.params.get("d", "")))
+    records: list[SeamPathCorrespondence] = []
+    for index, before_path in enumerate(before_paths):
+        after_path = after_paths[index] if index < len(after_paths) else None
+        before_tokens = _drawable_tokens(before_path)
+        after_tokens = [] if after_path is None else _drawable_tokens(after_path)
+        if (
+            positional_mutation
+            and len(before_tokens) == len(after_tokens)
+            and [item[0] for item in before_tokens]
+            == [item[0] for item in after_tokens]
+        ):
+            commands = tuple(
+                SeamCommandIndexCorrespondence(command_index, command_index)
+                for command_index in range(len(before_tokens))
+            )
+        else:
+            commands = _unchanged_command_pairs(before_tokens, after_tokens)
+        records.append(SeamPathCorrespondence(
+            target=target,
+            subpath_index=index,
+            input_path_revision=_subpath_revision(before_path),
+            output_path_revision=(
+                _subpath_revision(after_path) if after_path is not None else ""
+            ),
+            commands=commands,
+        ))
+    return tuple(records)
+
+
+def _endpoint_ref(
+    region: PassInputRegionRef,
+    shape: Shape,
+    raw: tuple[int, int, int, int, float, float] | _CoordinateRef,
+) -> PathEndpointRef:
+    tokens = _parse_subpaths(str(shape.params.get("d", "")))
+    if isinstance(raw, _CoordinateRef):
+        subpath_index, token_index = raw.subpath_index, raw.token_index
+    else:
+        subpath_index, token_index = raw[0], raw[1]
+    command, values = tokens[subpath_index][token_index]
+    return PathEndpointRef(
+        region=region,
+        path_id=_path_id(shape),
+        command_id=_command_id(subpath_index, token_index, command, values),
+    )
+
+
+def _endpoint_stage(
+    left_ref: PassInputRegionRef,
+    right_ref: PassInputRegionRef,
+    left_shape: Shape,
+    right_shape: Shape,
+    matches: list[_EndpointMatch],
+) -> EndpointConstraintStage | None:
+    if not matches:
+        return None
+    return EndpointConstraintStage(tuple(
+        EndpointAssignment(
+            members=(
+                _endpoint_ref(left_ref, left_shape, match.left),
+                _endpoint_ref(right_ref, right_shape, match.right),
+            ),
+            point=match.point,
+        )
+        for match in matches
+    ))
 
 
 def _shape_bounds(obj: VectorRegion) -> tuple[float, float, float, float] | None:
@@ -412,7 +589,7 @@ def _path_endpoints_within(a: Shape, b: Shape, *, tol: float) -> bool:
         cell_y = math.floor(y / cell_size)
         for offset_x in (-1, 0, 1):
             for offset_y in (-1, 0, 1):
-                for other_x, other_y in buckets.get((cell_x + offset_x, cell_y + offset_y), ()):
+                for other_x, other_y in buckets.get((cell_x + offset_x, cell_y + offset_y), []):
                     dx = x - other_x
                     dy = y - other_y
                     if dx * dx + dy * dy <= tol_sq:
@@ -546,7 +723,13 @@ def _cleanup_mutated_path(
     return _cleanup_inflecting_cubics(cleaned, max_error=max_error, line_epsilon=epsilon)
 
 
-def _true_up_path_vertices(a_shape: Shape, b_shape: Shape, *, tol: float) -> tuple[Shape, Shape, bool]:
+def _true_up_path_vertices(
+    a_shape: Shape,
+    b_shape: Shape,
+    *,
+    tol: float,
+    _matches: list[_EndpointMatch] | None = None,
+) -> tuple[Shape, Shape, bool]:
     if a_shape.kind != "path" or b_shape.kind != "path":
         return a_shape, b_shape, False
 
@@ -575,7 +758,7 @@ def _true_up_path_vertices(a_shape: Shape, b_shape: Shape, *, tol: float) -> tup
         best: tuple[float, tuple] | None = None
         for dx_cell in (-1, 0, 1):
             for dy_cell in (-1, 0, 1):
-                for b_ref in buckets.get((cell_x + dx_cell, cell_y + dy_cell), ()):
+                for b_ref in buckets.get((cell_x + dx_cell, cell_y + dy_cell), []):
                     b_key = tuple(b_ref[:4])
                     if b_key in used_b:
                         continue
@@ -592,6 +775,8 @@ def _true_up_path_vertices(a_shape: Shape, b_shape: Shape, *, tol: float) -> tup
         a_tokens[a_ref[0]][a_ref[1]][1][a_ref[3]] = midpoint_y
         b_tokens[b_ref[0]][b_ref[1]][1][b_ref[2]] = midpoint_x
         b_tokens[b_ref[0]][b_ref[1]][1][b_ref[3]] = midpoint_y
+        if _matches is not None:
+            _matches.append(_EndpointMatch(a_ref, b_ref, (midpoint_x, midpoint_y)))
         used_b.add(b_key)
         changed = True
 
@@ -715,15 +900,113 @@ def _leaf_key(ref: _LeafRef) -> tuple[int, int]:
     return int(ref.owner.id), int(ref.leaf.id)
 
 
+def _paint_order(ref: _LeafRef) -> tuple[float, float, int, int]:
+    """Stable back-to-front ordering for a leaf participating in a seam."""
+    return float(ref.owner.z), float(ref.leaf.z), int(ref.owner.id), int(ref.leaf.id)
+
+
+def _shape_from_pathops(footprint) -> Shape:
+    params: dict[str, object] = {"d": footprint.to_svg_d()}
+    if len(footprint.linearized_subpaths) > 1:
+        params["fill_rule"] = "evenodd"
+    return Shape("path", params)
+
+
+def _pathops_input_is_bounded(shape: Shape) -> bool:
+    if shape.kind != "path":
+        return False
+    subpaths = _parse_subpaths(str(shape.params.get("d", "")))
+    return bool(subpaths) and sum(len(subpath) for subpath in subpaths) <= _PATHOPS_MAX_INPUT_COMMANDS
+
+
+def _pathops_shared_boundary_pair(
+    a_ref: _LeafRef,
+    b_ref: _LeafRef,
+    a_shape: Shape,
+    b_shape: Shape,
+    *,
+    tol: float,
+) -> tuple[Shape, Shape, _SeamCandidate] | None:
+    """Transfer a complex top boundary into the lower region using PathOps.
+
+    The outsets are temporary construction geometry. Their intersection forms
+    a narrow bridge across a fitted gap; subtracting the authoritative top
+    footprint from that bridge rebuilds the bottom with the exact top seam.
+    The repaired lower region is then clipped to its retained root footprint,
+    so temporary underlap can never escape the drawing's exterior boundary.
+    """
+    if int(a_ref.owner.id) != int(b_ref.owner.id):
+        return None
+    if not _pathops_input_is_bounded(a_shape) or not _pathops_input_is_bounded(b_shape):
+        return None
+    if _paint_order(a_ref) <= _paint_order(b_ref):
+        bottom_ref, top_ref = a_ref, b_ref
+        bottom_shape, top_shape = a_shape, b_shape
+        bottom_is_a = True
+    else:
+        bottom_ref, top_ref = b_ref, a_ref
+        bottom_shape, top_shape = b_shape, a_shape
+        bottom_is_a = False
+
+    bottom = to_polygon(bottom_shape)
+    top = to_polygon(top_shape)
+    if bottom.is_empty or top.is_empty:
+        return None
+    boundary = bottom_ref.owner.footprint
+    if boundary is None or getattr(boundary, "is_empty", False):
+        return None
+    gap_before = float(bottom.distance(top))
+    try:
+        bridge = bottom.outset(tol).intersection(top.outset(tol))
+        if bridge.is_empty:
+            return None
+        clip_top = top.filled_small_holes(tol * tol)
+        updated_bottom = (
+            bottom.union(bridge)
+            .difference(clip_top)
+            .intersection(boundary)
+            .buffer(0)
+        )
+    except RuntimeError:
+        return None
+    if updated_bottom.is_empty:
+        return None
+
+    before = bottom.union(top)
+    after = updated_bottom.union(top)
+    denominator = max(float(before.area), 1.0)
+    residual = float(before.symmetric_difference(after).area / denominator)
+    if residual > _PATHOPS_UNION_RESIDUAL_TOL:
+        return None
+
+    candidate = _SeamCandidate(
+        "pathops",
+        "under",
+        "top",
+        gap_before,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+    )
+    updated_bottom_shape = _shape_from_pathops(updated_bottom)
+    if bottom_is_a:
+        return updated_bottom_shape, top_shape, candidate
+    return top_shape, updated_bottom_shape, candidate
+
+
 def _apply_leaf_pair(
     a_ref: _LeafRef,
     b_ref: _LeafRef,
     updates_by_leaf: dict[tuple[int, int], _LeafUpdate],
     owner_leaf_maps: dict[int, dict[int, VectorRegion]],
+    intent_ref_by_key: dict[tuple[int, int], PassInputRegionRef],
+    constraints: list[AxisSeamConstraint | PathOpsUnderlapConstraint],
     *,
     epsilon: float,
     max_error: float,
     cubic: bool,
+    allow_underlap: bool,
 ) -> tuple[int, int] | None:
     a = a_ref.leaf
     if a.current is None:
@@ -760,6 +1043,35 @@ def _apply_leaf_pair(
         return None
     a_key = _leaf_key(a_ref)
     b_key = _leaf_key(b_ref)
+    if allow_underlap and candidate.axis == "vertices":
+        pathops = _pathops_shared_boundary_pair(
+            a_ref,
+            b_ref,
+            a_current,
+            b_current,
+            tol=_SEAM_TOL,
+        )
+        if pathops is not None:
+            a_shape, b_shape, candidate = pathops
+            constraints.append(PathOpsUnderlapConstraint(
+                left=intent_ref_by_key[a_key],
+                right=intent_ref_by_key[b_key],
+                bottom="left" if _paint_order(a_ref) <= _paint_order(b_ref) else "right",
+                tolerance=_SEAM_TOL,
+            ))
+            updates_by_leaf[a_key] = _LeafUpdate(
+                a_shape,
+                int(b.id),
+                candidate,
+                "pathops_shared_boundary",
+            )
+            updates_by_leaf[b_key] = _LeafUpdate(
+                b_shape,
+                int(a.id),
+                candidate,
+                "pathops_authoritative",
+            )
+            return int(a_ref.owner.id), int(b_ref.owner.id)
     a_shape = _rewrite_shape_side(
         a_current,
         side=candidate.a_side,
@@ -776,7 +1088,19 @@ def _apply_leaf_pair(
     )
     if a_shape is None or b_shape is None:
         return None
-    a_shape, b_shape, vertices_changed = _true_up_path_vertices(a_shape, b_shape, tol=_SEAM_TOL)
+    before_cleanup_a = a_shape
+    before_cleanup_b = b_shape
+    before_matches: list[_EndpointMatch] = []
+    a_shape, b_shape, vertices_changed = _true_up_path_vertices(
+        a_shape, b_shape, tol=_SEAM_TOL, _matches=before_matches
+    )
+    before_stage = _endpoint_stage(
+        intent_ref_by_key[a_key],
+        intent_ref_by_key[b_key],
+        before_cleanup_a,
+        before_cleanup_b,
+        before_matches,
+    )
     # Simplification has its own pass before stitch in the automatic workflow.
     # Do retain the local inflecting-cubic repair caused by moving an endpoint,
     # but do not rerun general linelet/path simplification for every pair.
@@ -784,9 +1108,38 @@ def _apply_leaf_pair(
     cleaned_b = _cleanup_inflecting_cubics(b_shape, max_error=max_error, line_epsilon=epsilon)
     if cleaned_a != a_shape or cleaned_b != b_shape:
         a_shape, b_shape = cleaned_a, cleaned_b
-        a_shape, b_shape, cleanup_vertices_changed = _true_up_path_vertices(a_shape, b_shape, tol=_SEAM_TOL)
+        after_cleanup_a = a_shape
+        after_cleanup_b = b_shape
+        after_matches: list[_EndpointMatch] = []
+        a_shape, b_shape, cleanup_vertices_changed = _true_up_path_vertices(
+            a_shape, b_shape, tol=_SEAM_TOL, _matches=after_matches
+        )
         vertices_changed = vertices_changed or cleanup_vertices_changed
+        after_stage = _endpoint_stage(
+            intent_ref_by_key[a_key],
+            intent_ref_by_key[b_key],
+            after_cleanup_a,
+            after_cleanup_b,
+            after_matches,
+        )
+    else:
+        after_stage = None
     selected = "vertex_midpoint" if vertices_changed or candidate.axis == "vertices" else "midpoint"
+    constraints.append(AxisSeamConstraint(
+        left=intent_ref_by_key[a_key],
+        right=intent_ref_by_key[b_key],
+        axis=candidate.axis,
+        left_side=candidate.a_side,
+        right_side=candidate.b_side,
+        left_value=candidate.a_value,
+        right_value=candidate.b_value,
+        seam=candidate.seam,
+        span_min=candidate.span_min,
+        span_max=candidate.span_max,
+        before_cleanup=before_stage,
+        after_cleanup=after_stage,
+        selected=selected,
+    ))
     updates_by_leaf[a_key] = _LeafUpdate(a_shape, int(b.id), candidate, selected)
     updates_by_leaf[b_key] = _LeafUpdate(b_shape, int(a.id), candidate, selected)
     return int(a_ref.owner.id), int(b_ref.owner.id)
@@ -820,6 +1173,9 @@ def _owner_components(edges: list[tuple[int, int]]) -> list[set[int]]:
 def _cluster_leaf_vertices(
     updates_by_leaf: dict[tuple[int, int], _LeafUpdate],
     owner_ids: set[int],
+    intent_ref_by_key: dict[tuple[int, int], PassInputRegionRef],
+    constraints: list[VertexClusterConstraint],
+    clustered_refs: set[PassInputRegionRef],
     *,
     tol: float,
     epsilon: float,
@@ -828,7 +1184,11 @@ def _cluster_leaf_vertices(
 ) -> None:
     keys = [
         key for key, update in updates_by_leaf.items()
-        if key[0] in owner_ids and update.shape.kind == "path"
+        if (
+            key[0] in owner_ids
+            and update.shape.kind == "path"
+            and update.candidate.axis != "pathops"
+        )
     ]
     if len(keys) < 2:
         return
@@ -871,7 +1231,7 @@ def _cluster_leaf_vertices(
             cell_y = math.floor(a_ref.y / link_tol)
             for dx_cell in (-1, 0, 1):
                 for dy_cell in (-1, 0, 1):
-                    for j in buckets.get((cell_x + dx_cell, cell_y + dy_cell), ()):
+                    for j in buckets.get((cell_x + dx_cell, cell_y + dy_cell), []):
                         b_ref = refs[j]
                         if not allow_same_key_links and a_ref.key == b_ref.key:
                             continue
@@ -885,17 +1245,33 @@ def _cluster_leaf_vertices(
         for index, ref in enumerate(refs):
             groups.setdefault(find(index), []).append(ref)
 
+        shape_by_key = {
+            key: _shape_from_tokens(updates_by_leaf[key].shape, tokens)
+            for key, tokens in tokens_by_key.items()
+        }
+        assignments: list[EndpointAssignment] = []
         for group in groups.values():
             if len({ref.key for ref in group}) < min_keys:
                 continue
             x = sum(ref.x for ref in group) / len(group)
             y = sum(ref.y for ref in group) / len(group)
+            assignments.append(EndpointAssignment(
+                members=tuple(
+                    _endpoint_ref(intent_ref_by_key[ref.key], shape_by_key[ref.key], ref)
+                    for ref in group
+                ),
+                point=(x, y),
+            ))
             for ref in group:
                 tokens = tokens_by_key[ref.key]
                 values = tokens[ref.subpath_index][ref.token_index][1]
                 values[ref.x_index] = x
                 values[ref.y_index] = y
                 changed_keys.add(ref.key)
+        if assignments:
+            constraints.append(VertexClusterConstraint(
+                EndpointConstraintStage(tuple(assignments))
+            ))
 
     apply_clusters(link_tol=tol, min_keys=2, allow_same_key_links=False)
     apply_clusters(link_tol=_JUNCTION_TOL, min_keys=3, allow_same_key_links=True)
@@ -915,6 +1291,7 @@ def _cluster_leaf_vertices(
             update.candidate,
             "vertex_cluster",
         )
+        clustered_refs.add(intent_ref_by_key[key])
 
 
 def _replacement_for_update(ref: _LeafRef, update: _LeafUpdate) -> VectorRegion:
@@ -927,6 +1304,218 @@ def _replacement_for_update(ref: _LeafRef, update: _LeafUpdate) -> VectorRegion:
     )
 
 
+def _apply_endpoint_stage(
+    shapes: dict[tuple[int, ...], Shape],
+    stage: EndpointConstraintStage | None,
+) -> None:
+    if stage is None:
+        return
+    tokens_by_path: dict[tuple[int, ...], list[list[tuple[str, list[float]]]]] = {}
+    located: list[tuple[tuple[int, ...], int, int, tuple[float, float]]] = []
+    for assignment in stage.assignments:
+        if len(assignment.members) < 2:
+            raise ValueError("seam endpoint assignment requires at least two members")
+        for endpoint in assignment.members:
+            key = tuple(endpoint.region.ancestry)
+            shape = shapes.get(key)
+            if shape is None or shape.kind != "path":
+                raise ValueError("seam endpoint target is not an active path")
+            if _path_id(shape) != endpoint.path_id:
+                raise ValueError("seam endpoint path identity mismatch")
+            tokens = tokens_by_path.setdefault(
+                key, _parse_subpaths(str(shape.params.get("d", "")))
+            )
+            matches: list[tuple[int, int]] = []
+            for subpath_index, subpath in enumerate(tokens):
+                for token_index, (command, values) in enumerate(subpath):
+                    if _command_id(subpath_index, token_index, command, values) == endpoint.command_id:
+                        matches.append((subpath_index, token_index))
+            if len(matches) != 1:
+                raise ValueError("seam endpoint command identity is absent or ambiguous")
+            located.append((*matches[0], key, assignment.point))
+    for subpath_index, token_index, key, point in located:
+        command, values = tokens_by_path[key][subpath_index][token_index]
+        indexes = _coordinate_indexes(command)
+        if len(indexes) != 1:
+            raise ValueError("seam endpoint command has no unique exit coordinate")
+        x_index, y_index = indexes[0]
+        values[x_index], values[y_index] = point
+    for key, tokens in tokens_by_path.items():
+        shapes[key] = _shape_from_tokens(shapes[key], tokens)
+
+
+def apply_seam_constraints(
+    action: ApplySeamConstraintsOperation,
+    resolver,
+) -> list[VectorRegion]:
+    """Execute recorded seam decisions without pair or cluster discovery."""
+    shapes: dict[tuple[int, ...], Shape] = {}
+    input_shapes: dict[tuple[int, ...], Shape] = {}
+    metadata: dict[tuple[int, ...], tuple[int, _SeamCandidate, str]] = {}
+
+    def current_shape(ref: PassInputRegionRef) -> Shape:
+        key = tuple(ref.ancestry)
+        if key in shapes:
+            return shapes[key]
+        region = resolver.resolve(ref)
+        if region.current is None:
+            raise ValueError("seam replay target has no geometry")
+        if region.current.kind != "use":
+            shapes[key] = region.current
+            input_shapes[key] = region.current
+            return region.current
+        owner = resolver.resolve(PassInputRegionRef(
+            ref.batch_id, ref.input_revision, (int(ref.ancestry[0]),)
+        ))
+        source_id = int(region.current.params.get("href_obj_id", -1))
+        source_matches = [leaf for leaf in owner.leaves() if int(leaf.id) == source_id]
+        if len(source_matches) != 1 or source_matches[0].current is None:
+            raise ValueError("seam replay clone source is absent or ambiguous")
+        shape = bake_shape_transform(source_matches[0].current, region.current.params["transform"])
+        shapes[key] = shape
+        input_shapes[key] = shape
+        return shape
+
+    for constraint in action.pairs:
+        left_key = tuple(constraint.left.ancestry)
+        right_key = tuple(constraint.right.ancestry)
+        left_region = resolver.resolve(constraint.left)
+        right_region = resolver.resolve(constraint.right)
+        left_shape = current_shape(constraint.left)
+        right_shape = current_shape(constraint.right)
+        if isinstance(constraint, PathOpsUnderlapConstraint):
+            left_owner = resolver.resolve(PassInputRegionRef(
+                constraint.left.batch_id,
+                constraint.left.input_revision,
+                (int(constraint.left.ancestry[0]),),
+            ))
+            right_owner = resolver.resolve(PassInputRegionRef(
+                constraint.right.batch_id,
+                constraint.right.input_revision,
+                (int(constraint.right.ancestry[0]),),
+            ))
+            actual_bottom = (
+                "left"
+                if _paint_order(_LeafRef(left_owner, left_region))
+                <= _paint_order(_LeafRef(right_owner, right_region))
+                else "right"
+            )
+            if actual_bottom != constraint.bottom:
+                raise ValueError("recorded seam underlap paint order no longer matches")
+            result = _pathops_shared_boundary_pair(
+                _LeafRef(left_owner, left_region),
+                _LeafRef(right_owner, right_region),
+                left_shape,
+                right_shape,
+                tol=constraint.tolerance,
+            )
+            if result is None:
+                raise ValueError("recorded seam underlap no longer applies")
+            left_shape, right_shape, candidate = result
+            shapes[left_key], shapes[right_key] = left_shape, right_shape
+            metadata[left_key] = (int(right_region.id), candidate, "pathops_shared_boundary" if actual_bottom == "left" else "pathops_authoritative")
+            metadata[right_key] = (int(left_region.id), candidate, "pathops_authoritative" if actual_bottom == "left" else "pathops_shared_boundary")
+            continue
+
+        candidate = _SeamCandidate(
+            constraint.axis,
+            constraint.left_side,
+            constraint.right_side,
+            constraint.left_value,
+            constraint.right_value,
+            constraint.seam,
+            constraint.span_min,
+            constraint.span_max,
+        )
+        rewritten_left = _rewrite_shape_side(
+            left_shape,
+            side=candidate.a_side,
+            candidate=candidate,
+            side_value=candidate.a_value,
+            tol=_SEAM_TOL,
+        )
+        rewritten_right = _rewrite_shape_side(
+            right_shape,
+            side=candidate.b_side,
+            candidate=candidate,
+            side_value=candidate.b_value,
+            tol=_SEAM_TOL,
+        )
+        if rewritten_left is None or rewritten_right is None:
+            raise ValueError("recorded axis seam no longer applies")
+        shapes[left_key], shapes[right_key] = rewritten_left, rewritten_right
+        _apply_endpoint_stage(shapes, constraint.before_cleanup)
+        cleaned_left = _cleanup_inflecting_cubics(
+            shapes[left_key], max_error=action.max_error, line_epsilon=action.epsilon
+        )
+        cleaned_right = _cleanup_inflecting_cubics(
+            shapes[right_key], max_error=action.max_error, line_epsilon=action.epsilon
+        )
+        shapes[left_key], shapes[right_key] = cleaned_left, cleaned_right
+        _apply_endpoint_stage(shapes, constraint.after_cleanup)
+        metadata[left_key] = (int(right_region.id), candidate, constraint.selected)
+        metadata[right_key] = (int(left_region.id), candidate, constraint.selected)
+
+    for constraint in action.clusters:
+        _apply_endpoint_stage(shapes, constraint.stage)
+    for ref in action.clustered:
+        key = tuple(ref.ancestry)
+        shapes[key] = _cleanup_inflecting_cubics(
+            shapes[key], max_error=action.max_error, line_epsilon=action.epsilon
+        )
+        paired_with, candidate, _selected = metadata[key]
+        metadata[key] = (paired_with, candidate, "vertex_cluster")
+
+    for correspondence in action.path_correspondence:
+        key = tuple(correspondence.target.ancestry)
+        before_paths = _parse_subpaths(
+            str(input_shapes[key].params.get("d", ""))
+        )
+        after_paths = _parse_subpaths(str(shapes[key].params.get("d", "")))
+        if correspondence.subpath_index >= len(before_paths):
+            raise ValueError("seam input path correspondence is stale")
+        before_path = before_paths[correspondence.subpath_index]
+        if _subpath_revision(before_path) != correspondence.input_path_revision:
+            raise ValueError("seam input path revision is stale")
+        after_path = (
+            after_paths[correspondence.subpath_index]
+            if correspondence.subpath_index < len(after_paths)
+            else None
+        )
+        actual_output_revision = (
+            _subpath_revision(after_path) if after_path is not None else ""
+        )
+        if actual_output_revision != correspondence.output_path_revision:
+            raise ValueError("seam output path revision does not match receipt")
+        before_count = len(_drawable_tokens(before_path))
+        after_count = (
+            len(_drawable_tokens(after_path)) if after_path is not None else 0
+        )
+        if any(
+            item.input_index >= before_count or item.output_index >= after_count
+            for item in correspondence.commands
+        ):
+            raise ValueError("seam command correspondence is out of range")
+
+    replacements_by_root: dict[int, dict[int, VectorRegion]] = {}
+    for key, shape in shapes.items():
+        if key not in metadata:
+            continue
+        region = resolver.resolve(PassInputRegionRef(
+            action.roots[0].batch_id, action.roots[0].input_revision, key
+        ))
+        paired_with, candidate, selected = metadata[key]
+        replacements_by_root.setdefault(int(key[0]), {})[int(region.id)] = _replacement(
+            region, shape, paired_with, candidate, selected=selected
+        )
+    return [
+        _replace_leaves(
+            resolver.resolve(root), replacements_by_root.get(int(root.ancestry[0]), {})
+        )
+        for root in action.roots
+    ]
+
+
 def seams_pass(
     objects: list[VectorRegion],
     masks: dict[int, np.ndarray],
@@ -935,6 +1524,7 @@ def seams_pass(
     max_error: float = 1.0,
     cubic: bool = False,
     post_symmetry: bool = False,
+    allow_underlap: bool = True,
 ) -> list[Proposal]:
     owners = sorted(objects, key=lambda current: (float(current.z), int(current.id)))
     owner_by_id = {int(owner.id): owner for owner in owners}
@@ -943,8 +1533,14 @@ def seams_pass(
         for owner in owners
     }
     leaf_ref_by_key: dict[tuple[int, int], _LeafRef] = {}
+    intent_ref_by_key = {
+        (int(path[0]), int(region.id)): PassInputRegionRef("", "", tuple(path))
+        for path, region in index_region_paths(objects).items()
+        if region.is_leaf
+    }
     updates_by_leaf: dict[tuple[int, int], _LeafUpdate] = {}
     owner_edges: list[tuple[int, int]] = []
+    pair_constraints: list[AxisSeamConstraint | PathOpsUnderlapConstraint] = []
 
     def record_pair(a_ref: _LeafRef, b_ref: _LeafRef) -> None:
         if not _same_surface_fill_group(a_ref.leaf, b_ref.leaf):
@@ -956,9 +1552,12 @@ def seams_pass(
             b_ref,
             updates_by_leaf,
             owner_leaf_maps,
+            intent_ref_by_key,
+            pair_constraints,
             epsilon=epsilon,
             max_error=max_error,
             cubic=cubic,
+            allow_underlap=allow_underlap,
         )
         if edge is not None:
             owner_edges.append(edge)
@@ -985,9 +1584,14 @@ def seams_pass(
 
     proposals: list[Proposal] = []
     for owner_ids in _owner_components(owner_edges):
+        cluster_constraints: list[VertexClusterConstraint] = []
+        clustered_refs: set[PassInputRegionRef] = set()
         _cluster_leaf_vertices(
             updates_by_leaf,
             owner_ids,
+            intent_ref_by_key,
+            cluster_constraints,
+            clustered_refs,
             tol=_SEAM_TOL,
             epsilon=epsilon,
             max_error=max_error,
@@ -1005,5 +1609,62 @@ def seams_pass(
                 continue
             replacements.append(_replace_leaves(owner, leaf_replacements))
         if replacements:
-            proposals.append(Proposal(tuple(sorted(owner_ids)), replacements))
+            # Endpoint projection can fold a tiny closing curve back across
+            # its own contour or move a cutout across its exterior. Validate
+            # the complete proposal with the same retained-topology contract
+            # used by replay before recording any seam constraints. Keep the
+            # original geometry when the proposed adjustment is unsafe; the
+            # normalized result is a predicate, not replacement geometry.
+            from ..topology import normalize_retained_topology
+
+            try:
+                normalize_retained_topology(replacements, allow_external=True)
+            except ValueError:
+                continue
+            root_refs = tuple(
+                PassInputRegionRef("", "", (owner_id,))
+                for owner_id in sorted(owner_ids)
+            )
+            component_pairs = tuple(
+                constraint for constraint in pair_constraints
+                if int(constraint.left.ancestry[0]) in owner_ids
+            )
+            pathops_rebuilt = {
+                tuple(
+                    constraint.left.ancestry
+                    if constraint.bottom == "left"
+                    else constraint.right.ancestry
+                )
+                for constraint in component_pairs
+                if isinstance(constraint, PathOpsUnderlapConstraint)
+            }
+            path_correspondence = tuple(
+                correspondence
+                for key, update in sorted(updates_by_leaf.items())
+                if key[0] in owner_ids
+                and leaf_ref_by_key[key].leaf.current is not None
+                and leaf_ref_by_key[key].leaf.current.kind == "path"
+                and update.shape.kind == "path"
+                for correspondence in _path_correspondence(
+                    intent_ref_by_key[key],
+                    leaf_ref_by_key[key].leaf.current,
+                    update.shape,
+                    positional_mutation=key not in pathops_rebuilt,
+                )
+            )
+            action = ApplySeamConstraintsOperation(
+                roots=root_refs,
+                pairs=component_pairs,
+                clusters=tuple(cluster_constraints),
+                clustered=tuple(sorted(clustered_refs, key=lambda ref: ref.ancestry)),
+                epsilon=float(epsilon),
+                max_error=float(max_error),
+                cubic=bool(cubic),
+                path_correspondence=path_correspondence,
+            )
+            proposals.append(Proposal(
+                tuple(sorted(owner_ids)),
+                replacements,
+                intent=operation_intent(action, root_refs, tuple(sorted(owner_ids))),
+            ))
     return proposals

@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from unittest.mock import patch
 from vectormark.surface_merge import seam_is_soft, gradients_continuous, merge_surfaces
 from vectormark.fill_fit import fit_fill as _ff
@@ -6,6 +7,51 @@ from vectormark.types import Region
 from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
 
 _AnyGradient = (LinearGradientFill, RadialGradientFill)
+
+
+@pytest.mark.parametrize("curved", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_closed_hard_seam_is_not_palette_noise(curved, reverse):
+    from vectormark.material_pretrace import _noncredible_edges
+    from vectormark.surface_merge import material_groups, seam_is_noncredible
+
+    yy, xx = np.mgrid[:60, :60]
+    outer = (xx >= 10) & (xx < 50) & (yy >= 10) & (yy < 50)
+    inner = ((xx - 30)**2 + (yy - 30)**2 < 10**2) if curved else (
+        (xx >= 24) & (xx < 36) & (yy >= 24) & (yy < 36)
+    )
+    regions = [Region(1, outer & ~inner, "#062336"), Region(2, inner, "#FFFFFF")]
+    if reverse:
+        regions.reverse()
+    rgb = np.full((60, 60, 3), 255, dtype=np.uint8)
+    rgb[outer & ~inner] = (6, 35, 54)
+
+    assert not seam_is_noncredible(regions[0].mask, regions[1].mask)
+    assert _noncredible_edges(regions) == set()
+    assert len(material_groups(regions, rgb)) == 2
+
+
+def test_closed_soft_seam_can_still_merge_by_source_color():
+    from vectormark.surface_merge import material_groups
+
+    yy, xx = np.mgrid[:60, :60]
+    inner = (xx - 30)**2 + (yy - 30)**2 < 10**2
+    regions = [Region(1, ~inner, "#062336"), Region(2, inner, "#072437")]
+    rgb = np.full((60, 60, 3), (6, 35, 54), dtype=np.uint8)
+    rgb[inner] = (7, 36, 55)
+    assert material_groups(regions, rgb) == [(0, 1)]
+
+
+def test_open_tortuous_seam_still_merges_by_shape():
+    from vectormark.material_pretrace import _noncredible_edges
+    from vectormark.surface_merge import seam_is_noncredible
+
+    yy, xx = np.mgrid[:80, :100]
+    boundary = 50 + 18 * np.sin(yy * np.pi / 10)
+    left = xx < boundary
+    regions = [Region(1, left, "#062336"), Region(2, ~left, "#FFFFFF")]
+    assert seam_is_noncredible(left, ~left)
+    assert _noncredible_edges(regions) == {(0, 1)}
 
 
 def _ramp(h, w, c0, c1):

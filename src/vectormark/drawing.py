@@ -11,15 +11,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from math import isfinite
-from types import MappingProxyType
 
 from .drawing_fill import Fill
+from .background import BackgroundColor
+from .immutable_value import freeze_value
 from .path_geometry import Geometry
-
-
-def _frozen_mapping(value: Mapping[str, object]) -> Mapping[str, object]:
-    """Detach the shallow diagnostic envelope stored on a drawing value."""
-    return MappingProxyType(dict(value))
+from .output_settings import DrawingOutputSettings
 
 
 @dataclass(frozen=True)
@@ -52,6 +49,8 @@ class DrawingRegion:
     diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False, repr=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "source_region_ids", tuple(self.source_region_ids))
+        object.__setattr__(self, "children", tuple(self.children))
         if not self.id:
             raise ValueError("drawing region IDs must not be empty")
         if self.geometry is None and not self.children:
@@ -66,7 +65,7 @@ class DrawingRegion:
             raise ValueError("source region IDs must not be empty")
         if len(set(self.source_region_ids)) != len(self.source_region_ids):
             raise ValueError("source region IDs must be unique")
-        object.__setattr__(self, "diagnostics", _frozen_mapping(self.diagnostics))
+        object.__setattr__(self, "diagnostics", freeze_value(self.diagnostics))
 
     @property
     def is_leaf(self) -> bool:
@@ -96,8 +95,11 @@ class Drawing:
     canvas: Canvas
     regions: tuple[DrawingRegion, ...]
     diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False, repr=False)
+    background: BackgroundColor | None = None
+    output_settings: DrawingOutputSettings = field(default_factory=DrawingOutputSettings)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "regions", tuple(self.regions))
         if not self.drawing_id:
             raise ValueError("drawing IDs must not be empty")
         if not self.regions:
@@ -105,7 +107,7 @@ class Drawing:
         all_regions = tuple(region for root in self.regions for region in _walk_regions(root))
         if len({region.id for region in all_regions}) != len(all_regions):
             raise ValueError("drawing region IDs must be unique")
-        object.__setattr__(self, "diagnostics", _frozen_mapping(self.diagnostics))
+        object.__setattr__(self, "diagnostics", freeze_value(self.diagnostics))
 
     def region(self, region_id: str) -> DrawingRegion:
         """Return one addressable region or raise ``KeyError``."""

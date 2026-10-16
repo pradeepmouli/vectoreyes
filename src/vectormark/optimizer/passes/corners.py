@@ -5,7 +5,17 @@ from __future__ import annotations
 import numpy as np
 
 from ...fit import Shape
-from ..corners import normalize_corners_path_d, path_corner_diagnostics
+from ..automatic_replay import (
+    CornerDiagnosticsObservation,
+    NormalizeCornersOperation,
+    draft_input_ref,
+    operation_intent,
+)
+from ..corners import (
+    normalize_corners_path_d,
+    recount_corner_diagnostics,
+    retained_corner_declaration_matches,
+)
 from ..framework import Proposal
 from ..vector_region import VectorRegion, to_polygon
 
@@ -25,27 +35,40 @@ def corner_normalize_pass(
             continue
         d = str(obj.current.params.get("d", ""))
         existing = obj.diagnostics.get("corners")
-        declared = (
-            existing
-            if isinstance(existing, dict) and existing.get("path") == d
-            else None
-        )
-        normalized_d, diagnostics = (
-            normalize_corners_path_d(d, max_error=max_error, diagnostics=declared)
-            if enabled and declared is not None
-            else (d, declared if declared is not None else path_corner_diagnostics(d))
-        )
-        shape = Shape("path", {**obj.current.params, "d": normalized_d})
+        declared = existing if retained_corner_declaration_matches(d, existing) else None
+        target_ref = draft_input_ref(obj.id)
+        if enabled and declared is not None:
+            normalized_d, diagnostics = normalize_corners_path_d(
+                d, max_error=max_error, diagnostics=declared
+            )
+            shape = Shape("path", {**obj.current.params, "d": normalized_d})
+            replacement = obj.with_current(
+                shape,
+                footprint=to_polygon(shape),
+                diagnostics={"corners": diagnostics},
+            )
+            intent = operation_intent(
+                NormalizeCornersOperation(target_ref, max_error, declared),
+                (target_ref,),
+                (obj.id,),
+            )
+        else:
+            diagnostics = declared if declared is not None else recount_corner_diagnostics(
+                d,
+                {
+                    "path": d,
+                    "anchors": [],
+                    "spans": [],
+                    "skipped": [{"reason": "missing_or_stale_provenance"}],
+                },
+            )
+            replacement = obj.with_diagnostics({"corners": diagnostics})
+            intent = CornerDiagnosticsObservation("", target_ref, diagnostics)
         proposals.append(
             Proposal(
                 (obj.id,),
-                [
-                    obj.with_current(
-                        shape,
-                        footprint=to_polygon(shape),
-                        diagnostics={"corners": diagnostics},
-                    )
-                ],
+                [replacement],
+                intent=intent,
             )
         )
     return proposals

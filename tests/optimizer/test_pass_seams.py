@@ -539,17 +539,17 @@ def test_seams_pass_clusters_sketch_like_bottom_junction_with_duplicate_tip_segm
     assert len(set(coordinates)) == 1
 
 
-def test_optimizer_runs_one_final_full_scene_stitch_after_symmetry_before_render_inlining():
+def test_optimizer_detects_clones_before_symmetry_and_runs_one_final_full_scene_stitch():
     pass_names = [getattr(pass_fn, "__name__", pass_fn.__class__.__name__) for pass_fn in _optimizer_passes(Options(optimizer=True))]
 
     assert pass_names.count("clones_pass") == 1
     assert pass_names.count("seams_pass") == 1
     assert pass_names[-6:] == [
         "clones_pass",
-        "straighten_pass",
+        "symmetry_pass",
         "linelet_simplify_pass",
         "smooth_pass",
-        "symmetry_pass",
+        "corner_normalize_pass",
         "seams_pass",
     ]
 

@@ -22,10 +22,10 @@ from .pipeline import _flatten_on_white
 
 MAX_INPUT_BYTES = 20 * 1024 * 1024
 MAX_DIMENSION_PX = 4096
-DEFAULT_MAX_SIZE_PX = 1024
+DEFAULT_MAX_SIZE_PX = 1254
 DEFAULT_COLORS = 16
-ALLOWED_MIME = {"image/png", "image/jpeg", "image/webp"}
-_PIL_FORMAT_MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
+ALLOWED_MIME = {"image/png"}
+_PIL_FORMAT_MIME = {"PNG": "image/png"}
 _FETCH_TIMEOUT = 15.0
 
 
@@ -166,10 +166,10 @@ def _validate(data: bytes) -> str:
         with Image.open(io.BytesIO(data)) as im:
             fmt, (w, h) = im.format, im.size
     except Exception as exc:
-        raise ImageError("UNSUPPORTED_IMAGE_TYPE", "could not decode image; expected PNG, JPEG, or WebP") from exc
+        raise ImageError("UNSUPPORTED_IMAGE_TYPE", "Could not decode PNG input. Export the image as PNG and retry.") from exc
     mime = _PIL_FORMAT_MIME.get(fmt or "")
     if mime not in ALLOWED_MIME:
-        raise ImageError("UNSUPPORTED_IMAGE_TYPE", "expected PNG, JPEG, or WebP")
+        raise ImageError("UNSUPPORTED_IMAGE_TYPE", "Only PNG input is supported. Export the image as PNG and retry.")
     if w > MAX_DIMENSION_PX or h > MAX_DIMENSION_PX:
         raise ImageError("IMAGE_TOO_LARGE", f"image dimension exceeds {MAX_DIMENSION_PX}px")
     return mime

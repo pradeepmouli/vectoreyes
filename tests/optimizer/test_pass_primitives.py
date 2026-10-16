@@ -47,11 +47,17 @@ def test_primitives_pass_proposes_circle_for_trace_disk_path():
 
 def test_optimize_applies_primitives_pass_to_trace_disk():
     objects, masks = trace_regions(_disk_image(), Options())
+    original_fill = objects[0].fill
 
     out = optimize(objects, masks, [primitives_pass])
 
     assert len(out) == 1
     assert out[0].current.kind == "circle"
+    assert out[0].fill == original_fill
+    assessment = out[0].diagnostics["primitives_pass"]["geometry_assessment"]
+    assert assessment["accepted"] is True
+    assert assessment["policy"]["max_boundary_error_px"] == 1.5
+    assert assessment["boundary_measurement"]
 
 
 def test_primitives_pass_skips_irregular_blob():
@@ -85,8 +91,11 @@ def test_primitives_pass_rejects_partial_oval_segment_as_full_ellipse():
     proposals = primitives_pass([obj], {1: np.zeros((120, 220), dtype=bool)})
     out = optimize([obj], {1: np.zeros((120, 220), dtype=bool)}, [primitives_pass])
 
-    assert proposals == []
+    assert len(proposals) == 1
     assert out[0].current.kind == "path"
+    assessment = out[0].diagnostics["primitives_pass"]["geometry_assessment"]
+    assert assessment["accepted"] is False
+    assert "boundary_error_exceeded" in assessment["reasons"]
 
 
 def test_primitives_pass_accepts_quantized_small_circular_cutout():

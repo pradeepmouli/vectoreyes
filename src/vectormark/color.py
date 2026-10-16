@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from ._palette_assignment import nearest_palette
+
 # sRGB <-> linear
 def _srgb_to_linear(c: np.ndarray) -> np.ndarray:
     return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
@@ -50,7 +52,7 @@ def delta_e(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def extract_palette(
-    rgb_image: np.ndarray, *, max_colors: int = 16, merge_de: float = 0.045,
+    rgb_image: np.ndarray, *, max_sampling_colors: int = 16, merge_de: float = 0.045,
     min_fraction: float = 0.002,
 ) -> np.ndarray:
     """Perceptual-clustering palette in OKLab.
@@ -116,13 +118,13 @@ def extract_palette(
             cluster_total.append(int(bin_total[b]))
             cluster_bin.append(int(b))
 
-    # Cap to max_colors, frequency-ordered.
+    # Cap to max_sampling_colors, frequency-ordered.
     if not cluster_total:
         # All bins are sub-floor: fall back to the most-frequent bin.
         fb = int(b_order[0])
         return rep_color[fb:fb + 1].astype(np.uint8)
     totals = np.array(cluster_total, dtype=np.int64)
-    keep = list(np.argsort(-totals, kind="stable")[:max_colors])
+    keep = list(np.argsort(-totals, kind="stable")[:max_sampling_colors])
     return rep_color[[cluster_bin[k] for k in keep]].astype(np.uint8)
 
 
@@ -153,7 +155,7 @@ def white_canvas_mask(rgb_image: np.ndarray, *, tolerance: float = 32.0) -> np.n
     return mask if int(mask.sum()) else None
 
 
-def infer_max_colors(
+def infer_max_sampling_colors(
     rgb_image: np.ndarray,
     *,
     candidates: tuple[int, ...] = (4, 8, 16, 32, 64),
@@ -182,7 +184,7 @@ def infer_max_colors(
         retained = pixels[~mask.reshape(-1)]
         if len(retained):
             pixels = retained
-    palette = extract_palette(pixels, max_colors=levels[-1], min_fraction=0.0)
+    palette = extract_palette(pixels, max_sampling_colors=levels[-1], min_fraction=0.0)
     if len(palette) <= levels[0]:
         return int(len(palette))
 
@@ -216,7 +218,5 @@ def quantize(rgb_image: np.ndarray, palette: np.ndarray) -> np.ndarray:
     h, w, _ = rgb_image.shape
     flat = srgb_to_oklab(rgb_image.reshape(-1, 3) / 255.0)
     pal_lab = srgb_to_oklab(palette / 255.0)
-    # pairwise distances (P pixels x K palette)
-    d = np.linalg.norm(flat[:, None, :] - pal_lab[None, :, :], axis=2)
-    nearest = d.argmin(axis=1)
+    nearest = nearest_palette(np.ascontiguousarray(flat), np.ascontiguousarray(pal_lab))
     return palette[nearest].reshape(h, w, 3).astype(np.uint8)

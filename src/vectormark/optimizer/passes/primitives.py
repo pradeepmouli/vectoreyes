@@ -4,7 +4,9 @@ import numpy as np
 
 from ...skia_geometry import SkPath
 from ...fit import Shape, recognize_primitive
+from ...quality import GeometryPolicy, assess_geometry
 from ..framework import Proposal
+from ..automatic_replay import primitive_intent
 from ..vector_region import VectorRegion, to_polygon
 
 def _polygon_exterior_points(flat: object) -> tuple[np.ndarray, SkPath] | None:
@@ -45,8 +47,11 @@ def _within_boundary_residual_budget(
     percentage of its interior.  The area of an ``epsilon``-wide perimeter
     corridor instead grows with the geometry that can actually move.
     """
-    boundary_budget = max(float(original.length), float(candidate.length), 1.0) * max(float(epsilon), 0.0)
-    return _residual_area(original, candidate) <= boundary_budget
+    return assess_geometry(
+        original,
+        candidate,
+        GeometryPolicy(max_perimeter_residual_error_px=epsilon, preserve_topology=False),
+    ).accepted
 
 
 def _recognize_rounded_rect(points: np.ndarray, flat: SkPath, *, epsilon: float):
@@ -84,13 +89,17 @@ def primitives_pass(
             primitive = _recognize_rounded_rect(points, fit_geometry, epsilon=epsilon)
         if primitive is None or primitive == obj.current:
             continue
-        if not _within_boundary_residual_budget(
-            fit_geometry,
-            to_polygon(primitive),
-            epsilon=epsilon,
-        ):
-            continue
-
-        proposals.append(Proposal((obj.id,), [obj.with_current(primitive)]))
+        policy = GeometryPolicy(
+            max_boundary_error_px=epsilon,
+            max_perimeter_residual_error_px=epsilon,
+            preserve_topology=True,
+        )
+        assessment = assess_geometry(fit_geometry, to_polygon(primitive), policy)
+        proposals.append(Proposal(
+            (obj.id,),
+            [obj.with_current(primitive)],
+            policy,
+            intent=primitive_intent(obj.id, primitive, epsilon=epsilon),
+        ))
 
     return proposals

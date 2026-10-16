@@ -266,6 +266,65 @@ def test_complete_annulus_rejects_solid_disk():
     assert complete_annulus(disk, [], max_residual=1.6, min_arc_deg=110.0, concentric_tol=2.0) is None
 
 
+def test_cavity_containment_is_geometric_and_keeps_crossing_occluder():
+    from vectormark.occlusion import _cavity_contained_labels
+
+    h = w = 140
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - 60) ** 2 + (yy - 70) ** 2
+    ring = Region(1, (d2 <= 42 ** 2) & (d2 >= 24 ** 2), "#3366cc")
+    colored_art = Region(2, (xx - 60) ** 2 + (yy - 70) ** 2 <= 12 ** 2, "#11aa55")
+    crossing = Region(3, (xx - 93) ** 2 + (yy - 70) ** 2 <= 25 ** 2, "#cc3333")
+
+    assert _cavity_contained_labels(ring, [colored_art, crossing]) == {colored_art.label}
+
+
+def test_gate_rejects_same_color_candidate_overpainting_retained_artwork():
+    h = w = 120
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - 60) ** 2 + (yy - 60) ** 2
+    ring = Region(1, (d2 <= 40 ** 2) & (d2 >= 20 ** 2), "#3366cc")
+    retained = Region(2, d2 < 20 ** 2, "#3366cc")
+    annulus = {"kind": "annulus", "params": {"cx": 60, "cy": 60, "r_outer": 40,
+                                                "r_inner": 20}, "color": "#3366cc", "z": 0}
+    thin_intrusion = {"kind": "annulus", "params": {"cx": 60, "cy": 60,
+                                                       "r_outer": 40, "r_inner": 19.5},
+                      "color": "#3366cc", "z": 0}
+    filled = {"kind": "circle", "params": {"cx": 60, "cy": 60, "r": 40},
+              "color": "#3366cc", "z": 0}
+
+    assert stack_agreement([annulus], None, [ring, retained], h, w,
+                           retained_regions=[retained]) > 0.99
+    assert stack_agreement([thin_intrusion], None, [ring, retained], h, w,
+                           retained_regions=[retained]) == 0.0
+    assert stack_agreement([filled], None, [ring, retained], h, w,
+                           retained_regions=[retained]) < 0.96
+
+
+def test_reconstruct_ring_carries_colored_cavity_artwork_by_source_identity():
+    from vectormark.fit import Shape
+
+    h, w = 160, 200
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - 70) ** 2 + (yy - 70) ** 2
+    full_ring = (d2 <= 45 ** 2) & (d2 >= 25 ** 2)
+    occluder_mask = (xx - 135) ** 2 + (yy - 70) ** 2 <= 38 ** 2
+    ring = Region(1, full_ring & ~occluder_mask, "#3366cc")
+    occluder = Region(2, occluder_mask, "#cc3333")
+    artwork = Region(3, d2 < 25 ** 2, "#22aa66")
+
+    reconstructed, remaining = reconstruct_scene([ring, occluder, artwork], None, (h, w))
+    retained = [item for item in reconstructed
+                if isinstance(item, Shape) and item.params.get("source_label") == artwork.label]
+
+    assert len(retained) == 1
+    assert retained[0].params["color_hex"] == artwork.color_hex
+    assert sorted(item.kind for item in reconstructed if isinstance(item, ScenePrimitive)) == [
+        "annulus", "circle"
+    ]
+    assert remaining == []
+
+
 # --- Task 6: pairwise over/under + topological order ---
 from vectormark.occlusion import _pair_constraint, _topo_order  # noqa: E402
 

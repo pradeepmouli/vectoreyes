@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import binary_dilation, binary_erosion
+from scipy.ndimage import binary_dilation, binary_erosion, binary_fill_holes
 from skimage.draw import polygon2mask
 from skimage.measure import CircleModel, EllipseModel
 from skimage.morphology import convex_hull_image
@@ -24,6 +24,7 @@ class ScenePrimitive:
     params: dict
     color_hex: str
     z: int
+    source_label: int | None = None
 
 
 def has_bite(mask: np.ndarray, *, max_solidity: float = 0.92) -> bool:
@@ -258,6 +259,41 @@ def complete_annulus(
             "params": {"cx": cx, "cy": cy, "r_outer": outer["r"], "r_inner": inner["r"]}}
 
 
+def _cavity_contained_labels(region: Region, others: list[Region]) -> set[int]:
+    """Labels of neighbors lying wholly inside an enclosed cavity of ``region``.
+
+    Such neighbors are retained artwork, not occluders: they must not turn the
+    cavity boundary into a seam, and reconstruction must leave their regions intact.
+    A neighbor crossing a cavity boundary has pixels outside ``cavities`` and is
+    therefore still treated as a real occluder.
+    """
+    cavities = binary_fill_holes(region.mask) & ~region.mask
+    if not cavities.any():
+        return set()
+    return {
+        other.label
+        for other in others
+        if other.mask.any() and not np.any(other.mask & ~cavities)
+    }
+
+
+def _retained_region_shape(region: Region) -> Shape:
+    """Carry retained raster artwork through reconstruction as its source contour."""
+    parts: list[str] = []
+    for contour in region_contours(region.mask):
+        if len(contour) < 3:
+            continue
+        parts.append(f"M{_fmt(contour[0, 0])} {_fmt(contour[0, 1])}")
+        parts.extend(f"L{_fmt(x)} {_fmt(y)}" for x, y in contour[1:])
+        parts.append("Z")
+    return Shape("path", {
+        "d": " ".join(parts),
+        "color_hex": region.color_hex,
+        "z": -1,
+        "source_label": region.label,
+    })
+
+
 def _subseq_indices(pts: np.ndarray, sub: np.ndarray) -> list[int]:
     """Indices in `pts` of the subsequence `sub`. `rdp` preserves its input points
     exactly and in order, so a monotone forward cursor with exact equality maps each
@@ -352,8 +388,10 @@ def _complete_member(region: Region, others: list[Region]) -> dict | None:
 
     The outer boundary (contour_index=0) is computed once and forwarded to both
     complete_annulus and complete_polygon so label_boundary isn't called twice."""
-    contour, seam = label_boundary(region, others)        # outer boundary (contour_index=0)
-    ann = complete_annulus(region, others, max_residual=_MAX_RESIDUAL,
+    retained_labels = _cavity_contained_labels(region, others)
+    occluders = [other for other in others if other.label not in retained_labels]
+    contour, seam = label_boundary(region, occluders)        # outer boundary (contour_index=0)
+    ann = complete_annulus(region, occluders, max_residual=_MAX_RESIDUAL,
                            min_arc_deg=_MIN_ARC_DEG, concentric_tol=_CONCENTRIC_TOL,
                            outer_boundary=(contour, seam))
     if ann is not None:
@@ -408,26 +446,43 @@ def primitive_mask(prim: dict, h: int, w: int) -> np.ndarray:
     return ((xx - p["cx"]) / p["rx"]) ** 2 + ((yy - p["cy"]) / p["ry"]) ** 2 <= 1.0
 
 
-def stack_agreement(prims, lens, regions: list[Region], h: int, w: int) -> float:
+def stack_agreement(
+    prims, lens, regions: list[Region], h: int, w: int,
+    *, retained_regions: list[Region] | None = None,
+) -> float:
     """Paint prims (then the lens) in z-order into a colour-label image and compare,
     over the union of the regions and any pixels painted by the stack, to each
-    region's own colour. Returns [0, 1]."""
+    region's own colour. Any candidate paint over exact retained-region pixels is a
+    hard failure before the general comparison's boundary tolerance. Returns [0, 1]."""
     BG = "\x00"
+    retained_regions = retained_regions or []
+    retained_tokens = {r.label: f"\x01retained:{r.label}" for r in retained_regions}
     painted = np.full((h, w), BG, dtype=object)
     painted_any = np.zeros((h, w), bool)
+    candidate_painted = np.zeros((h, w), bool)
+    # Retained artwork remains outside the reconstructed branch. Paint it beneath
+    # the candidate for a conservative gate: a candidate that intrudes into its
+    # exact source pixels must disagree, even when the two regions share a color.
+    for r in retained_regions:
+        painted[r.mask] = retained_tokens[r.label]
+        painted_any |= r.mask
     for prim in sorted(prims, key=lambda p: p["z"]):
         m = primitive_mask(prim, h, w)
         painted[m] = prim["color"]
         painted_any |= m
+        candidate_painted |= m
     if lens is not None:
         a, b = (prims[lens["lens_of"][0]], prims[lens["lens_of"][1]])
         lm = primitive_mask(a, h, w) & primitive_mask(b, h, w)
         painted[lm] = lens["mask_color"]
         painted_any |= lm
+        candidate_painted |= lm
+    if any(np.any(candidate_painted & r.mask) for r in retained_regions):
+        return 0.0
     truth = np.full((h, w), BG, dtype=object)
     region_union = np.zeros((h, w), bool)
     for r in regions:
-        truth[r.mask] = r.color_hex
+        truth[r.mask] = retained_tokens.get(r.label, r.color_hex)
         region_union |= r.mask
     compare_mask = region_union | painted_any
     if not compare_mask.any():
@@ -534,8 +589,16 @@ def reconstruct_scene(
         if len(group_regions) < 2:
             continue
 
+        retained_labels: set[int] = set()
+        for gr in group_regions:
+            retained_labels.update(_cavity_contained_labels(
+                gr, [other for other in group_regions if other.label != gr.label]
+            ))
+
         completed: list[tuple[Region, dict]] = []
         for gr in group_regions:
+            if gr.label in retained_labels:
+                continue
             others = [o for o in group_regions if o.label != gr.label]
             prim = _complete_member(gr, others)
             if prim is not None:
@@ -546,7 +609,11 @@ def reconstruct_scene(
         reg_list = [cr for cr, _ in completed]
         prim_list = [p for _, p in completed]
         completed_labels = {cr.label for cr in reg_list}
-        leftover = [gr for gr in group_regions if gr.label not in completed_labels]
+        retained_regions = [gr for gr in group_regions if gr.label in retained_labels]
+        leftover = [
+            gr for gr in group_regions
+            if gr.label not in completed_labels and gr.label not in retained_labels
+        ]
 
         # global paint order from pairwise overlap ownership
         edges: list[tuple[int, int]] = []
@@ -564,7 +631,7 @@ def reconstruct_scene(
 
         prims = [
             {"kind": prim_list[i]["kind"], "params": prim_list[i]["params"],
-             "color": reg_list[i].color_hex, "z": z_of[i]}
+             "color": reg_list[i].color_hex, "z": z_of[i], "source_label": reg_list[i].label}
             for i in range(len(completed))
         ]
 
@@ -587,15 +654,33 @@ def reconstruct_scene(
                 lens_region = leftover[0]
                 lens = {"mask_color": lens_region.color_hex, "lens_of": (0, 1)}
 
-        if stack_agreement(prims, lens, group_regions, h, w) < _GATE_AGREEMENT:
+        if stack_agreement(
+            prims, lens, group_regions, h, w, retained_regions=retained_regions
+        ) < _GATE_AGREEMENT:
             continue
 
+        reconstructed.extend(_retained_region_shape(region) for region in retained_regions)
         for p in sorted(prims, key=lambda p: p["z"]):
-            reconstructed.append(ScenePrimitive(p["kind"], p["params"], p["color"], p["z"]))
+            reconstructed.append(ScenePrimitive(
+                p["kind"],
+                p["params"],
+                p["color"],
+                p["z"],
+                p["source_label"],
+            ))
         if lens is not None:
-            reconstructed.append(Shape("path", {"d": lens_d, "color_hex": lens["mask_color"],
-                                                "z": len(prims)}))
+            reconstructed.append(Shape("path", {
+                "d": lens_d,
+                "color_hex": lens["mask_color"],
+                "z": len(prims),
+                "source_label": lens_region.label if lens_region is not None else None,
+                "lens_of_labels": (
+                    reg_list[lens["lens_of"][0]].label,
+                    reg_list[lens["lens_of"][1]].label,
+                ),
+            }))
         consumed.update(completed_labels)
+        consumed.update(retained_labels)
         if lens_region is not None:
             consumed.add(lens_region.label)
 

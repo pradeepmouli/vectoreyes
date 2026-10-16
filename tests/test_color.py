@@ -39,7 +39,7 @@ def _band_image():
 
 
 def test_extract_palette_finds_two_true_colors_not_the_blend():
-    pal = extract_palette(_band_image(), max_colors=8)
+    pal = extract_palette(_band_image(), max_sampling_colors=8)
     assert len(pal) == 2
     hexes = {tuple(c) for c in pal}
     assert (6, 35, 54) in hexes and (61, 168, 157) in hexes
@@ -47,7 +47,7 @@ def test_extract_palette_finds_two_true_colors_not_the_blend():
 
 def test_quantize_collapses_blend_row():
     img = _band_image()
-    pal = extract_palette(img, max_colors=8)
+    pal = extract_palette(img, max_sampling_colors=8)
     q = quantize(img, pal)
     assert set(map(tuple, np.unique(q.reshape(-1, 3), axis=0))) <= {(6, 35, 54), (61, 168, 157)}
 
@@ -115,13 +115,13 @@ def test_palette_is_deterministic():
     assert np.array_equal(extract_palette(img), extract_palette(img))
 
 
-def test_palette_honours_max_colors():
+def test_palette_honours_max_sampling_colors():
     img = np.zeros((60, 60, 3), np.uint8)
     cols = [(200, 0, 0), (0, 200, 0), (0, 0, 200),
             (200, 200, 0), (0, 200, 200), (200, 0, 200)]
     for i, c in enumerate(cols):
         img[(i // 3) * 30:(i // 3) * 30 + 30, (i % 3) * 20:(i % 3) * 20 + 20] = c
-    pal = extract_palette(img, max_colors=4)
+    pal = extract_palette(img, max_sampling_colors=4)
     assert len(pal) == 4
 
 

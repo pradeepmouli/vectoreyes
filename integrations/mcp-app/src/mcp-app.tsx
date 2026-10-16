@@ -73,8 +73,15 @@ interface ImageRef {
 }
 
 interface TraceOptionsInput {
+  refinement_passes: Record<string, boolean>;
+  initial_stitch: boolean;
+  background_color: string | null;
+  background_tolerance: number;
   refine: "auto" | "none";
-  max_colors: number | "auto";
+  max_sampling_colors: number | "auto";
+  max_output_colors: number | null;
+  allow_gradients: boolean;
+  background_cutouts: "subtract" | "mask" | "off";
   min_region_size: number;
   max_hole_area: number;
   min_region_fraction: number;
@@ -82,6 +89,10 @@ interface TraceOptionsInput {
   simplify_tolerance: number;
   curve_tolerance: number;
   fit_strategy: "quadratic" | "progressive" | "progressive_allow_lines";
+  corner_normalize: boolean;
+  corner_rounding: boolean;
+  support_weighted_corners: boolean;
+  gradient_pretrace: boolean;
   remove_background: "auto" | "off" | "on";
   preprocess: {
     max_size_px: number;
@@ -97,12 +108,15 @@ interface TraceToolInput {
    * normalize it before ever calling the MCP server.
    */
   image?: unknown;
+  image_data?: unknown;
   options?: Partial<TraceOptionsInput>;
 }
 
 interface TraceOptionSchema {
   enum?: string[];
   default?: unknown;
+  description?: string;
+  properties?: Record<string, TraceOptionSchema>;
 }
 
 interface DrawingArtifacts {
@@ -110,19 +124,30 @@ interface DrawingArtifacts {
   preview: string;
   review_panel: string;
   labeled_svg: string;
+  path_map: string;
+  command_map: string;
   raw_trace: string;
   plan: string;
   versions: string;
 }
 
+interface DrawingVersionResult {
+  version: string;
+  parent_version: string | null;
+}
+
 interface DrawingResult {
   drawing_id: string;
   version: string;
-  parent_version?: string;
+  parent_version: string | null;
+  requested_base_version: string | null;
+  baseline_version: string;
+  outputs: DrawingVersionResult[];
   artifacts: DrawingArtifacts;
-  report?: { targets?: unknown[] };
+  report: { targets: unknown[]; groups: unknown[] };
   trace?: { width?: number; height?: number; options?: Record<string, unknown> };
   trace_options_schema?: Record<string, TraceOptionSchema>;
+  trace_options?: TraceOptionsInput;
 }
 
 type WidgetResult = IdealizeLogoResult | DrawingResult;
@@ -246,8 +271,15 @@ function DaikonicMark({ size = 28 }: { size?: number }) {
 // ─── Trace form and drawing artifact viewer ───────────────────────────────────
 
 const DEFAULT_TRACE_OPTIONS: TraceOptionsInput = {
+  refinement_passes: {}, // Defaults and pass names come from the engine's returned schema.
+  initial_stitch: true,
+  background_color: null,
+  background_tolerance: 32,
   refine: "none",
-  max_colors: 16,
+  max_sampling_colors: 16,
+  max_output_colors: null,
+  allow_gradients: true,
+  background_cutouts: "subtract",
   min_region_size: 16,
   max_hole_area: 128,
   min_region_fraction: 0.02,
@@ -255,6 +287,10 @@ const DEFAULT_TRACE_OPTIONS: TraceOptionsInput = {
   simplify_tolerance: 1.5,
   curve_tolerance: 1,
   fit_strategy: "quadratic",
+  corner_normalize: false,
+  corner_rounding: true,
+  support_weighted_corners: false,
+  gradient_pretrace: false,
   remove_background: "auto",
   preprocess: { max_size_px: 2048, preserve_transparency: true, quantize: false },
 };
@@ -266,13 +302,15 @@ const FALLBACK_ENUMS: Record<string, string[]> = {
   remove_background: ["auto", "off", "on"],
 };
 
-type ArtifactKind = "svg" | "preview" | "review_panel" | "labeled_svg" | "raw_trace" | "plan" | "versions";
+type ArtifactKind = "svg" | "preview" | "review_panel" | "labeled_svg" | "path_map" | "command_map" | "raw_trace" | "plan" | "versions";
 
 const ARTIFACTS: Array<{ kind: ArtifactKind; label: string }> = [
   { kind: "svg", label: "SVG" },
   { kind: "preview", label: "Preview PNG" },
   { kind: "review_panel", label: "Review panel" },
   { kind: "labeled_svg", label: "Region map SVG" },
+  { kind: "path_map", label: "Path segment map SVG" },
+  { kind: "command_map", label: "Command map SVG" },
   { kind: "raw_trace", label: "Raw trace JSON" },
   { kind: "plan", label: "Plan JSON" },
   { kind: "versions", label: "Version manifest" },
@@ -288,13 +326,13 @@ function dataUriForSvg(svg: string): string {
 
 function imageRefFromToolInput(value: unknown): ImageRef | undefined {
   if (typeof value === "string") {
-    return value.startsWith("data:image/") ? { data_uri: value } : undefined;
+    return value.startsWith("data:image/png;") ? { data_uri: value } : undefined;
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const candidate = value as Partial<ImageRef>;
-  if (typeof candidate.download_url === "string") return { ...candidate, download_url: candidate.download_url };
+  if (typeof candidate.download_url === "string") return typeof candidate.file_id === "string" && candidate.file_id ? { ...candidate, download_url: candidate.download_url } : undefined;
   if (typeof candidate.url === "string") return { ...candidate, url: candidate.url };
-  if (typeof candidate.data_uri === "string" && candidate.data_uri.startsWith("data:image/")) return { ...candidate, data_uri: candidate.data_uri };
+  if (typeof candidate.data_uri === "string" && candidate.data_uri.startsWith("data:image/png;")) return { ...candidate, data_uri: candidate.data_uri };
   if (typeof candidate.base64 === "string") return { ...candidate, base64: candidate.base64 };
   return undefined;
 }
@@ -329,6 +367,16 @@ function artifactJson(result: CallToolResult | null): string | null {
   }
 }
 
+function versionLineage(drawing: DrawingResult): string {
+  const fields = [
+    `Requested base ${drawing.requested_base_version ?? "none"}`,
+    `Actual parent ${drawing.parent_version ?? "none"}`,
+    `Baseline ${drawing.baseline_version}`,
+    `Current ${drawing.version}`,
+  ];
+  return fields.join(" · ");
+}
+
 function TraceControls({
   app,
   initialInput,
@@ -350,17 +398,21 @@ function TraceControls({
   const schema = result && isDrawingResult(result) ? result.trace_options_schema : undefined;
 
   useEffect(() => {
-    const image = imageRefFromToolInput(initialInput.image);
+    const input = initialInput.image ?? initialInput.image_data;
+    const image = imageRefFromToolInput(input);
     setSourceImage(image);
-    setSourceUnavailable(Boolean(initialInput.image) && !image);
+    setSourceUnavailable(Boolean(input) && !image);
     setHandoffSent(false);
-    if (!initialInput.options) return;
-    setForm((current) => ({
-      ...current,
-      ...initialInput.options,
-      preprocess: { ...current.preprocess, ...initialInput.options?.preprocess },
-    }));
   }, [initialInput]);
+
+  const lastTraceOptions = result && isDrawingResult(result) ? result.trace_options : undefined;
+  useEffect(() => {
+    setForm(lastTraceOptions ?? {
+      ...DEFAULT_TRACE_OPTIONS,
+      ...initialInput.options,
+        preprocess: { ...DEFAULT_TRACE_OPTIONS.preprocess, ...initialInput.options?.preprocess },
+    });
+  }, [initialInput, lastTraceOptions]);
 
   const setOption = <K extends keyof TraceOptionsInput>(key: K, value: TraceOptionsInput[K]) => {
     setForm((current) => ({ ...current, [key]: value }));
@@ -376,7 +428,7 @@ function TraceControls({
     try {
       onResult(await app.callServerTool({
         name: "trace_drawing",
-        arguments: { image: sourceImage, options: form },
+        arguments: { ...(sourceImage.download_url ? { image: sourceImage } : { image_data: sourceImage }), options: form },
       }));
     } catch (runError) {
       onError(runError instanceof Error ? runError.message : String(runError));
@@ -437,21 +489,43 @@ function TraceControls({
       </div>
 
       <div className="number-grid">
-        <label className="field">Max colors
-          <input disabled={form.max_colors === "auto"} min="2" max="256" type="number" value={form.max_colors === "auto" ? "" : form.max_colors}
-            onChange={(event) => setOption("max_colors", Number(event.target.value) || 2)} />
+        <label className="field">Max sampling colors
+          <input disabled={form.max_sampling_colors === "auto"} min="2" max="256" type="number" value={form.max_sampling_colors === "auto" ? "" : form.max_sampling_colors}
+            onChange={(event) => setOption("max_sampling_colors", Number(event.target.value) || 2)} />
         </label>
-        <label className="toggle"> <input checked={form.max_colors === "auto"} type="checkbox"
-          onChange={(event) => setOption("max_colors", event.target.checked ? "auto" : 16)} /> Auto palette </label>
+        <label className="toggle"> <input checked={form.max_sampling_colors === "auto"} type="checkbox"
+          onChange={(event) => setOption("max_sampling_colors", event.target.checked ? "auto" : 16)} /> Auto palette </label>
         <label className="field">Min region px
           <input min="1" type="number" value={form.min_region_size} onChange={(event) => setOption("min_region_size", Number(event.target.value))} />
         </label>
       </div>
 
+      <div className="number-grid">
+        <label className="field">Max output colors (blank = unlimited)
+          <input min="1" max="256" type="number" value={form.max_output_colors ?? ""}
+            onChange={(event) => setOption("max_output_colors", event.target.value === "" ? null : Number(event.target.value))} />
+        </label>
+        <label className="toggle"><input checked={form.allow_gradients} type="checkbox"
+          onChange={(event) => setOption("allow_gradients", event.target.checked)} /> Allow gradients</label>
+        <label className="field">Background cutouts
+          <select value={form.background_cutouts} onChange={(event) => setOption("background_cutouts", event.target.value as TraceOptionsInput["background_cutouts"])}>
+            {["subtract", "mask", "off"].map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+      </div>
+
       <details className="trace-advanced">
         <summary>Advanced trace settings</summary>
-        <div className="number-grid">
-          <label className="field">Hole area
+          <div className="number-grid">
+            <label className="field">Background color (blank = infer)
+              <input type="text" placeholder="#ffffff" value={form.background_color ?? ""}
+                pattern="#[0-9a-fA-F]{6}" onChange={(event) => setOption("background_color", event.target.value || null)} />
+            </label>
+            <label className="field">Background RGB tolerance
+              <input type="number" min="0" max="442" value={form.background_tolerance}
+                onChange={(event) => setOption("background_tolerance", Number(event.target.value))} />
+            </label>
+            <label className="field">Hole area
             <input min="0" type="number" value={form.max_hole_area} onChange={(event) => setOption("max_hole_area", Number(event.target.value))} />
           </label>
           <label className="field">Min fraction
@@ -467,11 +541,40 @@ function TraceControls({
             <input min="1" type="number" value={form.preprocess.max_size_px} onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, max_size_px: Number(event.target.value) } }))} />
           </label>
         </div>
-        <div className="toggle-row">
+          <div className="toggle-row">
+              <label className="toggle"><input checked={form.initial_stitch} type="checkbox" onChange={(event) => setOption("initial_stitch", event.target.checked)} /> Initial stitch in v0</label>
+            <label className="toggle"><input checked={form.corner_normalize} type="checkbox" onChange={(event) => setOption("corner_normalize", event.target.checked)} /> Normalize corners in v1</label>
+            <label className="toggle"><input checked={form.corner_rounding} type="checkbox" onChange={(event) => setOption("corner_rounding", event.target.checked)} /> Protect rounded corners in v0</label>
+            <label className="toggle"><input checked={form.support_weighted_corners} type="checkbox" onChange={(event) => setOption("support_weighted_corners", event.target.checked)} /> Support-weighted corners</label>
+            <label className="toggle"><input checked={form.gradient_pretrace} type="checkbox" onChange={(event) => setOption("gradient_pretrace", event.target.checked)} /> Gradient pretrace</label>
           <label className="toggle"><input checked={form.preprocess.preserve_transparency} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, preserve_transparency: event.target.checked } }))} /> Preserve alpha</label>
           <label className="toggle"><input checked={form.preprocess.quantize} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, quantize: event.target.checked } }))} /> Pre-quantize</label>
         </div>
-      </details>
+          </details>
+
+          <details className="trace-advanced">
+            <summary>Automatic refinement passes</summary>
+            <p className="control-note">Used only with refine=auto. Pass order is fixed; final source fills are always resolved.</p>
+            <div className="toggle-row">
+              {Object.entries(schema?.refinement_passes?.properties ?? {}).map(([name, definition]) => (
+                <label className="toggle" key={name} title={definition.description}>
+                  <input type="checkbox" disabled={form.refine !== "auto"}
+                    checked={form.refinement_passes?.[name] ?? Boolean(definition.default)}
+                    onChange={(event) => setOption("refinement_passes", { ...form.refinement_passes, [name]: event.target.checked })} />
+                  {name.replaceAll("_", " ")}
+                </label>
+              ))}
+            </div>
+          </details>
+
+        {lastTraceOptions && <details className="trace-advanced">
+          <summary>Last trace parameters</summary>
+          <pre className="artifact-json">{JSON.stringify(lastTraceOptions, null, 2)}</pre>
+          {result && isDrawingResult(result) && <>
+            <p className="control-note">Resolved trace diagnostics (including selected palette size):</p>
+            <pre className="artifact-json">{JSON.stringify(result.trace?.options, null, 2)}</pre>
+          </>}
+        </details>}
 
       {sourceImage ? (
         <button className="run-button" disabled={isRunning} onClick={runTrace}>
@@ -492,32 +595,93 @@ function ArtifactViewer({ app, drawing, initialPanel, onError }: { app: App; dra
   const [selected, setSelected] = useState<ArtifactKind>("review_panel");
   const [loaded, setLoaded] = useState<CallToolResult | null>(null);
   const [loading, setLoading] = useState(false);
+  const [exported, setExported] = useState<{ url: string; filename: string } | null>(null);
 
-  useEffect(() => { setSelected("review_panel"); setLoaded(null); }, [drawing.drawing_id, drawing.version]);
+  useEffect(() => { setSelected("review_panel"); setLoaded(null); setExported(null); }, [drawing.drawing_id, drawing.version]);
+
+  const fetchArtifact = useCallback((kind: ArtifactKind) => app.callServerTool({
+    name: "get_drawing_artifact",
+    arguments: { drawing_id: drawing.drawing_id, version: drawing.version, artifact: kind },
+  }), [app, drawing.drawing_id, drawing.version]);
 
   const load = useCallback(async (kind: ArtifactKind) => {
     setSelected(kind);
+    setExported(null);
+    setLoaded(null);
     setLoading(true);
     onError(null);
     try {
-      setLoaded(await app.callServerTool({ name: "get_drawing_artifact", arguments: { drawing_id: drawing.drawing_id, version: drawing.version, artifact: kind } }));
+      setLoaded(await fetchArtifact(kind));
     } catch (loadError) {
       onError(loadError instanceof Error ? loadError.message : String(loadError));
     } finally {
       setLoading(false);
     }
-  }, [app, drawing.drawing_id, drawing.version, onError]);
+  }, [fetchArtifact, onError]);
 
   const svg = artifactSvg(loaded);
   const image = firstImageDataUri(loaded) ?? (selected === "review_panel" ? initialPanel : null);
-  const json = selected === "raw_trace" ? artifactJson(loaded) : null;
+  const json = ["raw_trace", "plan", "versions"].includes(selected) ? artifactJson(loaded) : null;
   const uri = drawing.artifacts[selected];
+
+  const exportFile = async () => {
+    setLoading(true);
+    setExported(null);
+    onError(null);
+    try {
+      const result = await fetchArtifact(selected);
+      setLoaded(result);
+      const svgContent = artifactSvg(result);
+      const imageContent = firstImageDataUri(result);
+      const jsonContent = ["raw_trace", "plan", "versions"].includes(selected) ? artifactJson(result) : null;
+      const extension = svgContent ? "svg" : imageContent ? "png" : jsonContent ? "json" : null;
+      if (!extension) throw new Error("This response did not contain a downloadable artifact.");
+      const href = svgContent ? dataUriForSvg(svgContent) : imageContent ?? `data:application/json;charset=utf-8,${encodeURIComponent(jsonContent!)}`;
+      const filename = `${drawing.drawing_id}-${drawing.version}-${selected}.${extension}`;
+      const host = (window as Window & { openai?: {
+        uploadFile?: (file: File) => Promise<{ fileId: string }>;
+        getFileDownloadUrl?: (input: { fileId: string }) => Promise<{ downloadUrl: string }>;
+      } }).openai;
+      if (host) {
+        if (!host.uploadFile || !host.getFileDownloadUrl) {
+          throw new Error("This ChatGPT host does not expose file export APIs. SVG text is still available through get_drawing_artifact; no downloadable file was created.");
+        }
+        const blob = svgContent
+          ? new Blob([svgContent], { type: "image/svg+xml" })
+          : imageContent
+            ? new Blob([Uint8Array.from(atob(imageContent.split(",")[1]), (char) => char.charCodeAt(0))], { type: "image/png" })
+            : new Blob([jsonContent!], { type: "application/json" });
+        const { fileId } = await host.uploadFile(new File([blob], filename, { type: blob.type }));
+        if (!fileId) throw new Error("ChatGPT did not return an exported file ID.");
+        const { downloadUrl } = await host.getFileDownloadUrl({ fileId });
+        if (!downloadUrl || new URL(downloadUrl).protocol !== "https:") {
+          throw new Error("ChatGPT did not return a valid file download URL.");
+        }
+        setExported({ url: downloadUrl, filename });
+        await app.updateModelContext({ content: [{ type: "text", text: `VectorMark exported ${filename} as ChatGPT file ${fileId}. Download: ${downloadUrl}` }] });
+        return;
+      }
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } catch (exportError) {
+      onError(exportError instanceof Error ? exportError.message : String(exportError));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return <>
     <div className="artifact-header"><div><p className="eyebrow">Drawing {drawing.version}</p><h2>Response files</h2></div><code>{drawing.drawing_id}</code></div>
+    <code className="artifact-uri" aria-label="version lineage">{versionLineage(drawing)}</code>
     <div className="artifact-list" role="group" aria-label="Response files">
-      {ARTIFACTS.map(({ kind, label }) => <button key={kind} className={`artifact-button${selected === kind ? " active" : ""}`} onClick={() => load(kind)}>{label}</button>)}
+        {ARTIFACTS.map(({ kind, label }) => <button key={kind} disabled={loading} className={`artifact-button${selected === kind ? " active" : ""}`} onClick={() => load(kind)}>{label}</button>)}
+        <button className="artifact-button" disabled={loading} onClick={exportFile}>Export selected file</button>
     </div>
+    {exported && <p><a href={exported.url} target="_blank" rel="noopener noreferrer" download={exported.filename}>Download {exported.filename}</a> (temporary link)</p>}
     <code className="artifact-uri">{uri}</code>
     <div className="preview-stage">
       {loading ? <p>Loading {selected}…</p> : image ? <img src={image} alt={`${selected} response artifact`} /> : svg ? <img src={dataUriForSvg(svg)} alt={`${selected} response artifact`} /> : json ? <pre className="artifact-json">{json}</pre> : <p>Select a response file to load it through VectorMark.</p>}
@@ -538,7 +702,10 @@ function AppRoot() {
   const { app, isConnected, error } = useApp({
     appInfo: { name: "vectormark", version: "0.2.1" }, capabilities: {},
     onAppCreated: (createdApp) => {
-      createdApp.ontoolinput = (params) => setToolInput((current) => ({ ...current, ...((params.arguments ?? {}) as TraceToolInput) }));
+      createdApp.ontoolinput = (params) => {
+        const input = (params.arguments ?? {}) as TraceToolInput;
+        if (input.image !== undefined || input.image_data !== undefined || input.options !== undefined) setToolInput(input);
+      };
       createdApp.ontoolresult = (result) => { setErrorText(null); setToolResult(result); };
       createdApp.ontoolcancelled = (params) => setErrorText(params.reason || "Tool call was cancelled.");
       createdApp.onerror = (appError) => setErrorText(appError instanceof Error ? appError.message : String(appError));

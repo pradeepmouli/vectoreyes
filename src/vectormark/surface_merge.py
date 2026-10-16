@@ -84,8 +84,10 @@ def seam_is_soft(mask_a: np.ndarray, mask_b: np.ndarray, rgb: np.ndarray,
 def seam_is_noncredible(mask_a: np.ndarray, mask_b: np.ndarray) -> bool:
     """Whether a shared seam is too noisy to justify separate regions.
 
-    A clean line, smooth arc, or closed shape has a modest ratio between its
-    traced length and end-to-end span.  A palette staircase has many boundary
+    An open clean line or smooth arc has a modest ratio between its
+    traced length and end-to-end span. Closed seams need separate treatment:
+    their perimeter naturally exceeds the span without implying noise.
+    A palette staircase has many boundary
     steps while making little geometric progress.  The latter is evidence of a
     segmentation artifact independent of source colour, and is the first-pass
     reason to union two regions.
@@ -109,6 +111,13 @@ def _seam_credibility(mask_a: np.ndarray, mask_b: np.ndarray) -> str:
         ys, xs = np.nonzero(labels == component_id)
         length = float(len(xs))
         if length < _MIN_CREDIBLE_SEAM_LENGTH:
+            continue
+        # A closed counter's perimeter can exceed its bounding-box diagonal
+        # even when every edge is straight. Closure makes this open-seam
+        # tortuosity test inconclusive; let source-colour evidence decide.
+        component = np.zeros((int(np.ptp(ys)) + 3, int(np.ptp(xs)) + 3), dtype=bool)
+        component[ys - ys.min() + 1, xs - xs.min() + 1] = True
+        if np.any(ndimage.binary_fill_holes(component) & ~component):
             continue
         span = max(float(np.hypot(float(xs.max() - xs.min()), float(ys.max() - ys.min()))), 1.0)
         if length / span > _MAX_CREDIBLE_SEAM_TORTUOSITY:
@@ -346,7 +355,6 @@ def merge_surfaces(
     edge_de: float = 0.06,
 ) -> list[tuple[Region, Fill]]:
     """Compatibility wrapper: material geometry first, then fit each material fill."""
-    del seam_de
     materials = merge_material_regions([region for region, _fill in filled], rgb, edge_de=edge_de)
     return [
         (region, fit_fill(region.mask, rgb, flat_hex=region.color_hex))

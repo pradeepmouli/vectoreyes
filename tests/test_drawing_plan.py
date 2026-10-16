@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from vectormark.candidate import FlatFill
+from vectormark.drawing_adapter import drawing_from_vector_regions
 from vectormark.drawing_trace import (
     TraceCommand,
     TraceOptions,
@@ -89,6 +90,20 @@ def _grouped_scene(*source_regions: str) -> tuple[VectorRegion, ...]:
     )
 
 
+def _validate_plan(plan, trace: TraceResult, regions: tuple[VectorRegion, ...]) -> None:
+    from vectormark.drawing_plan import validate_plan
+
+    validate_plan(
+        plan,
+        drawing_from_vector_regions(
+            "drw_x",
+            width=trace.width,
+            height=trace.height,
+            regions=regions,
+        ),
+    )
+
+
 def _path_plan(segment: str = "r1.p0.c1") -> dict[str, object]:
     return {
         "version": "vectormark.plan.v1",
@@ -96,27 +111,23 @@ def _path_plan(segment: str = "r1.p0.c1") -> dict[str, object]:
         "base_version": "v0",
         "ops": [
             {
-                "op": "set_geometry",
+                "op": "update_geometry",
                 "target": "r1",
-                "geometry": {
-                    "type": "path",
-                    "ops": [
+                "ops": [
                         {"op": "fit", "target": segment, "type": "quadratic"},
                         {"op": "break", "target": segment},
-                        {"op": "close"},
                     ],
-                },
             }
         ],
     }
 
 
-def test_plan_accepts_version_scoped_segment_fit_break_and_close():
+def test_plan_accepts_version_scoped_segment_fit_and_break():
     from vectormark.drawing_plan import parse_plan, validate_plan
 
     plan = parse_plan(_path_plan())
 
-    validate_plan(plan, _trace(), _scene("r1"))
+    _validate_plan(plan, _trace(), _scene("r1"))
 
 
 def test_plan_accepts_native_detection_and_explicit_relationship_operations():
@@ -130,14 +141,14 @@ def test_plan_accepts_native_detection_and_explicit_relationship_operations():
             "ops": [
                 {"op": "detect_primitives", "target": "r1"},
                 {"op": "detect_clones", "target": "r2"},
-                {"op": "clone", "source": "r1", "target": "r2", "transform": [1, 0, 0, 1, 5, 0]},
-                {"op": "set_symmetry", "source": "r1", "target": "r2", "axis": {"theta": 0, "cx": 1, "cy": 1}},
+                {"op": "assign_clone", "source": "r1", "target": "r2", "transforms": [{"tx": 5}]},
+                {"op": "set_symmetry", "target": "r2", "axis": {"point": [1, 1], "angle_degrees": 0}},
                 {"op": "detect_symmetry"},
             ],
         }
     )
 
-    validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
+    _validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
 
 
 def test_plan_accepts_a_terminal_block_of_distinct_targeted_symmetry_operations():
@@ -156,7 +167,7 @@ def test_plan_accepts_a_terminal_block_of_distinct_targeted_symmetry_operations(
         }
     )
 
-    validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
+    _validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
 
 
 def test_plan_rejects_repeated_or_non_terminal_targeted_symmetry():
@@ -169,7 +180,7 @@ def test_plan_rejects_repeated_or_non_terminal_targeted_symmetry():
         }
     )
     with pytest.raises(PlanValidationError, match="already has a symmetry"):
-        validate_plan(repeated, _trace(), _scene("r1"))
+        _validate_plan(repeated, _trace(), _scene("r1"))
 
     global_after_target = parse_plan(
         {
@@ -178,7 +189,7 @@ def test_plan_rejects_repeated_or_non_terminal_targeted_symmetry():
         }
     )
     with pytest.raises(PlanValidationError, match="cannot follow targeted"):
-        validate_plan(global_after_target, _two_region_trace(), _scene("r1", "r2"))
+        _validate_plan(global_after_target, _two_region_trace(), _scene("r1", "r2"))
 
 
 def test_plan_accepts_global_fitting_defaults_and_detect_override():
@@ -189,16 +200,16 @@ def test_plan_accepts_global_fitting_defaults_and_detect_override():
             "version": "vectormark.plan.v1",
             "drawing_id": "drw_x",
             "base_version": "v0",
-            "defaults": {"epsilon": 0.25, "max_error": 0.75},
-            "ops": [{"op": "detect_primitives", "target": "r1", "epsilon": 0.5}],
+            "settings": {"epsilon": 0.25, "max_error": 0.75},
+            "ops": [{"op": "detect_primitives", "target": "r1", "settings": {"epsilon": 0.5}}],
         }
     )
 
-    assert dict(plan.defaults) == {"epsilon": 0.25, "max_error": 0.75}
-    validate_plan(plan, _trace(), _scene("r1"))
+    assert plan.settings.model_dump(exclude_none=True) == {"epsilon": 0.25, "max_error": 0.75}
+    _validate_plan(plan, _trace(), _scene("r1"))
 
 
-def test_plan_accepts_global_and_targeted_polish_operations():
+def test_plan_accepts_global_and_targeted_stitch_operations():
     from vectormark.drawing_plan import parse_plan, validate_plan
 
     plan = parse_plan(
@@ -207,23 +218,23 @@ def test_plan_accepts_global_and_targeted_polish_operations():
             "drawing_id": "drw_x",
             "base_version": "v0",
             "ops": [
-                {"op": "simplify", "epsilon": 0.5},
-                {"op": "stitch", "target": "r1", "max_error": 0.75},
+                {"op": "stitch", "settings": {"epsilon": 0.5}},
+                {"op": "stitch", "targets": ["r1"], "settings": {"max_error": 0.75}},
             ],
         }
     )
 
-    validate_plan(plan, _trace(), _scene("r1"))
+    _validate_plan(plan, _trace(), _scene("r1"))
 
 
-@pytest.mark.parametrize("defaults", [{"epsilon": -0.1}, {"max_error": float("inf")}, {"unknown": 1}])
-def test_plan_rejects_invalid_global_fitting_defaults(defaults):
+@pytest.mark.parametrize("settings", [{"epsilon": -0.1}, {"max_error": float("inf")}, {"unknown": 1}])
+def test_plan_rejects_invalid_global_fitting_settings(settings):
     from vectormark.drawing_plan import PlanValidationError, parse_plan
 
-    with pytest.raises(PlanValidationError, match="/defaults"):
+    with pytest.raises(PlanValidationError, match="/settings"):
         parse_plan({
             "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
-            "defaults": defaults, "ops": [],
+            "settings": settings, "ops": [],
         })
 
 
@@ -246,7 +257,7 @@ def test_structural_operations_require_a_version_boundary(operation: str):
     )
 
     with pytest.raises(PlanValidationError, match="final operation"):
-        validate_plan(plan, _trace(), _scene("r1"))
+        _validate_plan(plan, _trace(), _scene("r1"))
 
 
 def test_plan_reports_pointer_for_unknown_retained_segment():
@@ -254,8 +265,8 @@ def test_plan_reports_pointer_for_unknown_retained_segment():
 
     plan = parse_plan(_path_plan("r1.p0.c99"))
 
-    with pytest.raises(PlanValidationError, match="/ops/0/geometry/ops/0/target"):
-        validate_plan(plan, _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/ops/0/target"):
+        _validate_plan(plan, _trace(), _scene("r1"))
 
 
 def test_path_geometry_rejects_segment_owned_by_another_region():
@@ -263,8 +274,8 @@ def test_path_geometry_rejects_segment_owned_by_another_region():
 
     plan = parse_plan(_path_plan("r2.p0.c1"))
 
-    with pytest.raises(PlanValidationError, match="/ops/0/geometry/ops/0/target"):
-        validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
+    with pytest.raises(PlanValidationError, match="/ops/0/ops/0/target"):
+        _validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
 
 
 def test_path_geometry_uses_retained_target_commands_not_raw_trace_provenance():
@@ -286,21 +297,17 @@ def test_path_geometry_uses_retained_target_commands_not_raw_trace_provenance():
             "base_version": "v0",
             "ops": [
                 {
-                    "op": "set_geometry",
+                    "op": "update_geometry",
                     "target": "r1",
-                    "geometry": {
-                        "type": "path",
-                        "ops": [
+                    "ops": [
                             {"op": "fit", "target": "r1.p1.c1", "type": "keep"},
-                            {"op": "close"},
                         ],
-                    },
                 }
             ],
         }
     )
 
-    validate_plan(plan, _trace(), (retained,))
+    _validate_plan(plan, _trace(), (retained,))
 
 
 def test_path_geometry_requires_a_newly_merged_target_to_be_refined_in_its_child_version():
@@ -314,17 +321,12 @@ def test_path_geometry_requires_a_newly_merged_target_to_be_refined_in_its_child
             "ops": [
                 {"op": "merge", "id": "g1", "regions": ["r1", "r2"]},
                 {
-                    "op": "set_geometry",
+                    "op": "update_geometry",
                     "target": "g1",
-                    "geometry": {
-                        "type": "path",
-                        "ops": [
+                    "ops": [
                             {"op": "fit", "target": "r1.p0.c1", "type": "line"},
-                            {"op": "close"},
                             {"op": "fit", "target": "r2.p0.c1", "type": "line"},
-                            {"op": "close"},
                         ],
-                    },
                 },
                 {"op": "set_z_order", "targets": ["g1"]},
             ],
@@ -332,7 +334,7 @@ def test_path_geometry_requires_a_newly_merged_target_to_be_refined_in_its_child
     )
 
     with pytest.raises(PlanValidationError, match="retained command"):
-        validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
+        _validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
 
 
 def test_path_geometry_uses_its_own_retained_segment_ids():
@@ -345,35 +347,31 @@ def test_path_geometry_uses_its_own_retained_segment_ids():
             "base_version": "v0",
             "ops": [
                 {
-                    "op": "set_geometry",
+                    "op": "update_geometry",
                     "target": "g1",
-                    "geometry": {
-                        "type": "path",
-                        "ops": [
+                    "ops": [
                             {"op": "fit", "target": "g1.p0.c1", "type": "line"},
-                            {"op": "close"},
                         ],
-                    },
                 },
                 {"op": "set_z_order", "targets": ["g1"]},
             ],
         }
     )
 
-    validate_plan(plan, _two_region_trace(), _grouped_scene("r1", "r2"))
+    _validate_plan(plan, _two_region_trace(), _grouped_scene("r1", "r2"))
 
 
 def test_path_geometry_rejects_a_segment_fitted_twice():
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
     payload = _path_plan()
-    payload["ops"][0]["geometry"]["ops"] = [
+    payload["ops"][0]["ops"] = [
         {"op": "fit", "target": "r1.p0.c1", "type": "line"},
         {"op": "fit", "target": "r1.p0.c1", "type": "line"},
     ]
 
-    with pytest.raises(PlanValidationError, match="/ops/0/geometry/ops/1/target"):
-        validate_plan(parse_plan(payload), _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/ops/1/target"):
+        _validate_plan(parse_plan(payload), _trace(), _scene("r1"))
 
 
 @pytest.mark.parametrize(
@@ -384,7 +382,7 @@ def test_path_geometry_rejects_a_segment_fitted_twice():
                 "version": "vectormark.plan.v1",
                 "drawing_id": "drw_x",
                 "base_version": "v0",
-                "ops": [{"op": "set_geometry", "target": "missing", "geometry": {"type": "circle"}}],
+                "ops": [{"op": "fit_primitive", "target": "missing", "type": "circle"}],
             },
             "/ops/0/target",
         ),
@@ -406,43 +404,42 @@ def test_plan_reports_operation_pointer_for_unknown_targets_and_duplicate_ids(pa
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
     with pytest.raises(PlanValidationError, match=pointer):
-        validate_plan(parse_plan(payload), _trace(), _scene("r1"))
+        _validate_plan(parse_plan(payload), _trace(), _scene("r1"))
 
 
 def test_plan_rejects_invalid_fill_and_non_finite_numbers():
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
-    invalid_fill = parse_plan(
-        {
-            "version": "vectormark.plan.v1",
-            "drawing_id": "drw_x",
-            "base_version": "v0",
-            "ops": [{"op": "set_fill", "target": "r1", "fill": {"type": "flat", "color": "blue"}}],
-        }
-    )
-    with pytest.raises(PlanValidationError, match="/ops/0/fill/color"):
-        validate_plan(invalid_fill, _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/fill"):
+        parse_plan(
+            {
+                "version": "vectormark.plan.v1",
+                "drawing_id": "drw_x",
+                "base_version": "v0",
+                "ops": [{"op": "set_fill", "target": "r1", "fill": {"type": "flat", "color": "blue"}}],
+            }
+        )
 
-    non_finite = parse_plan(
-        {
-            "version": "vectormark.plan.v1",
-            "drawing_id": "drw_x",
-            "base_version": "v0",
-            "ops": [
-                {
-                    "op": "set_fill",
-                    "target": "r1",
-                    "fill": {
-                        "type": "linear_gradient",
-                        "geometry": {"x1": float("nan"), "y1": 0, "x2": 1, "y2": 1},
-                        "stops": [{"offset": 0, "color": "#000000"}, {"offset": 1, "color": "#ffffff"}],
-                    },
-                }
-            ],
-        }
-    )
-    with pytest.raises(PlanValidationError, match="/ops/0/fill/geometry/x1"):
-        validate_plan(non_finite, _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/fill/start/0"):
+        parse_plan(
+            {
+                "version": "vectormark.plan.v1",
+                "drawing_id": "drw_x",
+                "base_version": "v0",
+                "ops": [
+                    {
+                        "op": "set_fill",
+                        "target": "r1",
+                        "fill": {
+                            "type": "linear_gradient",
+                            "start": [float("nan"), 0],
+                            "end": [1, 1],
+                            "stops": [{"offset": 0, "color": "#000000"}, {"offset": 1, "color": "#ffffff"}],
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def test_plan_requires_each_base_target_once_in_z_order():
@@ -457,18 +454,17 @@ def test_plan_requires_each_base_target_once_in_z_order():
         }
     )
     with pytest.raises(PlanValidationError, match="/ops/0/targets"):
-        validate_plan(omitted, _trace(), _scene("r1", "r2"))
+        _validate_plan(omitted, _trace(), _scene("r1", "r2"))
 
-    repeated = parse_plan(
-        {
-            "version": "vectormark.plan.v1",
-            "drawing_id": "drw_x",
-            "base_version": "v0",
-            "ops": [{"op": "set_z_order", "targets": ["r1", "r1"]}],
-        }
-    )
-    with pytest.raises(PlanValidationError, match="/ops/0/targets/1"):
-        validate_plan(repeated, _trace(), _scene("r1", "r2"))
+    with pytest.raises(PlanValidationError, match="/ops/0"):
+        parse_plan(
+            {
+                "version": "vectormark.plan.v1",
+                "drawing_id": "drw_x",
+                "base_version": "v0",
+                "ops": [{"op": "set_z_order", "targets": ["r1", "r1"]}],
+            }
+        )
 
 
 def test_z_order_uses_the_final_target_created_by_grouping():
@@ -486,7 +482,7 @@ def test_z_order_uses_the_final_target_created_by_grouping():
         }
     )
 
-    validate_plan(plan, _trace(), _scene("r1"))
+    _validate_plan(plan, _trace(), _scene("r1"))
 
 
 def test_z_order_must_be_the_final_operation():
@@ -505,21 +501,21 @@ def test_z_order_must_be_the_final_operation():
     )
 
     with pytest.raises(PlanValidationError, match="set_z_order must be the final operation"):
-        validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
+        _validate_plan(plan, _two_region_trace(), _scene("r1", "r2"))
 
 
 def test_parse_plan_recursively_freezes_nested_path_op_sequences():
     from vectormark.drawing_plan import parse_plan, validate_plan
 
     payload = _path_plan()
-    path_ops = tuple(payload["ops"][0]["geometry"]["ops"])
-    payload["ops"][0]["geometry"]["ops"] = path_ops
+    path_ops = tuple(payload["ops"][0]["ops"])
+    payload["ops"][0]["ops"] = path_ops
 
     plan = parse_plan(payload)
     path_ops[0]["target"] = "changed-after-parsing"
 
-    assert plan.ops[0]["geometry"]["ops"][0]["target"] == "r1.p0.c1"
-    validate_plan(plan, _trace(), _scene("r1"))
+    assert plan.ops[0].ops[0].target == "r1.p0.c1"
+    _validate_plan(plan, _trace(), _scene("r1"))
 
 
 @pytest.mark.parametrize(
@@ -530,7 +526,7 @@ def test_parse_plan_recursively_freezes_nested_path_op_sequences():
                 {"op": "fit", "target": "r1.p0.c1", "type": "line"},
                 {"op": "break", "target": "r1.p0.c99"},
             ],
-            "/ops/0/geometry/ops/1/target",
+            "/ops/0/ops/1/target",
         ),
         (
             [
@@ -538,7 +534,7 @@ def test_parse_plan_recursively_freezes_nested_path_op_sequences():
                 {"op": "break", "target": "r1.p0.c1"},
                 {"op": "break", "target": "r1.p0.c1"},
             ],
-            "/ops/0/geometry/ops/2/target",
+            "/ops/0/ops/2/target",
         ),
     ],
 )
@@ -546,10 +542,10 @@ def test_path_break_must_target_an_unbroken_fitted_segment(path_ops, pointer):
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
     payload = _path_plan()
-    payload["ops"][0]["geometry"]["ops"] = path_ops
+    payload["ops"][0]["ops"] = path_ops
 
     with pytest.raises(PlanValidationError, match=pointer):
-        validate_plan(parse_plan(payload), _trace(), _scene("r1"))
+        _validate_plan(parse_plan(payload), _trace(), _scene("r1"))
 
 
 @pytest.mark.parametrize(
@@ -562,45 +558,45 @@ def test_path_break_must_target_an_unbroken_fitted_segment(path_ops, pointer):
 def test_raster_fill_requires_base64_encoded_png_data(png_b64):
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
-    plan = parse_plan(
-        {
-            "version": "vectormark.plan.v1",
-            "drawing_id": "drw_x",
-            "base_version": "v0",
-            "ops": [
-                {
-                    "op": "set_fill",
-                    "target": "r1",
-                    "fill": {
-                        "type": "raster",
-                        "geometry": {"x": 0, "y": 0, "w": 1, "h": 1},
-                        "png_b64": png_b64,
-                    },
-                }
-            ],
-        }
-    )
-
-    with pytest.raises(PlanValidationError, match="/ops/0/fill/png_b64"):
-        validate_plan(plan, _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/fill"):
+        parse_plan(
+            {
+                "version": "vectormark.plan.v1",
+                "drawing_id": "drw_x",
+                "base_version": "v0",
+                "ops": [
+                    {
+                        "op": "set_fill",
+                        "target": "r1",
+                        "fill": {
+                            "type": "raster",
+                            "origin": [0, 0],
+                            "width": 1,
+                            "height": 1,
+                            "png_base64": png_b64,
+                        },
+                    }
+                ],
+            }
+        )
 
 
 def test_path_geometry_requires_at_least_one_operation():
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
     payload = _path_plan()
-    payload["ops"][0]["geometry"]["ops"] = []
+    payload["ops"][0]["ops"] = []
 
-    with pytest.raises(PlanValidationError, match="/ops/0/geometry/ops"):
-        validate_plan(parse_plan(payload), _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/ops"):
+        _validate_plan(parse_plan(payload), _trace(), _scene("r1"))
 
 
 def test_plan_requires_path_dependencies():
     from vectormark.drawing_plan import PlanValidationError, parse_plan, validate_plan
 
     payload = _path_plan()
-    path_ops = payload["ops"][0]["geometry"]["ops"]
+    path_ops = payload["ops"][0]["ops"]
     path_ops[0]["target"] = "missing"
 
-    with pytest.raises(PlanValidationError, match="/ops/0/geometry/ops/0/target"):
-        validate_plan(parse_plan(payload), _trace(), _scene("r1"))
+    with pytest.raises(PlanValidationError, match="/ops/0/ops/0/target"):
+        _validate_plan(parse_plan(payload), _trace(), _scene("r1"))

@@ -10,10 +10,12 @@ in a meaningful feature, so geometry has no duplicated point state.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Sequence
 from math import isfinite
 from typing import Literal, TypeAlias
 import re
 
+from .corner_ownership import directed_corner_ownership
 
 Point: TypeAlias = tuple[float, float]
 AnchorKind: TypeAlias = Literal["corner", "inflection", "extremum", "junction"]
@@ -99,7 +101,6 @@ class ArcCommand(PathCommand):
 DrawableCommand: TypeAlias = LineCommand | QuadraticCommand | CubicCommand | ArcCommand
 
 
-@dataclass(frozen=True)
 class Anchor:
     """Semantic annotation over the commands that form one feature.
 
@@ -108,10 +109,7 @@ class Anchor:
     ``stitch`` are operations, not anchor kinds.
     """
 
-    id: str
-    command_ids: tuple[str, ...]
-
-    def __post_init__(self) -> None:
+    def _validate(self) -> None:
         if type(self) is Anchor:
             raise TypeError("anchors must use a concrete anchor variant")
         if not self.id:
@@ -130,12 +128,30 @@ class Anchor:
 class CornerAnchor(Anchor):
     """A sharp or rounded corner; a fitted radius is optional."""
 
+    id: str
+    entry_command_id: str
+    exit_command_id: str
+    owned_command_ids: tuple[str, ...] = ()
     radius: float | None = None
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        object.__setattr__(self, "owned_command_ids", tuple(self.owned_command_ids))
+        if not self.id:
+            raise ValueError("anchor IDs must not be empty")
+        if not self.entry_command_id or not self.exit_command_id:
+            raise ValueError("corner boundaries must not be empty")
+        if len(set(self.owned_command_ids)) != len(self.owned_command_ids):
+            raise ValueError("corner owned command IDs must be unique")
+        if self.entry_command_id == self.exit_command_id and self.owned_command_ids:
+            raise ValueError("point corners cannot own commands")
+        if self.entry_command_id != self.exit_command_id and not self.owned_command_ids:
+            raise ValueError("rounded corners must own their directed drawable span")
         if self.radius is not None and (not isfinite(float(self.radius)) or self.radius < 0):
             raise ValueError("corner radius must be finite and non-negative")
+
+    @property
+    def command_ids(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((self.entry_command_id, *self.owned_command_ids, self.exit_command_id)))
 
     @property
     def kind(self) -> Literal["corner"]:
@@ -146,6 +162,13 @@ class CornerAnchor(Anchor):
 class InflectionAnchor(Anchor):
     """A fitted curve inflection that bounds separately fitted spans."""
 
+    id: str
+    command_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "command_ids", tuple(self.command_ids))
+        self._validate()
+
     @property
     def kind(self) -> Literal["inflection"]:
         return "inflection"
@@ -154,6 +177,13 @@ class InflectionAnchor(Anchor):
 @dataclass(frozen=True)
 class ExtremumAnchor(Anchor):
     """A local path extremum retained by curve simplification."""
+
+    id: str
+    command_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "command_ids", tuple(self.command_ids))
+        self._validate()
 
     @property
     def kind(self) -> Literal["extremum"]:
@@ -164,10 +194,13 @@ class ExtremumAnchor(Anchor):
 class JunctionAnchor(Anchor):
     """A path junction paired with another junction in the drawing."""
 
+    id: str
+    command_ids: tuple[str, ...]
     reference_junction_id: str
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        object.__setattr__(self, "command_ids", tuple(self.command_ids))
+        self._validate()
         if not self.reference_junction_id:
             raise ValueError("junction anchors require a reference junction ID")
         if self.reference_junction_id == self.id:
@@ -186,6 +219,7 @@ class ClosedPath:
     commands: tuple[PathCommand, ...]
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "commands", tuple(self.commands))
         if not self.id:
             raise ValueError("path IDs must not be empty")
         if len(self.commands) < 3:
@@ -209,6 +243,14 @@ class ClosedPath:
     @property
     def drawable_commands(self) -> tuple[DrawableCommand, ...]:
         return tuple(self.commands[1:])  # type: ignore[return-value]
+
+    def boundary_command_id(self, command_id: str) -> str:
+        """Resolve a displayed endpoint, including M's explicit closure alias."""
+        if command_id not in {command.id for command in self.commands}:
+            raise ValueError("corner boundary must reference a displayed command in the selected path")
+        if command_id == self.commands[0].id and self.commands[-1].end == self.start:
+            return self.commands[-1].id
+        return command_id
 
     def to_svg_d(self) -> str:
         """Serialize this closed path, emitting ``Z`` from the closure invariant."""
@@ -244,18 +286,39 @@ class PathGeometry:
     anchors: tuple[Anchor, ...] = ()
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "anchors", tuple(self.anchors))
         if len({anchor.id for anchor in self.anchors}) != len(self.anchors):
             raise ValueError("anchor IDs must be unique within geometry")
-        command_ids = {
+        known_command_ids = {
             command.id
             for command in self.path.commands
         }
-        if len(command_ids) != len(self.path.commands):
+        if len(known_command_ids) != len(self.path.commands):
             raise ValueError("path command IDs must be unique within geometry")
+        corner_owners: dict[str, str] = {}
         for anchor in self.anchors:
-            unknown = set(anchor.command_ids) - command_ids
+            unknown = set(anchor.command_ids) - known_command_ids
             if unknown:
                 raise ValueError(f"anchor references unknown commands: {sorted(unknown)!r}")
+            if isinstance(anchor, CornerAnchor):
+                ordered_command_ids = tuple(command.id for command in self.path.commands)
+                explicit_close = self.path.drawable_commands[-1].end == self.path.start
+                expected = directed_corner_ownership(
+                    ordered_command_ids,
+                    anchor.entry_command_id,
+                    anchor.exit_command_id,
+                    explicit_closing_drawable=explicit_close,
+                )
+                if anchor.owned_command_ids != expected:
+                    raise ValueError(
+                        "corner owned commands must exactly match the directed boundary span"
+                    )
+                for owned_command_id in anchor.owned_command_ids:
+                    previous = corner_owners.setdefault(owned_command_id, anchor.id)
+                    if previous != anchor.id:
+                        raise ValueError(
+                            f"corner ownership is ambiguous between {previous!r} and {anchor.id!r}"
+                        )
 
     def endpoint(self, command_id: str) -> Point:
         """Resolve a command endpoint without exposing path-storage details."""
@@ -270,6 +333,30 @@ class PathGeometry:
 
 
 @dataclass(frozen=True)
+class CompoundPathGeometry:
+    """Retained overlapping paths whose component ownership is unresolved.
+
+    Keep source order and fill semantics until an explicit geometry operation
+    resolves the overlap; none of these paths is implicitly a cutout.
+    """
+
+    paths: tuple[PathGeometry, ...]
+    fill_rule: Literal["nonzero", "evenodd"]
+    reason: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "paths", tuple(self.paths))
+        if len(self.paths) < 2 or self.fill_rule not in {"nonzero", "evenodd"}:
+            raise ValueError("compound geometry requires multiple paths and a valid fill rule")
+        ids = tuple(path.path.id for path in self.paths)
+        if len(set(ids)) != len(ids):
+            raise ValueError("compound path IDs must be unique")
+
+    def to_svg_d(self) -> str:
+        return " ".join(path.to_svg_d() for path in self.paths)
+
+
+@dataclass(frozen=True)
 class PathGeometryWithCutouts:
     """One outer path geometry with one or more explicitly subtractive paths."""
 
@@ -277,6 +364,7 @@ class PathGeometryWithCutouts:
     cutouts: tuple[PathGeometry, ...]
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "cutouts", tuple(self.cutouts))
         if not self.cutouts:
             raise ValueError("use PathGeometry when there are no cutouts")
         path_ids = [self.outer.path.id, *(cutout.path.id for cutout in self.cutouts)]
@@ -341,6 +429,7 @@ class CloneGeometry:
     transforms: tuple[AffineTransform, ...]
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "transforms", tuple(self.transforms))
         if not self.source_region_id:
             raise ValueError("clone geometries require a source region ID")
         if not self.transforms:
@@ -423,6 +512,7 @@ class PolygonPrimitive(ShapePrimitive):
     vertices: tuple[Point, ...]
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "vertices", tuple(self.vertices))
         if len(self.vertices) < 3:
             raise ValueError("polygon primitives require at least three vertices")
         object.__setattr__(self, "vertices", tuple(_point(vertex) for vertex in self.vertices))
@@ -441,6 +531,7 @@ class PrimitiveGeometry:
 
 Geometry: TypeAlias = (
     PathGeometry
+    | CompoundPathGeometry
     | PathGeometryWithCutouts
     | PathGeometryWithSymmetry
     | PrimitiveGeometry
@@ -453,13 +544,24 @@ def geometry_from_svg_d(
     *,
     region_id: str,
     fill_rule: Literal["nonzero", "evenodd"] = "nonzero",
-) -> PathGeometry | PathGeometryWithCutouts:
-    """Parse closed SVG path data into typed, version-scoped path commands.
+    path_ids: Sequence[str] | None = None,
+    defer_overlaps: bool = False,
+) -> PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry:
+    """Parse exactly one filled component, preserving source path identities."""
+    from .path_topology import classify_filled_paths
 
-    ``region_id`` scopes generated path and command addresses as
-    ``{region_id}.p0.c0``.  A single subpath becomes ``PathGeometry``; multiple
-    subpaths require ``evenodd`` and become one outer path plus cutouts.
-    """
+    topology = classify_filled_paths(parse_svg_paths(d, region_id=region_id, path_ids=path_ids), fill_rule=fill_rule, defer_overlaps=defer_overlaps)
+    if len(topology.components) != 1:
+        raise ValueError("multiple painted components require retained topology normalization")
+    if topology.redundant_paths:
+        raise ValueError("redundant source paths require retained topology normalization")
+    return topology.components[0]
+
+
+def parse_svg_paths(
+    d: str, *, region_id: str, path_ids: Sequence[str] | None = None,
+) -> tuple[PathGeometry, ...]:
+    """Parse source-ordered closed paths without assigning filled topology."""
     if not region_id:
         raise ValueError("SVG geometry requires a non-empty region ID")
     tokens = _SVG_PATH_TOKEN.findall(d)
@@ -484,15 +586,15 @@ def geometry_from_svg_d(
         current.append((kind, values))
     if current:
         subpaths.append(current)
-    paths = tuple(
-        PathGeometry(path=_closed_path_from_svg_commands(commands, f"{region_id}.p{path_index}"))
+    identities = tuple(path_ids) if path_ids is not None else tuple(
+        f"{region_id}.p{index}" for index in range(len(subpaths))
+    )
+    if len(identities) != len(subpaths) or len(set(identities)) != len(identities) or any(not id for id in identities):
+        raise ValueError("source path IDs must uniquely identify every SVG subpath")
+    return tuple(
+        PathGeometry(path=_closed_path_from_svg_commands(commands, identities[path_index]))
         for path_index, commands in enumerate(subpaths)
     )
-    if len(paths) == 1:
-        return paths[0]
-    if fill_rule != "evenodd":
-        raise ValueError("multiple closed SVG subpaths require evenodd fill_rule")
-    return PathGeometryWithCutouts(outer=paths[0], cutouts=paths[1:])
 
 
 def _closed_path_from_svg_commands(

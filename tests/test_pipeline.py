@@ -13,11 +13,11 @@ def test_segment_image_honors_absolute_min_region_size():
 
     _width, _height, retained = _segment_image(
         image,
-        Options(max_colors=2, min_region_size=4, min_region_fraction=0),
+        Options(max_sampling_colors=2, min_region_size=4, min_region_fraction=0),
     )
     _width, _height, filtered = _segment_image(
         image,
-        Options(max_colors=2, min_region_size=5, min_region_fraction=0),
+        Options(max_sampling_colors=2, min_region_size=5, min_region_fraction=0),
     )
 
     assert len(retained) == 1

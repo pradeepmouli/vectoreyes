@@ -1,10 +1,17 @@
 import numpy as np
+from typing import cast
 
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.framework import Proposal, optimize
+from vectormark.optimizer.automatic_replay import ProposalIntent
+from vectormark.optimizer.framework import Proposal as _Proposal, optimize
 from vectormark.optimizer.gate import rasterize
 from vectormark.optimizer.vector_region import VectorRegion
+
+
+def Proposal(*args, **kwargs):
+    """Build a framework-only fixture that deliberately has no replay capture."""
+    return _Proposal(*args, **kwargs, intent=cast(ProposalIntent, None))
 
 
 def _rect_obj(i, w, h, *, x=0.0, y=0.0):
@@ -35,6 +42,24 @@ def test_framework_rejects_proposals_that_diverge_from_the_trace():
     bad = lambda os, ms: [Proposal((1,), [_rect_obj(1, 2, 2)])]
     out2 = optimize(objs, masks, [bad])
     assert abs(out2[0].current.params["w"] - 10) < 1e-9
+    assert out2[0] is not objs[0]
+    assessment = out2[0].diagnostics["<lambda>"]["geometry_assessment"]
+    assert assessment["accepted"] is False
+    assert assessment["reasons"] == ["relative_area_error_exceeded"]
+    assert objs[0].diagnostics == {}
+
+
+def test_framework_explicit_zero_budget_rejects_nonidentical_policy_proposal():
+    obj = _rect_obj(1, 10, 10)
+    masks = {1: rasterize(obj.footprint, (20, 20))}
+
+    def almost_same(os, ms):
+        from vectormark.quality import GeometryPolicy
+        return [Proposal((1,), [_rect_obj(1, 9.9, 10)], GeometryPolicy(max_boundary_error_px=1.0))]
+
+    out = optimize([obj], masks, [almost_same], budget=0.0)
+    assert out[0].current.params["w"] == 10.0
+    assert "relative_area_error_exceeded" in out[0].diagnostics["almost_same"]["geometry_assessment"]["reasons"]
 
 
 def test_framework_uses_the_trace_not_the_raster_as_the_quality_baseline():

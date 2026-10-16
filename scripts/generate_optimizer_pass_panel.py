@@ -87,7 +87,7 @@ def main() -> None:
         optimizer=True,
         epsilon=args.epsilon,
         max_error=args.max_error,
-        max_colors=args.colors,
+        max_sampling_colors=args.colors,
         no_symmetry=args.no_symmetry,
     )
     objects, masks = trace_regions(rgb, options)

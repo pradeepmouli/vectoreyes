@@ -34,6 +34,7 @@ from .occlusion import ScenePrimitive, reconstruct_scene
 from .surface_merge import merge_surfaces
 from .segment import segment
 from .selection import SelectionPolicy
+from .refinement_settings import RefinementPasses
 from .selector import select_geometry
 from .symmetry import detect_axis, detect_symmetry_groups, detect_symmetry_rotation, sym_off_ratio, Axis2D
 from .types import Axis, Region
@@ -48,7 +49,7 @@ class Options:
     aa_contours: bool = False     # trace geometry from the sub-pixel coverage field instead
                                   # of the binary mask; off by default — coverage isn't
                                   # left-right symmetric, so it drifts flat symmetric regions.
-    max_colors: int = 16
+    max_sampling_colors: int = 16
     min_region_size: int = 16       # absolute pixel-area floor before relative filtering
     min_region_fraction: float = 0.02  # drop regions smaller than this × largest region
     flatten: bool = False
@@ -65,6 +66,7 @@ class Options:
                                         # where high resolution amplifies quantization noise.
     optimizer: bool = False             # experimental geometry optimizer path; default off.
     corner_normalize: bool = False      # canonicalize recognised rounded corners to Q/point.
+    refinement_passes: RefinementPasses = dataclasses.field(default_factory=RefinementPasses)
 
 
 COVERAGE_HOLE_TOL = 0.05   # if >5% of a region's eroded interior would fall below the 0.5
@@ -76,7 +78,7 @@ COVERAGE_HOLE_TOL = 0.05   # if >5% of a region's eroded interior would fall bel
 def attach_coverage_field(
     regions: list[Region],
     rgb: np.ndarray,
-    max_colors: int,
+    max_sampling_colors: int,
     *,
     palette: np.ndarray | None = None,
 ) -> None:
@@ -88,14 +90,14 @@ def attach_coverage_field(
     The soft field is built from ALL image palette colors (not just region colors) so
     gradient-adjacent colors compete as labels — enabling the hole-guard to fire even when
     the competing color belongs to a merged-away region or a non-segmented image area."""
-    from .softlabel import soft_label_field, region_coverage
+    from .softlabel import soft_label_field, local_region_coverage, coverage_competitors, label_coverage
     from .segment import _background_color
     if not regions:
         return
     palette_cols = (
         np.asarray(palette, dtype=np.uint8)
         if palette is not None
-        else extract_palette(rgb, max_colors=max_colors)
+        else extract_palette(rgb, max_sampling_colors=max_sampling_colors)
     )
     q = quantize(rgb, palette_cols)
     bg = _background_color(q)
@@ -107,16 +109,30 @@ def attach_coverage_field(
     row_hex = ["#{:02X}{:02X}{:02X}".format(r[0], r[1], r[2]) for r in rows]
     L = soft_label_field(rgb.astype(float), np.array(rows, np.uint8))
     hex_to_idx = {hx: i for i, hx in enumerate(row_hex)}
+    by_label: dict[int, list[Region]] = {}
     for r in regions:
         idx = hex_to_idx.get(r.color_hex)
         if idx is None:
             r.coverage = None
             continue
-        cov = region_coverage(L, idx, r.mask)
-        interior = ndi.binary_erosion(r.mask, iterations=3)
-        if not interior.any():
-            interior = r.mask
-        r.coverage = None if (cov[interior] < 0.5).mean() > COVERAGE_HOLE_TOL else cov
+        by_label.setdefault(idx, []).append(r)
+    competitors = coverage_competitors(L)
+    # Process one color at a time: share its global field without retaining a
+    # second full palette-sized cache. Region ordering and masks stay unchanged.
+    for idx, members in by_label.items():
+        shared = label_coverage(L, idx, competitors=competitors)
+        for r in members:
+            cov = local_region_coverage(L, idx, r.mask, label_cov=shared)
+            if cov is None:
+                r.coverage = None
+                continue
+            x, y = cov.origin
+            height, width = cov.values.shape
+            local_mask = r.mask[y:y + height, x:x + width]
+            interior = ndi.binary_erosion(local_mask, iterations=3)
+            if not interior.any():
+                interior = local_mask
+            r.coverage = None if (cov.values[interior] < 0.5).mean() > COVERAGE_HOLE_TOL else cov
 
 
 def _segment_image(arr: np.ndarray, opt: Options) -> tuple[int, int, list[Region]]:
@@ -128,14 +144,14 @@ def _segment_image(arr: np.ndarray, opt: Options) -> tuple[int, int, list[Region
     image or feeding a higher-res copy does not change which regions survive. A
     small absolute floor first removes single-pixel quantization noise."""
     h, w, _ = arr.shape
-    palette = extract_palette(arr, max_colors=opt.max_colors)
+    palette = extract_palette(arr, max_sampling_colors=opt.max_sampling_colors)
     q = quantize(arr, palette)
     regions = segment(q, min_area=opt.min_region_size)
     if regions:
         cut = opt.min_region_fraction * max(r.area for r in regions)
         regions = [r for r in regions if r.area >= cut]
     if opt.aa_contours:
-        attach_coverage_field(regions, arr, opt.max_colors)
+        attach_coverage_field(regions, arr, opt.max_sampling_colors)
     return w, h, regions
 
 
@@ -723,9 +739,8 @@ def _render_optimizer_body(
     cubic: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Serialize optimized objects, resolving object-id based <use> references."""
-    from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath
-    from .optimizer.passes.simplify import _rounded_rect_path, _simplified_path_shape
-    from .skia_geometry import SkPath, unary_union
+    from .optimizer.vector_region import VectorRegion
+    from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
 
     defs: list[str] = []
     fill_cache: dict[str, str] = {}
@@ -750,287 +765,48 @@ def _render_optimizer_body(
             params["fill_rule"] = rule
         return Shape("use", params)
 
-    def _end_point(command: str, values: list[float], start: tuple[float, float]) -> tuple[float, float]:
-        if command in {"M", "L"}:
-            return float(values[0]), float(values[1])
-        if command == "Q":
-            return float(values[2]), float(values[3])
-        if command == "C":
-            return float(values[4]), float(values[5])
-        if command == "A":
-            return float(values[5]), float(values[6])
-        return start
-
-    def _subpath_segments(subpath: list[tuple[str, list[float]]]):
-        if not subpath or subpath[0][0] != "M":
-            return []
-        start = (float(subpath[0][1][0]), float(subpath[0][1][1]))
-        current = start
-        segments = []
-        for command, values in subpath[1:]:
-            end = _end_point(command, values, start)
-            segments.append({"start": current, "end": end, "command": command, "values": list(values)})
-            current = end
-        return segments
-
-    def _pt_close(a: tuple[float, float], b: tuple[float, float], tol: float = 1e-6) -> bool:
-        return abs(a[0] - b[0]) <= tol and abs(a[1] - b[1]) <= tol
-
-    def _same_segment(a, b) -> bool:
-        return (
-            (_pt_close(a["start"], b["start"]) and _pt_close(a["end"], b["end"]))
-            or (_pt_close(a["start"], b["end"]) and _pt_close(a["end"], b["start"]))
-        )
-
-    def _chain_without_segment(segments: list[dict], index: int) -> list[dict]:
-        return [segments[i] for i in [*range(index + 1, len(segments)), *range(0, index)]]
-
-    def _reverse_segment(segment: dict) -> dict | None:
-        command = str(segment["command"])
-        values = list(segment["values"])
-        start = segment["start"]
-        end = segment["end"]
-        if command in {"L", "Z"}:
-            return {"start": end, "end": start, "command": "L", "values": [start[0], start[1]]}
-        if command == "Q":
-            return {"start": end, "end": start, "command": "Q", "values": [values[0], values[1], start[0], start[1]]}
-        if command == "C":
-            return {
-                "start": end,
-                "end": start,
-                "command": "C",
-                "values": [values[2], values[3], values[0], values[1], start[0], start[1]],
-            }
-        return None
-
-    def _reverse_chain(chain: list[dict]) -> list[dict] | None:
-        reversed_segments = [_reverse_segment(segment) for segment in reversed(chain)]
-        if any(segment is None for segment in reversed_segments):
-            return None
-        return [segment for segment in reversed_segments if segment is not None]
-
-    def _segment_d(segment: dict) -> str:
-        command = str(segment["command"])
-        values = list(segment["values"])
-        if command == "Z":
-            command = "L"
-            values = [segment["end"][0], segment["end"][1]]
-        return f"{command}{' '.join(_fmt(float(value)) for value in values)}"
-
-    def _emit_chain(chain: list[dict]) -> str | None:
-        if not chain:
-            return None
-        cleaned = [
-            segment for segment in chain
-            if not _pt_close(segment["start"], segment["end"])
-        ]
-        if not cleaned:
-            return None
-        if (
-            len(cleaned) > 1
-            and str(cleaned[-1]["command"]) in {"L", "Z"}
-            and _pt_close(cleaned[-1]["end"], cleaned[0]["start"])
-        ):
-            cleaned = cleaned[:-1]
-        parts = [f"M{_fmt(cleaned[0]['start'][0])} {_fmt(cleaned[0]['start'][1])}"]
-        parts.extend(_segment_d(segment) for segment in cleaned)
-        if not parts[-1].endswith("Z"):
-            parts.append("Z")
-        return " ".join(parts)
-
-    def _join_chains(a_chain: list[dict], b_chain: list[dict]) -> list[dict] | None:
-        variants = [b_chain]
-        reversed_b = _reverse_chain(b_chain)
-        if reversed_b is not None:
-            variants.append(reversed_b)
-        chains_a = [a_chain]
-        reversed_a = _reverse_chain(a_chain)
-        if reversed_a is not None:
-            chains_a.append(reversed_a)
-        for left in chains_a:
-            for right in variants:
-                if not left or not right:
-                    continue
-                if _pt_close(left[-1]["end"], right[0]["start"]) and _pt_close(right[-1]["end"], left[0]["start"]):
-                    return [*left, *right]
-        return None
-
-    def _stitch_subpath_pair(a_subpath, b_subpath) -> str | None:
-        a_segments = _subpath_segments(a_subpath)
-        b_segments = _subpath_segments(b_subpath)
-        matches: list[tuple[float, int, int]] = []
-        for a_index, a_segment in enumerate(a_segments):
-            for b_index, b_segment in enumerate(b_segments):
-                if not _same_segment(a_segment, b_segment):
-                    continue
-                length = float(np.hypot(a_segment["end"][0] - a_segment["start"][0], a_segment["end"][1] - a_segment["start"][1]))
-                matches.append((length, a_index, b_index))
-        if not matches:
-            return None
-        _length, a_index, b_index = max(matches, key=lambda item: item[0])
-        chain = _join_chains(_chain_without_segment(a_segments, a_index), _chain_without_segment(b_segments, b_index))
-        return _emit_chain(chain) if chain is not None else None
-
-    def _stitched_self_symmetry_shape(source_shape: Shape, mirror_shape: Shape) -> Shape | None:
-        source_subpaths = _parse_subpaths(shape_to_path_d(source_shape))
-        mirror_subpaths = _parse_subpaths(shape_to_path_d(mirror_shape))
-        if len(source_subpaths) != len(mirror_subpaths):
-            return None
-        parts: list[str] = []
-        for source_subpath, mirror_subpath in zip(source_subpaths, mirror_subpaths, strict=True):
-            part = _stitch_subpath_pair(source_subpath, mirror_subpath)
-            if part is None:
-                return None
-            parts.append(part)
-        return Shape("path", {"d": " ".join(parts)})
-
-    def _path_command_count(d: str) -> int:
-        return sum(1 for char in d if char in "MLQCAZ")
-
-    def _shape_residual(a: Shape, b: Shape) -> float:
-        a_poly = SkPath.from_svg_d(shape_to_path_d(a))
-        b_poly = SkPath.from_svg_d(shape_to_path_d(b))
-        if a_poly.is_empty or b_poly.is_empty:
-            return float("inf")
-        return float(a_poly.symmetric_difference(b_poly).area / max(float(a_poly.area), float(b_poly.area), 1.0))
-
-    def _simplify_stitched_region_shape(shape: Shape) -> Shape:
-        if shape.kind != "path" or shape.params.get("fill_rule"):
-            return shape
-        current_commands = _path_command_count(str(shape.params["d"]))
-        if current_commands < 12:
-            return shape
-        simplified = _simplified_path_shape(
-            shape,
-            epsilon=epsilon,
-            max_error=max_error,
-            samples=24,
-            preserve_subpaths=True,
-            cubic=cubic,
-            check_geometry=True,
-        )
-        if simplified is not None:
-            return simplified
-        subpaths = _parse_subpaths(shape_to_path_d(shape))
-        if len(subpaths) != 1:
-            return shape
-        points = _sample_subpath(subpaths[0], 12)
-        rounded = _rounded_rect_path(points, epsilon=epsilon)
-        if rounded is None or _path_command_count(rounded) >= current_commands:
-            return shape
-        candidate = Shape("path", {"d": rounded})
-        if _shape_residual(shape, candidate) > 0.02:
-            return shape
-        return candidate
-
-    def _combined_self_symmetry_region(region: VectorRegion) -> VectorRegion | None:
-        symmetry = region.diagnostics.get("symmetry")
-        if not isinstance(symmetry, Mapping) or symmetry.get("mode") != "self":
-            return None
-        children = sorted(region.children, key=lambda child: (float(child.z), int(child.id)))
-        if len(children) != 2 or any(not child.is_leaf or child.current is None for child in children):
-            return None
-        if children[0].fill is None or any(child.fill != children[0].fill for child in children):
-            return None
-
-        # The fitted half path may drift microscopically from the symmetry cut.
-        # Do not serialize those two independent commands: union the exact Skia
-        # half-footprints first, which removes their coincident interior edge.
-        combined_footprint = unary_union([child.footprint for child in children])
-        if isinstance(combined_footprint, SkPath) and not combined_footprint.is_empty:
-            params: dict[str, object] = {"d": combined_footprint.to_svg_d()}
-            source_rule = fill_rule_for(children[0].current)
-            if source_rule is not None:
-                params["fill_rule"] = source_rule
-            combined_shape = _simplify_stitched_region_shape(Shape("path", params))
-            return VectorRegion(
-                region.id,
-                combined_shape,
-                children[0].fill,
-                region.z,
-                footprint=combined_footprint,
-                raster=region.raster,
-                source_label=region.source_label,
-                color_hex=region.color_hex,
-                diagnostics=region.diagnostics,
-            )
-
-        scope_objects = {int(child.id): child for child in children}
-        source_shape = children[0].current
-        mirror_shape = children[1].current
-        if mirror_shape is not None and mirror_shape.kind == "use":
-            source = scope_objects.get(int(mirror_shape.params.get("href_obj_id", -1)))
-            if source is not None and source.current is not None:
-                mirror_shape = _inlined_use_shape(source.current, mirror_shape.params["transform"])
-        if source_shape is not None and mirror_shape is not None:
-            stitched_shape = _stitched_self_symmetry_shape(source_shape, mirror_shape)
-            if stitched_shape is not None:
-                stitched_shape = _simplify_stitched_region_shape(stitched_shape)
-                return VectorRegion(
-                    region.id,
-                    stitched_shape,
-                    children[0].fill,
-                    region.z,
-                    footprint=region.footprint,
-                    raster=region.raster,
-                    source_label=region.source_label,
-                    color_hex=region.color_hex,
-                    diagnostics=region.diagnostics,
-                )
-        parts: list[str] = []
-        fill_rule = None
-        for child in children:
-            assert child.current is not None
-            shape = child.current
-            if shape.kind == "use":
-                source = scope_objects.get(int(shape.params.get("href_obj_id", -1)))
-                if source is None or source.current is None:
-                    return None
-                shape = _inlined_use_shape(source.current, shape.params["transform"])
-            rule = fill_rule_for(shape)
-            if rule is not None:
-                fill_rule = rule
-            parts.append(shape_to_path_d(shape))
-        params: dict[str, object] = {"d": " ".join(parts)}
-        if fill_rule is not None:
-            params["fill_rule"] = fill_rule
-        return VectorRegion(
-            region.id,
-            Shape("path", params),
-            children[0].fill,
-            region.z,
-            footprint=region.footprint,
-            raster=region.raster,
-            source_label=region.source_label,
-            color_hex=region.color_hex,
-            diagnostics=region.diagnostics,
-        )
 
     def _render_items(regions: list[VectorRegion]):
         items = []
 
-        def visit(region: VectorRegion, label: str, scope_ids: dict[int, str], scope_objects: dict[int, VectorRegion]) -> None:
+        def visit(region: VectorRegion, label: str, scope_ids: dict[int, str], scope_objects: dict[int, VectorRegion], path: tuple[int, ...]) -> None:
+            symmetry = region.diagnostics.get("symmetry")
+            if isinstance(symmetry, Mapping) and (
+                (region.is_branch and symmetry.get("mode") == "self")
+                or symmetry.get("mode") == "self_mirror"
+            ):
+                raise ValueError("self-symmetry must be materialized before rendering")
             if region.is_leaf:
-                items.append((region, label, scope_ids, scope_objects))
-                return
-            combined = _combined_self_symmetry_region(region)
-            if combined is not None:
-                items.append((combined, label, scope_ids, scope_objects))
+                items.append((region, label, scope_ids, scope_objects, path))
                 return
             children = sorted(region.children, key=lambda child: (float(child.z), int(child.id)))
             child_scope_ids = {int(child.id): _child_label(label, child) for child in children}
             child_scope_objects = {int(child.id): child for child in children}
             for child in children:
-                visit(child, child_scope_ids[int(child.id)], child_scope_ids, child_scope_objects)
+                visit(child, child_scope_ids[int(child.id)], child_scope_ids, child_scope_objects, (*path, child.id))
 
         top = sorted(regions, key=lambda obj: (float(obj.z), int(obj.id)))
         top_scope_ids = {int(obj.id): f"s{int(obj.id)}" for obj in top}
         top_scope_objects = {int(obj.id): obj for obj in top}
         for obj in top:
-            visit(obj, top_scope_ids[int(obj.id)], top_scope_ids, top_scope_objects)
+            visit(obj, top_scope_ids[int(obj.id)], top_scope_ids, top_scope_objects, (obj.id,))
         return sorted(items, key=lambda item: (float(item[0].z), item[1]))
 
-    render_items = _render_items(list(objects))
+    objects = list(objects)
+    located_items = _render_items(objects)
+    reference_index = index_region_paths(objects)
+    labels = {path: label for _, label, _, _, path in located_items}
+    render_items = []
+    for obj, label, scope_ids, scope_objects, path in located_items:
+        if obj.current is not None and obj.current.kind == "use":
+            source_path = resolve_source_path(reference_index, path, obj.current.params)
+            if source_path not in labels:
+                raise ValueError("clone source must be retained concrete geometry")
+            source_id = int(obj.current.params["href_obj_id"])
+            # Lookup only: keep the retained IDs and existing emitted labels.
+            scope_ids = {**scope_ids, source_id: labels[source_path]}
+            scope_objects = {**scope_objects, source_id: reference_index[source_path]}
+        render_items.append((obj, label, scope_ids, scope_objects))
     # A clone can retain geometry while using a different fill.  Keep the
     # shared shape unpainted in ``defs`` and paint every visible instance via
     # ``<use>``; otherwise the source element's explicit ``fill`` wins over a
@@ -1040,7 +816,7 @@ def _render_optimizer_body(
     for obj, _elem_id, scope_ids, scope_objects in render_items:
         if obj.current is None or obj.current.kind != "use":
             continue
-        if not isinstance(obj.diagnostics.get("clones"), dict):
+        if not any(isinstance(obj.diagnostics.get(key), Mapping) for key in ("clone", "clones")):
             continue
         source_id = obj.current.params.get("href_obj_id")
         if not isinstance(source_id, int):
@@ -1081,7 +857,7 @@ def _render_optimizer_body(
             source = scope_objects[int(obj.current.params["href_obj_id"])]
             assert source.fill is not None
             use_fill = str(obj.current.params.get("fill", fill))
-            if isinstance(obj.diagnostics.get("clones"), dict):
+            if any(isinstance(obj.diagnostics.get(key), Mapping) for key in ("clone", "clones")):
                 source_label = scope_ids[int(obj.current.params["href_obj_id"])]
                 definition_id = clone_definition_ids.get((id(source), source_label))
                 if definition_id is not None:
@@ -1101,7 +877,6 @@ def _render_optimizer_body(
 def _optimizer_passes(opt: Options):
     """Pass order for the experimental geometry optimizer."""
     from .optimizer.passes import (
-        atomic_flatten_pass,
         clones_pass,
         corner_normalize_pass,
         occlusion_pass,
@@ -1109,7 +884,6 @@ def _optimizer_passes(opt: Options):
         seams_pass,
         simplify_pass,
         smooth_pass,
-        straighten_pass,
         split_compound_pass,
         symmetry_pass,
     )
@@ -1171,11 +945,6 @@ def _optimizer_passes(opt: Options):
 
     _configured_smooth_pass.__name__ = "smooth_pass"
 
-    def _configured_straighten_pass(objects, masks):
-        return straighten_pass(objects, masks, epsilon=opt.epsilon)
-
-    _configured_straighten_pass.__name__ = "straighten_pass"
-
     def _configured_linelet_simplify_pass(objects, masks):
         return simplify_pass(
             objects,
@@ -1189,11 +958,6 @@ def _optimizer_passes(opt: Options):
 
     _configured_linelet_simplify_pass.__name__ = "linelet_simplify_pass"
 
-    def _configured_atomic_flatten_pass(objects, masks):
-        return atomic_flatten_pass(objects, masks, epsilon=opt.epsilon)
-
-    _configured_atomic_flatten_pass.__name__ = "atomic_flatten_pass"
-
     def _configured_corner_normalize_pass(objects, masks):
         return corner_normalize_pass(
             objects,
@@ -1205,23 +969,38 @@ def _optimizer_passes(opt: Options):
     _configured_corner_normalize_pass.__name__ = "corner_normalize_pass"
     passes.append(split_compound_pass)
     passes.append(_configured_primitives_pass)
-    # A compound trace mixes an exterior with its counters.  Split it before
-    # symmetry so primitives can claim the exterior and automatic symmetry
-    # only sees addressable semantic leaves.  The symmetry pass explicitly
-    # excludes compound implementation children, so a cutout is never
-    # reflected as an independent shape.
+    # Congruence is the more general relationship between separate regions:
+    # rotation and reflection are both valid clone transforms. Establish clone
+    # families before symmetry can independently rewrite their members or
+    # claim them as mirrored pairs. Self-symmetry then applies only to each
+    # remaining canonical geometry.
+    passes.append(clones_pass)
+    # A compound trace mixes an exterior with its counters.  It was split
+    # above so automatic symmetry only sees addressable semantic leaves. The
+    # symmetry pass explicitly excludes compound implementation children, so
+    # a cutout is never reflected as an independent shape.
     if not opt.no_symmetry:
         passes.append(_configured_symmetry_pass)
-    passes.append(clones_pass)
-    passes.append(_configured_straighten_pass)
     passes.append(_configured_linelet_simplify_pass)
     passes.append(_configured_smooth_pass)
-    passes.append(_configured_seams_pass)
-    passes.append(_configured_atomic_flatten_pass)
     # A corner normalizer keeps all endpoints fixed, so it cannot reopen a
-    # seam already repaired by the preceding terminal passes.
+    # seam, but it can still change the curve between them. Run it before the
+    # terminal stitch so neighbouring children finish with one shared path.
     passes.append(_configured_corner_normalize_pass)
-    return passes
+    passes.append(_configured_seams_pass)
+    enabled = opt.refinement_passes
+    selection = {
+        "occlusion_pass": enabled.occlusion,
+        "split_compound_pass": enabled.split_compound,
+        "primitives_pass": enabled.primitives,
+        "clones_pass": enabled.clones,
+        "symmetry_pass": enabled.symmetry,
+        "linelet_simplify_pass": enabled.simplify,
+        "smooth_pass": enabled.smooth,
+        "corner_normalize_pass": True,  # Its existing enabled flag controls normalization.
+        "seams_pass": enabled.stitch,
+    }
+    return [function for function in passes if selection[function.__name__]]
 
 
 _SVG_ELEMENT_RE = re.compile(r"<(path|circle|ellipse|rect|polygon|use)\b")

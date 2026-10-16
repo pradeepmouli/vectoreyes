@@ -7,6 +7,7 @@ import numpy as np
 
 from ...skia_geometry import SkPath, unary_union
 from ...fit import Shape, SIMPLE_CURVE_RESIDUAL_TOL, _fmt, fit_path, minimum_line_length
+from ..automatic_replay import SimplifyLineletOperation, draft_input_ref, operation_intent
 from ..framework import Proposal
 from ..vector_region import VectorRegion, _parse_subpaths, _ring_area, _sample_subpath
 
@@ -16,8 +17,6 @@ _MAX_SMOOTH_CURVE_GEOMETRY_RESIDUAL = SIMPLE_CURVE_RESIDUAL_TOL + 0.004
 _MAX_SHORT_LINELET_GEOMETRY_RESIDUAL = 0.06
 _COMMAND_COST = {"M": 0, "Z": 0, "L": 1, "Q": 2, "C": 3, "A": 3}
 _FORCED_CURVE_JOIN_DEG = 35.0
-_MIN_SUBPATH_AREA = 1.0
-_MIN_SUBPATH_AREA_FRACTION = 1e-4
 
 
 def _command_count(d: str) -> int:
@@ -375,16 +374,6 @@ def _ordered_subpath_indices(subpaths) -> list[int]:
     return [outer_index, *(i for i in range(len(subpaths)) if i != outer_index)]
 
 
-def _significant_subpaths(subpaths):
-    max_area = max((float(area) for _tokens, _points, area in subpaths), default=0.0)
-    area_floor = max(_MIN_SUBPATH_AREA, max_area * _MIN_SUBPATH_AREA_FRACTION)
-    return [
-        subpath
-        for subpath in subpaths
-        if float(subpath[2]) >= area_floor
-    ]
-
-
 def _simplified_subpath_d(
     tokens: list[tuple[str, list[float]]],
     points: list[tuple[float, float]],
@@ -524,25 +513,85 @@ def _candidate_parts(
     max_error: float,
     cubic: bool,
     preserve_subpaths: bool,
+    max_boundary_error: float | None = None,
 ) -> list[str]:
-    if preserve_subpaths:
-        subpaths = _significant_subpaths(subpaths)
-    indices = _ordered_subpath_indices(subpaths)
-    if not preserve_subpaths:
-        indices = indices[:1]
+    # A small loop can be a deliberate counter. Preserve both correspondence
+    # and every boundary; size alone is not permission to change topology.
+    indices = list(range(len(subpaths))) if preserve_subpaths else _ordered_subpath_indices(subpaths)[:1]
+    boundary_limit = max_error if max_boundary_error is None else max_boundary_error
     parts: list[str] = []
     for index in indices:
         tokens, points, _area = subpaths[index]
-        parts.append(
-            _simplified_subpath_d(
-                tokens,
-                points,
-                epsilon=epsilon,
-                max_error=max_error,
-                cubic=cubic,
-            )
+        fitted = _simplified_subpath_d(
+            tokens,
+            points,
+            epsilon=epsilon,
+            max_error=max_error,
+            cubic=cubic,
         )
+        if len(subpaths) == 1:
+            # Single-boundary paths retain the existing whole-path acceptance
+            # policy, including its explicit max_boundary_error override.
+            parts.append(fitted)
+            continue
+        # Do not discard a safe exterior improvement because a different
+        # boundary's refit failed. Try local command normalization, then retain
+        # the exact input coordinates for that boundary.
+        original_d = " ".join(
+            command + " ".join(str(value) for value in values)
+            for command, values in tokens
+        )
+        original = Shape("path", {"d": original_d})
+        for d in dict.fromkeys((fitted, _normalized_subpath_d(tokens, epsilon=epsilon))):
+            candidate = Shape("path", {"d": d})
+            if (
+                _same_subpath_topology(original, candidate)
+                and _geometry_residual(original, candidate) <= _MAX_GEOMETRY_RESIDUAL
+                and _boundary_max_deviation(original, candidate) <= boundary_limit
+            ):
+                parts.append(d)
+                break
+        else:
+            parts.append(original_d)
     return parts
+
+
+def _same_subpath_topology(current: Shape, candidate: Shape) -> bool:
+    """Preserve loop structure and pairwise containment, not just total area."""
+    from ..vector_region import to_polygon
+
+    try:
+        before_tokens = _parse_subpaths(str(current.params.get("d", "")))
+        after_tokens = _parse_subpaths(str(candidate.params.get("d", "")))
+        if len(before_tokens) != len(after_tokens):
+            return False
+        before = [SkPath.from_svg_d(_subpath_d(tokens)).buffer(0) for tokens in before_tokens]
+        after = [SkPath.from_svg_d(_subpath_d(tokens)).buffer(0) for tokens in after_tokens]
+        for old, new in zip(before, after, strict=True):
+            if old.is_empty or new.is_empty or old.area <= 0 or new.area <= 0:
+                return False
+            if len(old.geoms) != len(new.geoms):
+                return False
+            if sum(len(part.interiors) for part in old.geoms) != sum(len(part.interiors) for part in new.geoms):
+                return False
+
+        # Equal contour containment is not sufficient under nonzero winding:
+        # reversing a cutout can fill it without moving any boundary points.
+        old_filled = to_polygon(current).buffer(0)
+        new_filled = to_polygon(candidate).buffer(0)
+        if sorted(len(part.interiors) for part in old_filled.geoms) != sorted(len(part.interiors) for part in new_filled.geoms):
+            return False
+
+        def relation(a: SkPath, b: SkPath) -> tuple[bool, bool, bool]:
+            return (a.difference(b).area <= 1e-9, b.difference(a).area <= 1e-9,
+                    a.intersection(b).area > 1e-9)
+
+        return all(
+            relation(before[i], before[j]) == relation(after[i], after[j])
+            for i in range(len(before)) for j in range(i + 1, len(before))
+        )
+    except Exception:
+        return False
 
 
 def _path_segment_count(shape: Shape) -> int | None:
@@ -598,52 +647,17 @@ def _boundary_max_deviation(current: Shape, candidate: Shape) -> float:
     linearised curve samples, so measure the largest sampled boundary movement
     in either direction and keep simplification within its declared fit error.
     """
+    from ...quality import symmetric_boundary_distance
     from ..vector_region import to_polygon
 
     try:
-        current_path = to_polygon(current)
-        candidate_path = to_polygon(candidate)
-        current_rings = current_path.linearized_subpaths
-        candidate_rings = candidate_path.linearized_subpaths
+        # Preserve this pass's established bounded 64-sample approximation;
+        # acceptance policies use the shared helper's conservative mode.
+        return symmetric_boundary_distance(
+            to_polygon(current), to_polygon(candidate), max_samples_per_ring=64
+        )
     except Exception:
         return float("inf")
-
-    def segments(rings: list[list[tuple[float, float]]]) -> list[tuple[tuple[float, float], tuple[float, float]]]:
-        return [
-            (point, ring[(index + 1) % len(ring)])
-            for ring in rings if len(ring) >= 2
-            for index, point in enumerate(ring)
-        ]
-
-    def point_distance(point: tuple[float, float], edges: list[tuple[tuple[float, float], tuple[float, float]]]) -> float:
-        if not edges:
-            return float("inf")
-        return min(_point_line_distance(np.asarray(point), np.asarray(start), np.asarray(end)) for start, end in edges)
-
-    current_edges = segments(current_rings)
-    candidate_edges = segments(candidate_rings)
-    if not current_edges or not candidate_edges:
-        return float("inf")
-
-    def samples(rings: list[list[tuple[float, float]]]) -> list[tuple[float, float]]:
-        # Curves may be linearised into thousands of points.  A bounded,
-        # evenly spaced sample retains a conservative practical guard without
-        # turning each auto-refinement pass into a quadratic-time bottleneck.
-        return [
-            point
-            for ring in rings if ring
-            for point in ring[::max(1, math.ceil(len(ring) / 64))]
-        ]
-
-    current_to_candidate = max(
-        point_distance(point, candidate_edges)
-        for point in samples(current_rings)
-    )
-    candidate_to_current = max(
-        point_distance(point, current_edges)
-        for point in samples(candidate_rings)
-    )
-    return max(current_to_candidate, candidate_to_current)
 
 
 def _is_improvement(
@@ -743,10 +757,13 @@ def _simplified_path_shape(
         max_error=max_error,
         cubic=cubic,
         preserve_subpaths=preserve_subpaths,
+        max_boundary_error=max_boundary_error,
     )
     if not parts:
         return None
     candidate = _candidate_shape(shape, parts, preserve_fill_rule=preserve_subpaths)
+    if preserve_subpaths and not _same_subpath_topology(shape, candidate):
+        return None
     if not _is_improvement(
         shape,
         candidate,
@@ -875,7 +892,25 @@ def simplify_pass(
                     by_id = {int(current.id): current for current in objects}
                     proposal_ids = tuple([int(obj.id), *cover_ids])
                     new_objects = [obj.with_current(solid), *(by_id[obj_id] for obj_id in cover_ids)]
-                    proposals.append(Proposal(proposal_ids, new_objects))
+                    target_ref = draft_input_ref(obj.id)
+                    cover_refs = tuple(draft_input_ref(obj_id) for obj_id in cover_ids)
+                    action = SimplifyLineletOperation(
+                        target_ref,
+                        cover_refs,
+                        epsilon,
+                        max_error,
+                        samples,
+                        cubic,
+                        linelet_only,
+                        max_boundary_error,
+                        False,
+                        False,
+                    )
+                    proposals.append(Proposal(
+                        proposal_ids,
+                        new_objects,
+                        intent=operation_intent(action, (target_ref, *cover_refs), proposal_ids),
+                    ))
                     continue
         simplified = _simplified_path_shape(
             obj.current,
@@ -889,6 +924,23 @@ def simplify_pass(
         )
         if simplified is None:
             continue
-        proposals.append(Proposal((obj.id,), [obj.with_current(simplified)]))
+        target_ref = draft_input_ref(obj.id)
+        action = SimplifyLineletOperation(
+            target_ref,
+            (),
+            epsilon,
+            max_error,
+            samples,
+            cubic,
+            linelet_only,
+            max_boundary_error,
+            True,
+            True,
+        )
+        proposals.append(Proposal(
+            (obj.id,),
+            [obj.with_current(simplified)],
+            intent=operation_intent(action, (target_ref,), (obj.id,)),
+        ))
 
     return proposals

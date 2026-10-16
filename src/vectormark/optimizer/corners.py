@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import re
 
 import numpy as np
 
 from .._fitcurve import fit_quadratic_once
+from ..corner_ownership import directed_corner_ownership
 from ..fit import Shape, _fmt, _quadratic_max_residual
 from .vector_region import _parse_subpaths, _sample_subpath
 
@@ -67,142 +69,188 @@ def path_corner_diagnostics(
     declared_corner_spans: Sequence[tuple[tuple[float, float], tuple[float, float]]] = (),
     corner_tolerance: float = 0.02,
 ) -> dict[str, object]:
-    """Classify command-end anchors that are part of point or curved corners.
+    """Bind pre-fit declarations; boundary anchors do not own adjacent sides."""
+    declarations = []
+    for subpath, _tokens in enumerate(_parse_subpaths(d)):
+        declarations.extend({
+            "corner_id": f"p{subpath}.corner{number}", "kind": "point",
+            "subpath": subpath, "source": "prefit", "point": tuple(point),
+        } for number, point in enumerate(declared_corners))
+        declarations.extend({
+            "corner_id": f"p{subpath}.rounded_corner{number}", "kind": "curve",
+            "subpath": subpath, "source": "prefit",
+            "start_point": tuple(start), "end_point": tuple(end),
+        } for number, (start, end) in enumerate(declared_corner_spans))
+    return _bind_prefit_spans(d, declarations, tolerance=corner_tolerance)
 
-    The result is intentionally command-indexed: an SVG command owns the
-    anchor at its endpoint, so there is no parallel anchor-address namespace.
-    Curved-corner members share a ``corner_id`` and include both boundary
-    anchors plus every curve command in the detected run.
-    """
+
+def _bind_prefit_spans(d: str, declarations: Sequence, *, tolerance: float) -> dict[str, object]:
+    """One ownership definition shared by initial binding and path rewrites."""
+    paths = _parse_subpaths(d)
+    spans, skipped = [], []
     anchors: dict[tuple[int, int], dict[str, object]] = {}
-    spans: list[dict[str, object]] = []
-    corner_number = 0
-    total_commands = 0
+    for declaration in declarations:
+        corner_id = declaration.get("corner_id") if isinstance(declaration, Mapping) else None
 
-    def mark(subpath: int, command_index: int, corner_id: str) -> None:
-        anchors[(subpath, command_index)] = {
-            "subpath": subpath,
-            "command_index": command_index,
-            "anchor_kind": "corner",
-            "corner_id": corner_id,
-        }
+        def invalid_provenance() -> None:
+            skip = {"reason": "invalid_corner_provenance"}
+            if isinstance(corner_id, str) and corner_id:
+                skip["corner_id"] = corner_id
+            skipped.append(skip)
 
-    # The path fitter's selected contour corners are authoritative.  An
-    # unannotated path has no normalizable corners: do not invent a different
-    # set by inspecting its fitted tangents.
-    declared = tuple((float(x), float(y)) for x, y in declared_corners)
-    declared_spans = tuple(
-        ((float(start[0]), float(start[1])), (float(end[0]), float(end[1])))
-        for start, end in declared_corner_spans
-    )
-    for subpath_index, tokens in enumerate(_parse_subpaths(d)):
-        total_commands += sum(command not in {"M", "Z"} for command, _values in tokens)
-        segments = _segments(tokens)
-        if not segments:
+        if not isinstance(declaration, Mapping):
+            invalid_provenance()
             continue
-        endpoints: list[tuple[int, np.ndarray]] = []
-        if tokens and tokens[0][0] == "M":
-            endpoints.append((0, np.asarray(tokens[0][1][:2], dtype=float)))
-        endpoints.extend(
-            (int(segment["command_index"]), np.asarray(segment["end"], dtype=float))
-            for segment in segments
-            if segment["command"] != "Z"
-        )
-        for number, point in enumerate(declared):
-            matching = [
-                (command_index, endpoint)
-                for command_index, endpoint in endpoints
-                if float(np.linalg.norm(endpoint - point)) <= corner_tolerance
-            ]
-            if not matching:
-                continue
-            command_index, _endpoint = min(matching, key=lambda item: item[0])
-            corner_id = f"p{subpath_index}.corner{number}"
-            corner_number += 1
-            mark(subpath_index, command_index, corner_id)
-            spans.append({
-                "corner_id": corner_id,
-                "kind": "point",
-                "subpath": subpath_index,
-                "commands": [command_index],
-                "source": "prefit",
-                "point": point,
-            })
-        command_by_index = {int(segment["command_index"]): segment for segment in segments}
-        endpoint_index = {
-            index: endpoint
-            for index, endpoint in endpoints
-        }
-        drawable_indices = [
-            index for index, (command, _values) in enumerate(tokens)
-            if command != "Z"
-        ]
-        for number, (start_point, end_point) in enumerate(declared_spans):
-            starts = [
-                index for index, endpoint in endpoint_index.items()
-                if float(np.linalg.norm(endpoint - start_point)) <= corner_tolerance
-            ]
-            ends = [
-                index for index, endpoint in endpoint_index.items()
-                if float(np.linalg.norm(endpoint - end_point)) <= corner_tolerance
-            ]
-            if not starts or not ends:
-                continue
-            start_index, end_index = min(starts), min(ends)
-            start_position = drawable_indices.index(start_index)
-            end_position = drawable_indices.index(end_index)
-            if end_position < start_position:
-                member_indices = drawable_indices[start_position:] + drawable_indices[:end_position + 1]
-            else:
-                member_indices = drawable_indices[start_position:end_position + 1]
-            # A rounded corner is bounded by *two* protected straight sides.
-            # The endpoint command owns the curve arriving at the exit anchor;
-            # include the following side command as well so a stem-to-band
-            # transition retains both of its declared boundaries.  Only Q/C
-            # members are refitted by corner normalization below.
-            exit_position = (end_position + 1) % len(drawable_indices)
-            exit_index = drawable_indices[exit_position]
-            if exit_index not in member_indices:
-                member_indices.append(exit_index)
-            curve_commands = [
-                index for index in member_indices
-                if index in command_by_index and command_by_index[index]["command"] in _CURVE_COMMANDS
-            ]
-            if not curve_commands:
-                continue
-            corner_id = f"p{subpath_index}.rounded_corner{number}"
-            for command_index in member_indices:
-                mark(subpath_index, command_index, corner_id)
-            spans.append({
-                "corner_id": corner_id,
-                "kind": "curve",
-                "subpath": subpath_index,
-                "commands": member_indices,
-                "curve_commands": curve_commands,
-                "source": "prefit",
-                "start_point": start_point,
-                "end_point": end_point,
-            })
+        kind = declaration.get("kind")
+        subpath_value = declaration.get("subpath")
+        if (
+            declaration.get("source") != "prefit"
+            or not isinstance(corner_id, str)
+            or not corner_id
+            or not isinstance(subpath_value, int)
+            or isinstance(subpath_value, bool)
+            or kind not in {"point", "curve"}
+        ):
+            invalid_provenance()
+            continue
 
-    ordered_anchors = [anchors[key] for key in sorted(anchors)]
-    corner_commands = {
-        (int(anchor["subpath"]), int(anchor["command_index"]))
-        for anchor in ordered_anchors
-        if int(anchor["command_index"]) != 0
-    }
+        point_fields = ("point",) if kind == "point" else ("start_point", "end_point")
+        normalized_points: dict[str, tuple[float, float]] = {}
+        for field in point_fields:
+            value = declaration.get(field)
+            if (
+                not isinstance(value, Sequence)
+                or isinstance(value, (str, bytes))
+                or len(value) != 2
+            ):
+                invalid_provenance()
+                break
+            try:
+                point = (float(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                invalid_provenance()
+                break
+            if not all(np.isfinite(coordinate) for coordinate in point):
+                invalid_provenance()
+                break
+            normalized_points[field] = point
+        if len(normalized_points) != len(point_fields):
+            continue
+
+        span = dict(declaration)
+        span.update(normalized_points)
+        subpath = subpath_value
+        reason = None
+        if not 0 <= subpath < len(paths):
+            skipped.append({"corner_id": span["corner_id"], "reason": "missing_subpath"})
+            continue
+        tokens = paths[subpath]
+        segments = _segments(tokens)
+        if not segments or not tokens or tokens[0][0] != "M":
+            continue
+        drawable = [int(s["command_index"]) for s in segments if s["command"] != "Z"]
+        endpoints = {0: np.asarray(tokens[0][1], dtype=float)}
+        endpoints.update({int(s["command_index"]): s["end"] for s in segments if s["command"] != "Z"})
+        # M and the explicit closing endpoint are two addresses for one node.
+        if drawable and np.linalg.norm(endpoints[drawable[-1]] - endpoints[0]) <= 1e-9:
+            del endpoints[drawable[-1]]
+
+        def locate(point):
+            matches = sorted((float(np.linalg.norm(end - np.asarray(point, dtype=float))), index)
+                             for index, end in endpoints.items())
+            if not matches or matches[0][0] > tolerance:
+                return None
+            if len(matches) > 1 and abs(matches[1][0] - matches[0][0]) <= 1e-9:
+                return None
+            return matches[0][1]
+
+        if span["kind"] == "point":
+            entry = exit = locate(span["point"])
+            commands = []
+        else:
+            entry, exit = locate(span["start_point"]), locate(span["end_point"])
+            commands = []
+            if entry is not None and exit is not None and entry != exit:
+                explicit_close = bool(drawable) and np.linalg.norm(
+                    segments[drawable[-1]]["end"] - np.asarray(tokens[0][1], dtype=float)
+                ) <= 1e-9
+                try:
+                    commands = list(directed_corner_ownership(
+                        tuple(str(index) for index in [0, *drawable]), str(entry), str(exit),
+                        explicit_closing_drawable=explicit_close,
+                    ))
+                    commands = [int(index) for index in commands]
+                except ValueError as error:
+                    reason = "implicit_closing_edge" if "implicit closing" in str(error) else "ambiguous_span"
+            elif entry == exit and entry is not None:
+                reason = "ambiguous_span"
+        if entry is None or exit is None:
+            reason = "missing_or_ambiguous_endpoint"
+        if reason:
+            skipped.append({"corner_id": span["corner_id"], "reason": reason})
+            continue
+        span.update(entry_command=entry, exit_command=exit, commands=commands,
+                    curve_commands=[i for i in commands if tokens[i][0] in _CURVE_COMMANDS],
+                    anchor_commands=list(dict.fromkeys([entry, *commands, exit])))
+        spans.append(span)
+        for index in span["anchor_commands"]:
+            key = (subpath, index)
+            anchor = anchors.setdefault(key, {"subpath": subpath, "command_index": index,
+                "anchor_kind": "corner", "corner_id": span["corner_id"], "corner_ids": []})
+            if span["corner_id"] not in anchor["corner_ids"]:
+                anchor["corner_ids"].append(span["corner_id"])
+    return recount_corner_diagnostics(d, {
+        "path": d, "anchors": [anchors[key] for key in sorted(anchors)],
+        "spans": spans, "skipped": skipped,
+    })
+
+
+def recount_corner_diagnostics(d: str, diagnostics: Mapping[str, object]) -> dict[str, object]:
+    """Derive counters from the retained commands and exact declared ownership."""
+    paths = _parse_subpaths(d)
+    total = sum(command not in {"M", "Z"} for tokens in paths for command, _ in tokens)
+    spans = diagnostics.get("spans", ())
+    anchors = diagnostics.get("anchors", ())
+    owned = {(span["subpath"], index) for span in spans for index in span.get("commands", ())}
     return {
-        "commands": {
-            "total": total_commands,
-            "corner": len(corner_commands),
-            "free": total_commands - len(corner_commands),
-        },
-        "anchor_counts": {
-            "total": total_commands + sum(1 for tokens in _parse_subpaths(d) if tokens),
-            "corner": len(ordered_anchors),
-        },
-        "anchors": ordered_anchors,
-        "spans": spans,
+        **diagnostics,
+        "commands": {"total": total, "corner": len(owned), "free": total - len(owned)},
+        "anchor_counts": {"total": total + len(paths), "corner": len(anchors)},
+        "corner_counts": {"total": len(spans), "point": sum(s.get("kind") == "point" for s in spans),
+                          "curve": sum(s.get("kind") == "curve" for s in spans)},
     }
+
+
+def source_ordered_corner_diagnostics(d: str, evidence: Mapping[str, object]) -> dict[str, object]:
+    """Flatten the root fitter's per-path declarations by original path index.
+
+    The producer emits local subpath zero in each record. This is identity
+    transport only: stale/malformed records are explicit skips, never inferred
+    from coordinates or from the path after topology classification.
+    """
+    if "spans" in evidence or "subpaths" not in evidence or evidence.get("path") != d:
+        return dict(evidence)
+    records = evidence["subpaths"]
+    raw = tuple(part.strip() for part in re.findall(r"M[^M]*", d))
+    skipped = list(evidence.get("skipped", ()))
+    spans, anchors = [], []
+    if not isinstance(records, Sequence) or isinstance(records, (str, bytes)) or len(records) != len(raw):
+        return {**evidence, "spans": [], "anchors": [], "skipped": [*skipped, {"reason": "invalid_corner_provenance"}]}
+    for index, (record, path_d) in enumerate(zip(records, raw, strict=True)):
+        if not isinstance(record, Mapping) or record.get("path") != path_d:
+            skipped.append({"subpath": index, "reason": "missing_or_stale_provenance"})
+            continue
+        skipped.extend(record.get("skipped", ()))
+        for field, output in (("spans", spans), ("anchors", anchors)):
+            for declaration in record.get(field, ()):
+                if not isinstance(declaration, Mapping) or declaration.get("subpath") != 0:
+                    skipped.append({"subpath": index, "reason": "invalid_corner_provenance"})
+                    continue
+                identity = str(declaration.get("corner_id", ""))
+                if identity.startswith("p0."):
+                    identity = f"p{index}." + identity[3:]
+                output.append({**declaration, "subpath": index, "corner_id": identity})
+    return {**evidence, "spans": spans, "anchors": anchors, "skipped": skipped}
 
 
 def rebind_prefit_corner_diagnostics(
@@ -218,41 +266,23 @@ def rebind_prefit_corner_diagnostics(
     points/spans to their nearest retained endpoints in the rewritten path.
     """
     spans = diagnostics.get("spans", ())
-    if not isinstance(spans, Sequence):
-        return {"path": d}
-    points = [
-        tuple(float(value) for value in span["point"])
-        for span in spans
-        if isinstance(span, Mapping) and span.get("source") == "prefit" and "point" in span
-    ]
-    rounded_spans = [
-        (
-            tuple(float(value) for value in span["start_point"]),
-            tuple(float(value) for value in span["end_point"]),
-        )
-        for span in spans
-        if (
-            isinstance(span, Mapping)
-            and span.get("source") == "prefit"
-            and "start_point" in span
-            and "end_point" in span
-        )
-    ]
-    rebound = path_corner_diagnostics(
-        d,
-        declared_corners=points,
-        declared_corner_spans=rounded_spans,
-        corner_tolerance=tolerance,
-    )
-    rebound["path"] = d
-    return rebound
+    return _bind_prefit_spans(d, spans if isinstance(spans, Sequence) else (), tolerance=tolerance)
 
 
 def _subpath_d(tokens: list[tuple[str, list[float]]]) -> str:
+    # Only newly fitted controls are rounded. Retained endpoints/side handles
+    # must not drift merely because another corner in this path was normalized.
     return " ".join(
-        command if not values else f"{command}{' '.join(_fmt(value) for value in values)}"
+        command if not values else f"{command}{' '.join(str(float(value)) for value in values)}"
         for command, values in tokens
     )
+
+
+def retained_corner_declaration_matches(
+    d: str, diagnostics: object
+) -> bool:
+    """Whether diagnostics are pre-fit corner evidence for this exact path."""
+    return isinstance(diagnostics, Mapping) and diagnostics.get("path") == d
 
 
 def normalize_corners_path_d(
@@ -261,43 +291,102 @@ def normalize_corners_path_d(
     max_error: float,
     diagnostics: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:
-    """Collapse recognised rounded-corner runs to one Q when the fit is faithful."""
-    diagnostics = dict(diagnostics) if diagnostics is not None else path_corner_diagnostics(d)
-    tokens_by_subpath = _parse_subpaths(d)
-    normalized_spans: list[str] = []
-    curve_spans = sorted(
-        (span for span in diagnostics["spans"] if span["kind"] == "curve"),
-        key=lambda span: (int(span["subpath"]), max(int(command) for command in span["curve_commands"])),
-        reverse=True,
-    )
-    for span in curve_spans:
-        subpath_index = int(span["subpath"])
-        curve_commands = [int(command) for command in span["curve_commands"]]
-        tokens = tokens_by_subpath[subpath_index]
-        start, end = min(curve_commands), max(curve_commands)
-        if not all(tokens[index][0] in _CURVE_COMMANDS for index in range(start, end + 1)):
+    """Fit only declared owned curves; preserve their endpoints and provenance."""
+    if not retained_corner_declaration_matches(d, diagnostics):
+        result = path_corner_diagnostics(d)
+        result["skipped"] = [{"reason": "missing_or_stale_provenance"}]
+        result["normalized"] = []
+        return d, result
+    # Rebind from pre-fit endpoint evidence, not caller-provided command ranges.
+    bound = rebind_prefit_corner_diagnostics(d, diagnostics, tolerance=0.02)
+    paths = _parse_subpaths(d)
+    spans = bound["spans"]
+    skipped = list(bound["skipped"])
+    normalized = []
+    output = []
+    for subpath, tokens in enumerate(paths):
+        segments = {int(s["command_index"]): s for s in _segments(tokens)}
+        candidates = [s for s in spans if s["subpath"] == subpath and s["kind"] == "curve"]
+        ownership: dict[int, int] = {}
+        for span in candidates:
+            for index in span["commands"]:
+                ownership[index] = ownership.get(index, 0) + 1
+        point_indices = {s["entry_command"] for s in spans
+                         if s["subpath"] == subpath and s["kind"] == "point"}
+        if 0 in point_indices:
+            closing = [i for i, s in segments.items() if s["command"] != "Z"]
+            if closing and np.linalg.norm(segments[closing[-1]]["end"] - tokens[0][1]) <= 1e-9:
+                point_indices.add(closing[-1])
+        replacements = {}
+        for span in candidates:
+            indices = span["commands"]
+            reason = None
+            if not indices or any(tokens[i][0] not in _CURVE_COMMANDS for i in indices):
+                reason = "non_curve_span"
+            elif any(ownership[i] > 1 for i in indices):
+                reason = "overlapping_corner_ownership"
+            elif point_indices.intersection(indices[:-1]):
+                reason = "protected_point_inside_span"
+            elif len(indices) == 1 and tokens[indices[0]][0] == "Q":
+                # Already normalized: do not refit it or alter its handles.
+                continue
+            if reason:
+                skipped.append({"corner_id": span["corner_id"], "reason": reason})
+                continue
+            start = segments[indices[0]]["start"]
+            end = segments[indices[-1]]["end"]
+            source = [("M", list(start)), *(tokens[i] for i in indices)]
+            samples = np.asarray(_sample_subpath(source, 16), dtype=float)
+            if len(samples) < 3:
+                continue
+            quadratic, _error, _split = fit_quadratic_once(samples, max_error)
+            # Validate the serialized candidate, including the actual preserved
+            # endpoints. The fit must not move either boundary to improve error.
+            control = np.asarray([float(_fmt(v)) for v in quadratic[1]])
+            quadratic = np.asarray([start, control, end])
+            if _quadratic_max_residual(samples, quadratic) > max_error:
+                skipped.append({"corner_id": span["corner_id"], "reason": "fit_residual"})
+                continue
+            replacements[indices[0]] = (indices, ("Q", [*control, *end]))
+            normalized.append(str(span["corner_id"]))
+        if not replacements:
+            output.append(tokens)
             continue
-        first_start = _segments(tokens)
-        segment_by_command = {int(segment["command_index"]): segment for segment in first_start}
-        source = [
-            ("M", [float(value) for value in segment_by_command[start]["start"]]),
-            *tokens[start:end + 1],
-        ]
-        samples = np.asarray(_sample_subpath(source, 16), dtype=float)
-        if len(samples) < 3:
-            continue
-        quadratic, _squared_error, _split = fit_quadratic_once(samples, max_error)
-        if _quadratic_max_residual(samples, quadratic) > max_error:
-            continue
-        end_point = quadratic[2]
-        tokens[start:end + 1] = [
-            ("Q", [float(quadratic[1][0]), float(quadratic[1][1]), float(end_point[0]), float(end_point[1])])
-        ]
-        normalized_spans.append(str(span["corner_id"]))
-
-    normalized_d = " ".join(_subpath_d(tokens) for tokens in tokens_by_subpath)
-    result = path_corner_diagnostics(normalized_d)
-    result["normalized"] = normalized_spans
+        order = [i for i, (command, _values) in enumerate(tokens) if command not in {"M", "Z"}]
+        # A replacement crossing M needs a new serialization start at its entry.
+        # Rotation does not change the closed outline or any retained command.
+        wrap = next((indices for indices, _ in replacements.values()
+                     if any(b < a for a, b in zip(indices, indices[1:]))), None)
+        start_point = tokens[0][1]
+        if wrap is not None:
+            position = order.index(wrap[0])
+            order = order[position:] + order[:position]
+            start_point = list(segments[wrap[0]]["start"])
+        removed = {i for indices, _ in replacements.values() for i in indices[1:]}
+        result_tokens = [("M", start_point)]
+        for index in order:
+            if index in replacements:
+                result_tokens.append(replacements[index][1])
+            elif index not in removed:
+                result_tokens.append(tokens[index])
+        if tokens[-1][0] == "Z":
+            result_tokens.append(tokens[-1])
+        output.append(result_tokens)
+    normalized_d = " ".join(_subpath_d(tokens) for tokens in output) if normalized else d
+    result = rebind_prefit_corner_diagnostics(normalized_d, bound, tolerance=0.02)
+    result["normalized"] = normalized
+    # An unresolved declaration may already have been removed from the bound
+    # spans. Retain its explanation on subsequent no-ops rather than silently
+    # presenting the same unannotated path as successfully processed.
+    prior_skips = diagnostics.get("skipped", ())
+    all_skips = [*(prior_skips if isinstance(prior_skips, Sequence) else ()), *skipped]
+    result["skipped"] = list({
+        (item.get("corner_id"), item.get("reason")): dict(item)
+        for item in all_skips
+        if isinstance(item, Mapping)
+        and item.get("corner_id") not in normalized
+        and not (spans and item.get("reason") == "missing_or_stale_provenance")
+    }.values())
     return normalized_d, result
 
 

@@ -45,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         print("note: --axes only applies in --variants mode; ignoring it", file=sys.stderr)
 
     base = Options(
-        max_colors=args.colors,
+        max_sampling_colors=args.colors,
         flatten=args.flatten,
         no_symmetry=args.no_symmetry,
         corner_normalize=args.corner_normalize,
@@ -78,7 +78,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     svg = idealize(args.input, options=Options(
-        epsilon=args.epsilon, max_error=args.max_error, max_colors=args.colors,
+        epsilon=args.epsilon, max_error=args.max_error, max_sampling_colors=args.colors,
         flatten=args.flatten, no_symmetry=args.no_symmetry,
         corner_normalize=args.corner_normalize,
     ))

@@ -1,4 +1,3 @@
-from .atomic import atomic_flatten_pass
 from .clones import clones_pass
 from .corners import corner_normalize_pass
 from .compound import split_compound_pass
@@ -7,11 +6,9 @@ from .primitives import primitives_pass
 from .seams import seams_pass
 from .simplify import simplify_pass
 from .smooth import smooth_pass
-from .straighten import straighten_pass
 from .symmetry import symmetry_pass
 
 __all__ = [
-    "atomic_flatten_pass",
     "clones_pass",
     "corner_normalize_pass",
     "occlusion_pass",
@@ -19,7 +16,6 @@ __all__ = [
     "seams_pass",
     "simplify_pass",
     "smooth_pass",
-    "straighten_pass",
     "split_compound_pass",
     "symmetry_pass",
 ]

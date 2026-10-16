@@ -126,7 +126,7 @@ def test_clones_pass_checks_nearby_descriptor_buckets_before_rejecting(monkeypat
     monkeypatch.setattr(
         clones_module,
         "_best_transform",
-        lambda _canonical, target: ((1.0, 0.0, 0.0, 1.0, 34.0, 22.0), target),
+        lambda _canonical, target, **_kwargs: ((1.0, 0.0, 0.0, 1.0, 34.0, 22.0), target),
     )
     proposals = clones_pass(objects, masks)
 
@@ -182,7 +182,7 @@ def test_clones_pass_does_not_chain_targets_as_canonicals(monkeypatch):
     middle = _square(2, center=(42.0, 18.0), fill=FlatFill("#112233"))
     target = _square(3, center=(66.0, 18.0), fill=FlatFill("#112233"))
 
-    def _nontransitive_match(canonical_flat, target_flat):
+    def _nontransitive_match(canonical_flat, target_flat, **_kwargs):
         pair = (round(canonical_flat.centroid.x), round(target_flat.centroid.x))
         if pair in {(18, 42), (42, 66)}:
             return (1.0, 0.0, 0.0, 1.0, target_flat.centroid.x - canonical_flat.centroid.x, 0.0), target_flat

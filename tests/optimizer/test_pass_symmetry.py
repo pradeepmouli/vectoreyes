@@ -1,4 +1,7 @@
+import math
+
 import numpy as np
+import pytest
 
 from vectormark.skia_geometry import SkPath
 from vectormark.candidate import FlatFill, LinearGradientFill
@@ -7,6 +10,31 @@ from vectormark.optimizer.gate import rasterize
 from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 from vectormark.optimizer.passes.symmetry import symmetry_pass
 from vectormark.fit import Shape
+from vectormark.drawing_actions import SetSymmetryAction
+from vectormark.optimizer.passes.symmetry import (
+    Axis2D,
+    _intrinsic_symmetry_diagnostics,
+    _self_symmetry_diagnostics,
+)
+
+
+@pytest.mark.parametrize("angle", [0.0, 45.0, 90.0, -30.0])
+@pytest.mark.parametrize("reporter,mode", [
+    (_self_symmetry_diagnostics, "self"),
+    (_intrinsic_symmetry_diagnostics, "intrinsic"),
+])
+def test_detected_axis_is_an_explicit_action_value(angle, reporter, mode):
+    detected = Axis2D(math.radians(angle), 12.5, -3.25)
+    report = reporter(detected, 0.001)["symmetry"]
+    action = SetSymmetryAction.model_validate({
+        "op": "set_symmetry", "target": "r1", "axis": report["axis"],
+    })
+
+    assert report["mode"] == mode
+    assert action.axis.point == (12.5, -3.25)
+    assert action.axis.angle_degrees == pytest.approx(angle)
+    assert action.model_dump(mode="json")["axis"] == report["axis"]
+    assert report["residual"] == 0.001
 
 
 def _mask_for_polygon(poly: SkPath, shape_hw: tuple[int, int] = (96, 96)) -> np.ndarray:
@@ -72,11 +100,9 @@ def test_symmetry_pass_reconstructs_self_symmetric_object_as_single_region():
     assert len(out) == 1
     region = out[0]
     assert region.id == 1
-    assert region.is_branch
-    assert len(region.children) == 2
-    assert region.children[0].current.kind == "path"
-    assert region.children[1].current.kind == "use"
-    assert region.children[1].current.params["href_obj_id"] == region.children[0].id
+    assert region.is_leaf
+    assert region.current.kind == "path"
+    assert region.diagnostics["symmetry"]["materialized"] is True
     assert region.diagnostics["symmetry"]["mode"] == "self"
 
 
@@ -117,7 +143,7 @@ def test_symmetry_pass_accepts_a_valid_specialized_self_fit_before_generic_cubic
         [lambda objects, masks: symmetry_pass(objects, masks, epsilon=1.0, max_error=1.0, cubic=True)],
     )
 
-    assert out[0].is_branch
+    assert out[0].is_leaf and out[0].diagnostics["symmetry"]["materialized"]
 
 
 def test_symmetry_pass_selects_accurate_generic_path_fallback_over_heuristics():
@@ -147,7 +173,7 @@ def test_symmetry_pass_selects_accurate_generic_path_fallback_over_heuristics():
         [lambda objects, masks: symmetry_pass(objects, masks, epsilon=1.0, max_error=1.0, cubic=True)],
     )
 
-    assert out[0].is_branch
+    assert out[0].is_leaf and out[0].diagnostics["symmetry"]["materialized"]
 
 
 def test_symmetry_pass_smooths_daikonic_like_cap_instead_of_preserving_facets():
@@ -176,10 +202,11 @@ def test_symmetry_pass_smooths_daikonic_like_cap_instead_of_preserving_facets():
         [lambda objects, masks: symmetry_pass(objects, masks, epsilon=1.0, max_error=1.0, cubic=True)],
     )
 
-    assert out[0].is_branch
-    d = str(out[0].children[0].current.params["d"])
-    assert d.count("C") == 1
-    assert d.count("L") == 1
+    assert out[0].is_leaf and out[0].diagnostics["symmetry"]["materialized"]
+    d = str(out[0].current.params["d"])
+    # The retained path now contains both fitted halves, not one source half.
+    assert d.count("C") == 2
+    assert d.count("L") == 2
     assert "Q" not in d
 
 
@@ -206,14 +233,14 @@ def test_symmetry_pass_preserves_flat_top_width_on_daikonic_like_tip():
         [lambda objects, masks: symmetry_pass(objects, masks, epsilon=1.0, max_error=1.0, cubic=True)],
     )
 
-    assert out[0].is_branch
-    source = out[0].children[0]
+    assert out[0].is_leaf and out[0].diagnostics["symmetry"]["materialized"]
+    source = out[0]
     minx, _miny, maxx, _maxy = source.footprint.bounds
     d = str(source.current.params["d"])
-    assert maxx - minx > 50.0
+    assert maxx - minx > 100.0
     assert "L" in d
     assert "C" not in d
-    assert d.count("Q") <= 2
+    assert d.count("Q") <= 4
 
 
 def test_symmetric_half_fit_fits_prefixed_half_only_once(monkeypatch):
@@ -290,7 +317,14 @@ def test_symmetry_pass_preserves_self_symmetric_native_primitive():
         poly,
     )
 
-    assert symmetry_pass([obj], {obj.id: _mask_for_polygon(poly)}) == []
+    out = optimize([obj], {obj.id: _mask_for_polygon(poly)}, [symmetry_pass])
+
+    assert len(out) == 1 and out[0].is_leaf
+    assert out[0].current == obj.current
+    assert out[0].fill == obj.fill
+    assert out[0].footprint.symmetric_difference(poly).area < 1e-6
+    assert out[0].diagnostics["symmetry"]["mode"] == "intrinsic"
+    assert out[0].diagnostics["symmetry"]["accepted"] is True
 
 
 def test_symmetry_pass_records_simple_self_symmetric_path_without_rewriting():
@@ -300,10 +334,39 @@ def test_symmetry_pass_records_simple_self_symmetric_path_without_rewriting():
     out = optimize([obj], {obj.id: _mask_for_polygon(poly)}, [symmetry_pass])
 
     assert len(out) == 1
-    assert out[0].is_branch
-    assert [child.current.kind for child in out[0].children] == ["path", "use"]
-    assert out[0].diagnostics["symmetry"]["mode"] == "self"
+    assert out[0].is_leaf
+    assert out[0].current == obj.current
+    assert out[0].fill == obj.fill
+    assert out[0].footprint.symmetric_difference(poly).area < 1e-6
+    assert out[0].diagnostics["symmetry"]["mode"] == "intrinsic"
     assert out[0].diagnostics["symmetry"]["accepted"] is True
+
+
+def test_rejected_approximate_reconstruction_is_not_reported_as_intrinsic(monkeypatch):
+    import vectormark.optimizer.passes.symmetry as module
+
+    poly = SkPath(shell=[(20.0, 60.0), (40.1, 20.0), (60.0, 60.0)])
+    obj = _obj(1, poly)
+    intrinsic = module._best_self_axis(poly)
+    assert intrinsic is not None and intrinsic[1] > 1e-9
+    monkeypatch.setattr(module, "_best_self_reconstruction", lambda *args, **kwargs: None)
+
+    out = optimize([obj], {obj.id: _mask_for_polygon(poly)}, [symmetry_pass])
+
+    assert out[0].current == obj.current
+    assert "symmetry" not in out[0].diagnostics
+
+
+def test_mirror_pair_axis_uses_the_shared_public_format():
+    left = _rect(1, bounds=(10.0, 20.0, 22.0, 34.0))
+    right = _rect(2, bounds=(58.0, 20.0, 70.0, 34.0))
+    objects = [left, right]
+    out = optimize(objects, {obj.id: _mask_for_polygon(obj.footprint) for obj in objects}, [symmetry_pass])
+
+    axis = out[1].diagnostics["symmetry"]["axis"]
+    assert set(axis) == {"point", "angle_degrees"}
+    assert axis["point"] == pytest.approx([40.0, 27.0])
+    assert axis["angle_degrees"] == pytest.approx(90.0)
 
 
 def test_symmetry_pass_matches_non_flat_fill_pair_by_geometry():

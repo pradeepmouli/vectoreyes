@@ -31,13 +31,20 @@ def _dominant_rgb_fraction(pixels: np.ndarray) -> float:
 
 
 def fit_fill(mask: np.ndarray, rgb: np.ndarray, *, flat_hex: str,
-             max_gradient_de: float = _GATE_DELTA_E) -> Fill:
+             max_gradient_de: float = _GATE_DELTA_E,
+             allow_gradients: bool = True) -> Fill:
     """Decide a shape's fill from the source pixels under `mask`.
 
     Returns FlatFill(flat_hex) unless a searched parametric gradient (linear or radial)
     both exists and re-renders within `max_gradient_de` mean OKLab ΔE; in that case the
     corresponding gradient fill is returned. The silhouette is the caller's; this only
-    chooses how to paint inside it."""
+    chooses how to paint inside it.
+
+    ``allow_gradients=False`` returns the supplied flat paint without evaluating
+    gradient candidates; upstream material-field evidence is unchanged.
+    """
+    if not allow_gradients:
+        return FlatFill(flat_hex)
     ys, xs = np.where(mask)
     if len(xs) == 0:
         return FlatFill(flat_hex)

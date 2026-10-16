@@ -157,7 +157,11 @@ planning when a root needs a custom path.
   "drawing_id": "drw_<opaque>",
   "base_version": "v0",
   "label": "optional user-facing description",
-  "defaults": { "epsilon": 1.5, "max_error": 1.0 },
+  "settings": {
+    "epsilon": 1.5,
+    "max_error": 1.0,
+    "fit_strategy": "quadratic"
+  },
   "ops": []
 }
 ```
@@ -169,14 +173,23 @@ operation IDs are unique; and path source commands form a directed contiguous
 run within one raw subpath. Validation errors are returned as `INVALID_PLAN`
 with a JSON pointer and actionable message.
 
-`defaults.epsilon` and `defaults.max_error` override the retained trace
-defaults for the plan. `update_geometry`, `detect_primitives`, and
-`detect_symmetry` may each supply either field directly; an operation value
-overrides the plan default. `epsilon` governs simplification/primitive fitting
-and `max_error` bounds Bézier fitting. Both must be finite and non-negative.
+Each drawing action has an optional `settings` object with the same fields.
+Settings resolve in one order: retained trace settings, then plan settings,
+then the action override. The executor passes the resulting complete
+`ActionSettings` to the engine. Nested operations in `update_geometry` inherit
+their parent action's resolved settings. `epsilon` governs
+simplification/primitive fitting, `max_error` bounds Bézier fitting, and
+`fit_strategy` selects `quadratic`, `progressive`, or
+`progressive_allow_lines` for whole-region path fits. Numeric values must be
+finite and non-negative.
 Detection diagnostics are included with each returned target. In particular,
 `detect_symmetry` returns its accepted axis there, so the next versioned plan
 can use that axis directly in `set_symmetry`.
+The shared axis value is `{"point": [x, y], "angle_degrees": degrees}`:
+the point lies on the reflection line in drawing coordinates, and the angle
+is measured from positive x (90 degrees is vertical). Detected self-symmetry,
+intrinsic symmetry, and explicit symmetry use this same representation; no
+client-side radians conversion is required.
 
 ### Version tree
 
@@ -187,14 +200,20 @@ are branch paths: the first, second, and third refinements of `v0` are `v0.0`,
 next child segment atomically, so agents provide only `base_version` and cannot
 collide when submitting alternatives concurrently.
 
-Each version stores its parent version, accepted plan, immutable `Drawing`
-snapshot, private engine evidence, and optional plan `label`. SVG, preview,
+Each version stores its parent version, submitted recipe edits, effective plan
+and declarations, resolved settings, immutable `Drawing` snapshot, references to
+private engine evidence, and optional plan `label`. The effective recipe,
+evidence, and retained resolved operation outcomes reproduce the snapshot;
+the snapshot does not replace the recipe. Exploratory generation is not rerun
+merely to read, render, or reproduce a published version.
+SVG, preview,
 labeled SVG, and the target report are rendered on demand from the `Drawing`.
 There is no parallel `DrawingScene`, `VectorRegion`, or `RenderTarget` public
 tree. Agents can branch from any retained
 version and present sibling alternatives without retracing the original raster.
-Each operation is a pure transform that returns fresh affected `DrawingRegion`
-objects; the complete plan is atomically committed as one child drawing version.
+Each operation returns fresh affected `DrawingRegion` objects; generating a
+proposal may be exploratory rather than deterministic. The complete selected
+result is atomically committed as one child drawing version.
 No operation mutates the base version or creates a separately persisted partial
 version.
 
@@ -218,12 +237,14 @@ detect_symmetry(target?)
 detect_clones(target?)
 merge(id, regions[])
 split(target, divider)
+fit_path(target)
+fit_primitive(target, type)
 update_geometry(target, ops[])
 set_fill(target, fill)
 assign_clone(source, target, transforms[])
 set_symmetry(target, axis)
 align(target, reference, axes)
-stitch(targets?, epsilon?, max_error?)
+stitch(targets?)
 set_z_order(targets[])
 ```
 
@@ -234,7 +255,7 @@ action reference commands produced or retained by an earlier one.
 
 The engine also exposes `apply_path_action(PathActionRequest) ->
 PathActionResult` directly. The request contains the current `Drawing`, target
-region ID, action, and fitting tolerances so cross-region command references
+region ID, action, and resolved `ActionSettings` so cross-region command references
 can be resolved without a parallel command-lineage map. The optimizer may call
 this operation directly; it remains an orchestrator rather than a second path
 implementation.
@@ -242,7 +263,7 @@ implementation.
 Evidence-based drawing operations use
 `apply_action(DrawingActionRequest[Evidence]) ->
 DrawingActionResult[Evidence]`. The request pairs the immutable `Drawing` with
-opaque, immutable engine evidence and resolved tolerances. The result returns
+opaque, immutable engine evidence and resolved `ActionSettings`. The result returns
 both a fresh drawing and fresh evidence. `trace_drawing` establishes that pair
 as `TraceDrawingResult[Evidence]`. For the Python engine the evidence contains
 raster masks, Skia footprints, source pixels, and optimizer bookkeeping; a
@@ -263,11 +284,12 @@ assignment remain region operations.
 - `split` divides a target using either an infinite line from two points or a
   supplied divider path. It creates addressable child regions for the next
   versioned plan and invalidates their fills.
-- `update_geometry` owns an ordered region-local geometry program. Its
-  command-addressed operations update retained path geometry; its atomic
-  `fit_primitive` operation replaces the target with a fitted `circle`,
-  `ellipse`, `rect`, `rounded_rect`, or `polygon`. Agents do not author final
-  SVG coordinates.
+- `fit_path` replaces a target's complete geometry with a newly fitted path.
+- `fit_primitive` replaces a target's complete geometry with a fitted
+  `circle`, `ellipse`, `rect`, `rounded_rect`, or `polygon`.
+- `update_geometry` owns an ordered region-local path program. Its
+  command-addressed operations update retained path geometry without changing
+  the geometry representation. Agents do not author final SVG coordinates.
 - `assign_clone` establishes a source/target relationship and applies one or more
   transforms. The target becomes `CloneGeometry`; its fill remains independent
   of the source, so visually related clones may use different fills.
@@ -306,14 +328,12 @@ including occlusion, compound splitting, symmetry, clones, simplification, and
 stitching. Version v0 remains pre-optimizer; plans may opt into individual
 automatic behaviors through ordered `detect_*` drawing actions.
 
-### Geometry actions
+### Path actions
 
-`update_geometry` owns an ordered `ops` array. `fit_primitive` is an atomic
-replacement and must be the only nested action. The remaining operations
-address version-scoped path command IDs and are applied sequentially:
+`update_geometry` owns an ordered `ops` array. Its operations address
+version-scoped path command IDs and are applied sequentially:
 
 ```text
-fit_primitive(type)
 fit(target | between, type | strategy)
 remove(target)
 match(target, reference, transform?)
@@ -332,10 +352,12 @@ normalize_corners()
   or `keep`. A cubic may inflect when that is the appropriate fit.
 - `fit.strategy` selects recursive fitting across multiple commands:
   `quadratic`, `cubic`, `progressive`, or `progressive_allow_lines`.
-- A `target` refits that retained command. `between: [left, right]` refits the
-  commands strictly between ordered boundary commands: it begins at the end of
-  `left` and ends at the start of `right`. `type` may be used with either form
-  for one replacement curve; `strategy` applies to a multi-command span.
+- A `target` refits that retained command. `between: [A, B]` begins at the end
+  of `A` and ends at the end of `B`, replacing commands after `A` through `B`
+  inclusive. `A` remains unchanged; the replacement preserves `B`'s endpoint.
+  Adjacent IDs select `B` alone. Boundaries must be ordered in one subpath;
+  a span may end at its explicit closing drawable command. `type` may be used
+  with either form for one replacement curve; `strategy` permits multiple.
 - `remove` removes a command and joins its neighbours. The resulting join is
   eligible for later path fitting and region-level `stitch`.
 - `set_parallel` preserves the target's existing length unless `distance` is
@@ -345,21 +367,95 @@ normalize_corners()
   operate only on existing pre-fit corner provenance; it cannot invent a new
   corner from a post-fit tangent.
 
+Corner diagnostics distinguish boundary anchors from owned geometry. Each
+rounded span records `entry_command` and `exit_command` (command-end anchor
+addresses), plus `commands` in directed path order. Ownership starts **after**
+the entry command and includes the command arriving at the exit; it never
+includes the following side. `curve_commands` identifies the Q/C members.
+A point corner owns no drawable command. `anchor_commands` and `anchors`
+describe node membership independently; touching corners may share a boundary
+anchor and its `corner_ids`, but overlapping curve ownership is not normalized.
+
+Normalization preserves both endpoints and unaffected side handles, handles
+closed-path wraparound in directed order, and transfers the original pre-fit
+corner IDs/classification to replacement commands. A single Q is already
+normalized. Missing, stale, ambiguous, or overlapping provenance produces an
+explicit skip, including on repeated no-ops. An unknown radius does not convert
+a rounded declaration into a point. Reports expose `corner_counts` separately
+from `commands.corner` (owned command count); neither is inferred from fitted
+tangents.
+
 Adjacent fitted path segments are tangent-continuous by default; only `break`
 requests a sharp join. Paths are closed by the `PathGeometry` invariant, so
 there is no `close` operation. Arbitrary coordinate-authored insertion is not a
 public operation: `fit` over a retained span is the coordinate-free mechanism
 for replacing or creating commands.
 
+## Operation purpose and proposal semantics — 2026-10-16
+
+Geometry operations have one or both purposes:
+
+- **Reconstruction accuracy:** reproduce raster-evidenced geometry as closely
+  as practical within explicit measurement budgets.
+- **Design fidelity:** adjust or rebuild the result into a construction a
+  designer would have authored, using defaults and optionally automatic,
+  agent, or user intent.
+
+Purpose, intent origin, and execution behavior are independent. Design-fidelity
+operations provide defaults but need not receive a fully specified construction;
+their inputs, interpretation, and outputs may differ across runs. An explicit
+transform may still be deterministic while serving design fidelity. Accuracy
+operations may also use exploratory solvers. One shared operation implementation
+serves either purpose or both; do not create two geometry engines.
+
+Separate **proposal generation** from **commitment**. An operation may propose
+one or more constructions; assess actual candidate geometry rather than equality
+with an earlier proposal. Report raster error, design-constraint satisfaction,
+topology, and complexity separately. Design fidelity does not silently waive an
+error limit: any accuracy trade-off must be explicit in the resolved policy.
+Invalid geometry, non-finite results, and unresolved references remain hard errors.
+
+Commit the selected exact canonical geometry, effective intent, resolved settings,
+bindings, assessments, and operation outcomes atomically. Commitment is not a
+claim of visual acceptance; a needs-refinement branch remains labelled as such.
+Reproduction uses the retained result/resolutions without exploratory generation.
+**Re-proposal** deliberately executes intent again, may produce a different valid
+result, and never overwrites the prior committed version.
+
+Bind a retained resolution to its operation/intent revision, evidence revision,
+resolved settings, and upstream dependencies. Changed dependencies invalidate
+reuse: return an actionable binding error or enter an explicitly requested
+re-proposal workflow, never silently reuse a stale outcome or regenerate one
+while reproducing a version. Seeds, when available, are provenance rather than
+a universal reproducibility guarantee. Reuse canonical geometry and replay
+receipts; do not introduce a second authoritative drawing tree.
+
+These are execution contracts, not additional MCP tools or an assertion that
+exploratory candidate selection has already been implemented.
+
 ## Execution model
 
 The trace module produces an immutable canonical `Drawing`, private engine
-evidence, and a public JSON-safe summary. The plan executor transforms the
-cached `DrawingRegion` tree. The selected engine uses private evidence to fit
-requested geometry and run named `detect_*` operations; it returns new typed
-geometry rather than exposing optimizer records. It does not mutate the stored
-trace. Each accepted plan creates an immutable version, so the agent may issue
-multiple branches for one drawing.
+evidence, and a public JSON-safe summary. The agreed target execution model is
+recipe replay: the selected version supplies the inherited effective plan and
+declarations, agent edits revise that recipe, and the engine reconstructs from
+retained evidence and valid committed operation resolutions. Exploratory work
+is regenerated only through explicit re-proposal. The parent's generated geometry is a comparison reference,
+not an implicit constraint to preserve. Individual actions transform a working
+`DrawingRegion` tree during replay; rendering never performs reconstruction.
+
+Deleting a declaration removes its effect on reconstruction, rather than freezing
+the geometry it previously produced. Explicit geometry deletion is separate.
+Persist stable recipe identities and bindings to evidence or named operation
+outputs; bind displayed version-scoped command selections before replay and
+reject unresolved or ambiguous targets. Geometry changes refresh feature maps
+and affected paint fits. Unaffected work may be cached only when equivalent to
+full replay. Each accepted recipe creates one immutable child version atomically.
+
+Recipe editing, stable binding, and full replay are refactoring requirements,
+not claims that the current deployed tool supports them already. The detailed
+contract and verification cases are in
+[Slice 3 of the reconstruction plan](../plans/2026-09-07-designer-quality-reconstruction.md#agreed-reconstructionreplay-contract--2026-09-09).
 
 The refinement result includes its new version ID, artifact references, and
 target-level geometry/fill/provenance summaries. Call
@@ -371,8 +467,8 @@ The tracing implementation is VectorMark's own pipeline: palette segmentation,
 `find_contours`, and custom line/Bézier fitting. It is not Potrace or vtracer.
 The MCP MVP wraps it behind a `TraceEngine.trace(rgb, options) -> TraceResult`
 boundary. The initial implementation uses the existing Python/scikit-image
-pipeline; retained `DrawingState` ensures every branch refines a trace once
-rather than retracing it.
+pipeline; retained evidence allows recipe replay without repeating segmentation
+or contour extraction unless source, guide, or relevant trace settings change.
 
 Trace-engine substitution is a Phase 2 performance project, after profiling
 representative MCP drawings. A Rust implementation or an adapter for a

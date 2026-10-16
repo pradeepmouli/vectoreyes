@@ -9,6 +9,7 @@ import numpy as np
 from scipy import ndimage
 
 from .color import srgb_to_oklab
+from .types import CoverageField
 
 BAND_REACH = 2   # px each side of a label transition treated as an antialiasing band
 
@@ -84,14 +85,56 @@ def soft_label_field(rgb: np.ndarray, palette: np.ndarray) -> np.ndarray:
     return L
 
 
-def region_coverage(L: np.ndarray, k: int, region_mask: np.ndarray, *, reach: int = 2) -> np.ndarray:
+def coverage_competitors(L: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Shared strongest label and top two memberships, without an H/W/K copy."""
+    winner = L.argmax(axis=2)
+    strongest = L.max(axis=2)
+    runner_up = np.full_like(strongest, -np.inf)
+    for k in range(L.shape[2]):
+        np.maximum(runner_up, L[..., k], out=runner_up, where=winner != k)
+    return winner, strongest, runner_up
+
+
+def label_coverage(
+    L: np.ndarray, k: int, *,
+    competitors: tuple[np.ndarray, np.ndarray, np.ndarray] | None = None,
+) -> np.ndarray:
+    """One color's global coverage; tied winners retain the other tied value."""
+    winner, strongest, runner_up = coverage_competitors(L) if competitors is None else competitors
+    others = np.where(winner == k, runner_up, strongest)
+    return (L[..., k] - others + 1.0) / 2.0
+
+
+def region_coverage(
+    L: np.ndarray, k: int, region_mask: np.ndarray, *, reach: int = 2,
+    label_cov: np.ndarray | None = None,
+) -> np.ndarray:
     """Region k's coverage field from the shared global L: cov = (φ+1)/2 with
     φ = L[...,k] − max_{j≠k} L[...,j] (boundary at 0.5), zeroed outside a `reach`-px
     dilation of `region_mask` so only this component's boundary is traced. Derived from
     the SAME L for every region ⇒ φ_B = −φ_A on shared seams (gap-free)."""
-    others = np.delete(L, k, axis=2).max(axis=2)
-    phi = L[..., k] - others
-    cov = (phi + 1.0) / 2.0
+    cov = label_coverage(L, k) if label_cov is None else label_cov
     near = ndimage.binary_dilation(region_mask, iterations=reach)
     cov = np.where(near, cov, 0.0)
     return cov
+
+
+def local_region_coverage(
+    L: np.ndarray, k: int, region_mask: np.ndarray, *, reach: int = 2,
+    label_cov: np.ndarray | None = None,
+) -> CoverageField | None:
+    """Apply the same regional coverage gate within its bounds plus a zero halo."""
+    ys = np.flatnonzero(region_mask.any(axis=1))
+    xs = np.flatnonzero(region_mask.any(axis=0))
+    if not len(ys) or not len(xs):
+        return None
+    # Dilation reaches `reach` pixels. An additional zero row/column preserves
+    # the full-canvas contour boundary when the tile itself is padded later.
+    margin = reach + 1
+    y0, y1 = max(0, int(ys[0]) - margin), min(region_mask.shape[0], int(ys[-1]) + margin + 1)
+    x0, x1 = max(0, int(xs[0]) - margin), min(region_mask.shape[1], int(xs[-1]) + margin + 1)
+    tile_mask = region_mask[y0:y1, x0:x1]
+    shared = label_coverage(L, k) if label_cov is None else label_cov
+    near = ndimage.binary_dilation(tile_mask, iterations=reach)
+    values = np.where(near, shared[y0:y1, x0:x1], 0.0)
+    return CoverageField(values, (x0, y0), region_mask.shape)

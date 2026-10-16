@@ -74,7 +74,7 @@ def test_daikonic_corner_radius_is_measured_tight_and_padded():
 
     icon = _icon_array()
     h, w, _ = icon.shape
-    pal = extract_palette(icon, max_colors=16)
+    pal = extract_palette(icon, max_sampling_colors=16)
     regions = segment(quantize(icon, pal), min_area=max(16, round(0.001 * h * w)))
     radii = [region_corner_radius(r.mask) for r in regions]
     rounded = [r for r in radii if r > 0]

@@ -7,8 +7,9 @@ reports are derived artifacts, never a second editable scene representation.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 from scipy import ndimage
@@ -17,21 +18,35 @@ from ._fitcurve import fit_cubic_once, fit_quadratic_once
 from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
 from .components import decompose_components
 from .contour import outer_contour, region_contours, region_corner_radius
-from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
+from .drawing_actions import ActionSettings
+from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan, _expand_merge_regions
 from .drawing_adapter import drawing_from_vector_regions
-from .drawing_trace import TraceResult, svg_path_commands
+from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
+from .path_fit_evidence import AutomaticFitEvidence
+from .path_geometry import CompoundPathGeometry, CornerAnchor, PathGeometry, PathGeometryWithCutouts, parse_svg_paths
+from .path_topology import component_paths, replace_component_paths
 from .emit import apply_affine_point, render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
 from .fill_fit import fit_fill
-from .fit import Shape, _curved_run_d, _fmt, atomic_flatten_path_d, fit_path, fit_path_stages, recognize_polygon
+from .fit import Shape, _curved_run_d, _fmt, fit_path, fit_path_stages, recognize_polygon
 from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath, to_polygon
 from .optimizer.corners import path_corner_diagnostics, rebind_prefit_corner_diagnostics
 from .optimizer.gate import rasterize
-from .optimizer.framework import optimize
+from .optimizer.automatic_replay import (
+    AutomaticActionOutcome,
+    ReplayBatch,
+    optimize_with_intent,
+)
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
 from .optimizer.shape_transform import bake_shape_transform
+from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, relative_source_path, remap_symmetry_clones, resolve_source_path, union_self_symmetry
+from .optimizer.topology import normalize_retained_topology
 from .pipeline import Options, _segment_image
+from .refinement_settings import RefinementPasses
+from .output_settings import DrawingOutputSettings
+from .color import extract_palette, quantize
 from .skia_geometry import SkPath, affinity, unary_union
-from .surface_merge import merge_material_regions
+from .quality import polyline_boundary_distance
+from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
 from .refine import half_ellipse_cap_fit, rounded_trapezoid_fit
@@ -39,6 +54,86 @@ from .refine import half_ellipse_cap_fit, rounded_trapezoid_fit
 
 DrawingRegions = tuple[VectorRegion, ...]
 DecompositionObserver = Callable[[str, tuple[Region, ...], tuple[Fill, ...] | None], None]
+
+
+@dataclass(frozen=True)
+class RootRegionsResult:
+    """The one retained forest and the trace enriched by its actual root fits."""
+
+    regions: DrawingRegions
+    trace: TraceResult
+
+
+@dataclass(frozen=True)
+class RecordedRefinement:
+    """Transient region result plus exact accepted-action replay records."""
+
+    regions: DrawingRegions
+    batches: tuple[ReplayBatch, ...]
+    outcomes: tuple[AutomaticActionOutcome, ...]
+
+
+def ordered_path_operation_stages(
+    operations: Sequence[object],
+) -> tuple[tuple[str, tuple[object, ...]], ...]:
+    """Partition path edits without changing cleanup position or repetition."""
+    stages: list[tuple[str, tuple[object, ...]]] = []
+    direct: list[object] = []
+    for operation in operations:
+        name = (
+            operation.get("op")
+            if isinstance(operation, Mapping)
+            else getattr(operation, "op", None)
+        )
+        if name in {"simplify", "normalize_corners"}:
+            if direct:
+                stages.append(("direct", tuple(direct)))
+                direct = []
+            stages.append((str(name), (operation,)))
+        else:
+            direct.append(operation)
+    if direct:
+        stages.append(("direct", tuple(direct)))
+    return tuple(stages)
+
+
+@dataclass(frozen=True)
+class _RootAssembly:
+    """Transient fit records keyed internally until public addresses are final."""
+
+    regions: DrawingRegions
+    evidence: Mapping[int, tuple[AutomaticFitEvidence, ...]]
+
+
+@dataclass(frozen=True)
+class _SurfaceFit:
+    shape: Shape
+    corners: dict[str, object]
+    evidence: tuple[AutomaticFitEvidence, ...]
+
+
+def _bind_root_evidence(trace: TraceResult, assembled: _RootAssembly) -> RootRegionsResult:
+    regions = _normalize_drawing_addresses(assembled.regions)
+    evidence = []
+    for root in regions:
+        for leaf in root.leaves():
+            assert leaf.drawing_id is not None and leaf.current is not None
+            paths = tuple(d.strip() for d in re.findall(r"M[^M]*", leaf.current.params["d"]))
+            fits = assembled.evidence[leaf.id]
+            if len(paths) != len(fits) or any(not fit.matches_output(d) for d, fit in zip(paths, fits)):
+                raise ValueError("root fitting evidence does not match the retained leaf subpaths")
+            evidence.extend(
+                RootPathEvidence(leaf.drawing_id, f"{leaf.drawing_id}.p{index}", fitted)
+                for index, fitted in enumerate(fits)
+            )
+    normalized = normalize_retained_topology(regions, defer_overlaps=True)
+    owners = {
+        path_id: leaf.drawing_id for root in normalized for leaf in root.leaves()
+        for path_id in leaf.current.params.get("path_ids", ())
+    }
+    return RootRegionsResult(normalized, replace(trace, root_path_evidence=tuple(
+        replace(record, region_id=owners.get(record.path_id, record.region_id)) for record in evidence
+    )))
 
 
 @dataclass(frozen=True)
@@ -55,16 +150,19 @@ class _Target:
     root_id: str
     region: VectorRegion
     source_regions: frozenset[str]
+    region_path: tuple[int, ...]
 
 
 def root_regions(
     trace: TraceResult,
     rgb: np.ndarray | None = None,
     *,
+    material_rgb: np.ndarray | None = None,
     min_region_fraction: float = 0.02,
-    preserve_material_labels: bool = False,
+    allow_gradients: bool = True,
+    preserve_material_labels: bool | None = None,
     on_decomposition_stage: DecompositionObserver | None = None,
-) -> DrawingRegions:
+) -> RootRegionsResult:
     """Create retained roots, optionally reducing one-shot surfaces into roots.
 
     The raw trace deliberately preserves every palette fragment so path-command
@@ -76,11 +174,18 @@ def root_regions(
     labels separate instead of treating similar colors as mergeable material.
     """
     if rgb is None:
-        return _normalize_drawing_addresses(_raw_root_regions(trace))
+        return _bind_root_evidence(trace, _raw_root_regions(trace))
     if not 0.0 <= min_region_fraction < 1.0:
         raise ValueError("min_region_fraction must be at least 0 and less than 1")
     if rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("material-merge RGB dimensions must match the trace canvas")
+    if material_rgb is None and trace.material_pretrace is not None:
+        material_rgb = trace.material_pretrace.material_proxy
+    if preserve_material_labels is None:
+        preserve_material_labels = trace.material_pretrace is not None
+    segmentation_rgb = rgb if material_rgb is None else np.asarray(material_rgb, dtype=np.uint8)
+    if segmentation_rgb.shape != rgb.shape:
+        raise ValueError("material-trace RGB dimensions must match the source RGB")
     # Raw trace paths remain the plan's stable provenance.  Geometry roots use
     # the regular, AA-aware segmentation contract so a low-frequency AA shade
     # cannot punch a false notch out of a retained surface.  Each root records
@@ -90,7 +195,7 @@ def root_regions(
         max_error=trace.options.curve_tolerance,
         cubic_paths=False,
         aa_contours=trace.options.trace_level == "subpixel",
-        max_colors=trace.options.max_colors,
+        max_sampling_colors=trace.options.max_sampling_colors,
         # The relative material threshold belongs after boundary slicing and
         # compatible-material merging.  Keeping it out of seed segmentation
         # prevents small source fragments from disappearing before they can
@@ -98,43 +203,46 @@ def root_regions(
         min_region_fraction=0.0,
         min_region_size=trace.options.min_region_size,
     )
-    _, _, seed_regions = _segment_image(rgb, geometry_options)
+    _, _, seed_regions = _segment_image(segmentation_rgb, geometry_options)
+    if trace.geometry_regions:
+        # Background classification can reject a wholly transparent material
+        # (for example the canvas color inside a native-alpha cutout). It does
+        # not clip retained materials or set their subpixel contour positions.
+        foreground = np.logical_or.reduce([region.mask for region in trace.geometry_regions])
+        seed_regions = [region for region in seed_regions if np.any(region.mask & foreground)]
     min_material_area = min_region_fraction * max(
         (region.area for region in seed_regions),
         default=0,
     )
-    if trace.geometry_regions:
-        return _normalize_drawing_addresses(
-            _geometry_root_regions(
-                trace,
-                rgb,
-                geometry_options,
-                seed_regions=seed_regions,
-                min_material_area=min_material_area,
-                preserve_material_labels=preserve_material_labels,
-                on_decomposition_stage=on_decomposition_stage,
-            )
-        )
-    surfaces: list[Region] = []
+    # Geometry is derived from the material polylines themselves. The separate
+    # foreground trace is diagnostic only: it must neither replace a material's
+    # subpixel exterior nor clip it back to a binary foreground contour.
+    surfaces: list[tuple[Region, tuple[Region, ...]]] = []
     for component in decompose_components(seed_regions, (trace.height, trace.width)):
         labelled = list(component)
-        materials = labelled if preserve_material_labels else merge_material_regions(labelled, rgb)
-        surfaces.extend(surface for surface in materials if surface.area >= min_material_area)
+        groups = [(index,) for index in range(len(labelled))] if preserve_material_labels else material_groups(labelled, rgb)
+        for group in groups:
+            members = tuple(labelled[index] for index in group)
+            representative = max(members, key=lambda member: (member.area, -member.label))
+            mask = np.logical_or.reduce([member.mask for member in members])
+            surface = Region(representative.label, mask, representative.color_hex)
+            if surface.area >= min_material_area:
+                surfaces.append((surface, members))
     if on_decomposition_stage is not None:
-        on_decomposition_stage("material_union", tuple(surfaces), None)
+        on_decomposition_stage("material_union", tuple(surface for surface, _members in surfaces), None)
     filled_surfaces = tuple(
-        (surface, fit_fill(surface.mask, rgb, flat_hex=surface.color_hex))
-        for surface in surfaces
+        (surface, members, fit_fill(surface.mask, rgb, flat_hex=surface.color_hex, allow_gradients=allow_gradients))
+        for surface, members in surfaces
     )
     if on_decomposition_stage is not None:
         on_decomposition_stage(
             "apply_fills",
-            tuple(surface for surface, _fill in filled_surfaces),
-            tuple(fill for _surface, fill in filled_surfaces),
+            tuple(surface for surface, _members, _fill in filled_surfaces),
+            tuple(fill for _surface, _members, fill in filled_surfaces),
         )
 
-    assembled: list[tuple[Region, np.ndarray, Shape, Fill, tuple[str, ...], dict[str, object]]] = []
-    for surface, source_fill in filled_surfaces:
+    assembled: list[tuple[Region, np.ndarray, _SurfaceFit, Fill, tuple[str, ...], dict[str, object]]] = []
+    for surface, members, source_fill in filled_surfaces:
         cleaned_mask, filled_hole_area = fill_small_compatible_holes(
             surface.mask,
             rgb,
@@ -146,10 +254,14 @@ def root_regions(
             surface.color_hex,
             coverage=surface.coverage,
         )
-        fitted_surface = _surface_shape_with_corners(cleaned_surface, trace)
+        contours = _material_union_contours(
+            members,
+            added_pixels=cleaned_mask & ~surface.mask if filled_hole_area else None,
+        )
+        fitted_surface = _fit_contours_with_corners(contours, trace)
         if fitted_surface is None:
             continue
-        shape, corners = fitted_surface
+        corners = fitted_surface.corners
         source_regions = tuple(
             region.id for region in trace.regions if np.any(cleaned_mask & region.mask)
         )
@@ -158,6 +270,7 @@ def root_regions(
                 "surface_merge": {
                     "sources": source_regions,
                     "merged": len(source_regions) > 1,
+                      "geometry_source": "material_polyline_union",
                 },
                 "corners": corners,
             }
@@ -166,8 +279,8 @@ def root_regions(
                     "filled_area": filled_hole_area,
                     "max_hole_area": trace.options.max_hole_area,
                 }
-            fill = fit_fill(cleaned_mask, rgb, flat_hex=surface.color_hex) if filled_hole_area else source_fill
-            assembled.append((cleaned_surface, cleaned_mask, shape, fill, source_regions, diagnostics))
+            fill = fit_fill(cleaned_mask, rgb, flat_hex=surface.color_hex, allow_gradients=allow_gradients) if filled_hole_area else source_fill
+            assembled.append((cleaned_surface, cleaned_mask, fitted_surface, fill, source_regions, diagnostics))
     trace_order = {region.id: index for index, region in enumerate(trace.regions)}
     # Geometry seeds can gain or lose a one-pixel AA fringe.  Ordering by that
     # area would make otherwise stable drawing IDs swap between equivalent
@@ -181,10 +294,10 @@ def root_regions(
             item[0].color_hex,
         ),
     )
-    return _normalize_drawing_addresses(tuple(
+    return _bind_root_evidence(trace, _RootAssembly(tuple(
         VectorRegion.from_shape(
             id=index,
-            shape=shape,
+            shape=fitted.shape,
             fill=fill,
             z=index - 1,
             raster=mask,
@@ -194,8 +307,8 @@ def root_regions(
             source_regions=source_regions,
             diagnostics=diagnostics,
         )
-        for index, (surface, mask, shape, fill, source_regions, diagnostics) in enumerate(ordered, start=1)
-    ))
+        for index, (surface, mask, fitted, fill, source_regions, diagnostics) in enumerate(ordered, start=1)
+    ), {index: item[2].evidence for index, item in enumerate(ordered, start=1)}))
 
 
 def _complete_material_masks(
@@ -223,9 +336,10 @@ def _geometry_root_regions(
     *,
     seed_regions: list[Region],
     min_material_area: float,
+    allow_gradients: bool = True,
     preserve_material_labels: bool = False,
     on_decomposition_stage: DecompositionObserver | None = None,
-) -> DrawingRegions:
+) -> _RootAssembly:
     """Seed the editable region forest from trace-owned exterior geometry.
 
     Material segmentation only partitions each trace-owned seed using source
@@ -234,6 +348,7 @@ def _geometry_root_regions(
     fitting and refinement may improve the exterior path.
     """
     roots: list[VectorRegion] = []
+    evidence: dict[int, tuple[AutomaticFitEvidence, ...]] = {}
     assembled_materials: list[Region] = []
     unioned_materials: list[Region] = []
     applied_fills: list[tuple[Region, Fill]] = []
@@ -264,11 +379,12 @@ def _geometry_root_regions(
         ]
         unioned_materials.extend(materials)
         filled_materials = tuple(
-            (member, fit_fill(member.mask, rgb, flat_hex=member.color_hex))
+            (member, fit_fill(member.mask, rgb, flat_hex=member.color_hex, allow_gradients=allow_gradients))
             for member in materials
         )
         applied_fills.extend(filled_materials)
         children: list[VectorRegion] = []
+        child_evidence: dict[int, tuple[AutomaticFitEvidence, ...]] = {}
         for child_index, (member, source_fill) in enumerate(filled_materials, start=1):
             # Material masks define geometry.  Do not assign their unlabelled
             # AA fringe to a nearest neighbour before fitting: doing so moves
@@ -285,7 +401,8 @@ def _geometry_root_regions(
             fitted_surface = _surface_shape_with_corners(surface, trace)
             if fitted_surface is None:
                 continue
-            shape, corners = fitted_surface
+            shape, corners = fitted_surface.shape, fitted_surface.corners
+            child_evidence[index * 1000 + child_index] = fitted_surface.evidence
             source_regions = tuple(
                 region.id for region in trace.regions if np.any(mask & region.mask)
             )
@@ -295,7 +412,7 @@ def _geometry_root_regions(
                 VectorRegion.from_shape(
                     id=index * 1000 + child_index,
                     shape=shape,
-                fill=fit_fill(mask, rgb, flat_hex=member.color_hex) if filled_hole_area else source_fill,
+                fill=fit_fill(mask, rgb, flat_hex=member.color_hex, allow_gradients=allow_gradients) if filled_hole_area else source_fill,
                     z=child_index - 1,
                     # Alpha/background geometry only establishes this initial
                     # trace.  Subsequent optimizer passes receive a mask from
@@ -347,10 +464,12 @@ def _geometry_root_regions(
                     color_hex=child.color_hex,
                     drawing_id=f"r{index}",
                     source_regions=root_sources,
-                    diagnostics={**baseline_diagnostics, **child.diagnostics},
+                    diagnostics={**child.diagnostics, **baseline_diagnostics},
                 )
             )
+            evidence[index] = geometry.trace_path.path_evidence
             continue
+        evidence.update(child_evidence)
         roots.append(
                 VectorRegion.branch(
                 id=index,
@@ -372,39 +491,22 @@ def _geometry_root_regions(
             tuple(member for member, _fill in applied_fills),
             tuple(fill for _member, fill in applied_fills),
         )
-    return tuple(roots)
+    return _RootAssembly(tuple(roots), evidence)
 
 
-def _raw_root_regions(trace: TraceResult) -> DrawingRegions:
-    def fitted_raw_shape(region) -> Shape:
-        """Fit provenance polylines only for the explicit no-RGB fallback."""
-        paths = [
-            str(
-                fit_path(
-                    contour,
-                    epsilon=trace.options.simplify_tolerance,
-                    max_error=trace.options.curve_tolerance,
-                    cubic=False,
-                    progressive=trace.options.fit_strategy != "quadratic",
-                    progressive_allow_lines=trace.options.fit_strategy == "progressive_allow_lines",
-                    prefer_simple_curves=False,
-                ).params["d"]
-            )
-            for contour in region.contours
-            if len(contour) >= 3
-        ]
-        return Shape(
-            "path",
-            {
-                "d": " ".join(paths) if paths else region.trace_path.d,
-                "fill_rule": "evenodd" if len(paths) > 1 else "nonzero",
-            },
-        )
-
-    return tuple(
-        VectorRegion.from_shape(
+def _raw_root_regions(trace: TraceResult) -> _RootAssembly:
+    roots = []
+    evidence = {}
+    for index, region in enumerate(trace.regions):
+        fitted = _fit_contours_with_corners(region.contours, trace)
+        if fitted is None:
+            raise ValueError("raw root fitting requires retained source contours")
+        # Preserve the no-RGB entry's explicit fill-rule serialization.
+        fitted.shape.params["fill_rule"] = "evenodd" if len(fitted.evidence) > 1 else "nonzero"
+        evidence[index + 1] = fitted.evidence
+        roots.append(VectorRegion.from_shape(
             id=index + 1,
-            shape=fitted_raw_shape(region),
+            shape=fitted.shape,
             fill=FlatFill(region.color),
             z=index,
             raster=region.mask,
@@ -412,14 +514,15 @@ def _raw_root_regions(trace: TraceResult) -> DrawingRegions:
             color_hex=region.color,
             drawing_id=region.id,
             source_regions=(region.id,),
-            diagnostics={"corners": path_corner_diagnostics(region.trace_path.d)},
-        )
-        for index, region in enumerate(trace.regions)
-    )
+            diagnostics={"corners": fitted.corners},
+        ))
+    return _RootAssembly(tuple(roots), evidence)
 
 
 def _with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
     """Copy *region* with its public, version-scoped drawing address."""
+    if region.drawing_id == address:
+        return region
     if region.is_leaf:
         assert region.current is not None
         return VectorRegion(
@@ -449,6 +552,7 @@ def _with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
         drawing_id=address,
         source_regions=region.source_regions,
         diagnostics=region.diagnostics,
+        original=region.original,
     )
 
 
@@ -462,43 +566,71 @@ def _normalize_drawing_addresses(regions: Sequence[VectorRegion]) -> DrawingRegi
     only once a version is complete, so every plan still resolves against the
     exact version it names.
     """
-    def normalize_root(region: VectorRegion, root_address: str) -> VectorRegion:
-        leaf_index = 0
+    def visit(region: VectorRegion, address: str) -> VectorRegion:
+        if region.is_branch:
+            used = {child.drawing_id for child in region.children if child.drawing_id}
+            children = []
+            next_index = 1
+            for child in region.children:
+                candidate = child.drawing_id
+                if not isinstance(candidate, str) or not candidate.startswith(f"{address}-"):
+                    while f"{address}-{next_index}" in used:
+                        next_index += 1
+                    candidate = f"{address}-{next_index}"
+                    used.add(candidate)
+                children.append(visit(child, candidate))
+            if any(a is not b for a, b in zip(children, region.children, strict=True)):
+                region = region.with_children(children)
+        return _with_drawing_address(region, address)
 
-        def visit(current: VectorRegion, *, is_root: bool = False) -> VectorRegion:
-            nonlocal leaf_index
-            if current.is_leaf:
-                if is_root:
-                    return _with_drawing_address(current, root_address)
-                leaf_index += 1
-                return _with_drawing_address(current, f"{root_address}-{leaf_index}")
-            children = tuple(visit(child) for child in current.children)
-            # Recompute branch footprint from the final children.  In
-            # particular, this discards a trace-time alpha seed once later
-            # geometry has changed.  Nested branches have no public address:
-            # their leaves are numbered directly beneath the semantic root.
-            return VectorRegion.branch(
-                id=current.id,
-                children=children,
-                z=current.z,
-                fill=current.fill,
-                source_label=current.source_label,
-                color_hex=current.color_hex,
-                drawing_id=root_address if is_root else None,
-                source_regions=current.source_regions,
-                diagnostics=current.diagnostics,
-            )
+    return tuple(visit(region, _root_label(region)) for region in regions)
 
-        return visit(region, is_root=True)
 
-    return tuple(normalize_root(region, _root_label(region)) for region in regions)
+def _material_union_contours(
+    members: Sequence[Region], *, added_pixels: np.ndarray | None = None,
+) -> tuple[np.ndarray, ...]:
+    """Union coverage-aware material polylines before any curve fitting.
+
+    The material fields are sampled once. PathOps unions their polylines without
+    a raster round trip, retaining every exterior and hole. Existing compatible
+    hole cleanup may add interior pixels, but never replaces the source contour.
+    """
+    paths: list[SkPath] = []
+    contour_groups = [
+        tuple(region_contours(member.mask, coverage=member.coverage))
+        for member in members
+    ]
+    if added_pixels is not None and added_pixels.any():
+        contour_groups.append(tuple(region_contours(added_pixels)))
+    for material_contours in contour_groups:
+        if not material_contours:
+            continue
+        polyline = _polyline_trace_path(material_contours, region_id="material")
+        paths.append(SkPath.from_svg_d(polyline.d, fill_rule="evenodd"))
+    merged = unary_union(paths)
+    contours: list[np.ndarray] = []
+    for component in merged.geoms:
+        for ring in (component.exterior, *component.interiors):
+            points = np.asarray(ring.coords, dtype=float)
+            # PathOps may retain an explicit closing vertex as well as the
+            # closure marker. Remove exact duplicates, not geometric detail:
+            # every source LineCommand must have a nonzero-length edge.
+            if len(points):
+                points = points[np.r_[True, np.any(np.diff(points, axis=0) != 0.0, axis=1)]]
+            if len(points) >= 4:
+                contours.append(points)
+    return tuple(contours)
 
 
 def _surface_shape_with_corners(
     surface: Region,
     trace: TraceResult,
-) -> tuple[Shape, dict[str, object]] | None:
-    contours = [contour for contour in region_contours(surface.mask) if len(contour) >= 3]
+) -> _SurfaceFit | None:
+    return _fit_contours_with_corners(region_contours(surface.mask, coverage=surface.coverage), trace)
+
+
+def _fit_contours_with_corners(contours: Sequence[np.ndarray], trace: TraceResult) -> _SurfaceFit | None:
+    contours = [contour for contour in contours if len(contour) >= 3]
     if not contours:
         return None
     stages = [
@@ -509,6 +641,9 @@ def _surface_shape_with_corners(
             cubic=False,
             progressive=trace.options.fit_strategy != "quadratic",
             progressive_allow_lines=trace.options.fit_strategy == "progressive_allow_lines",
+            support_weighted_corners=trace.options.support_weighted_corners,
+            corner_rounding=trace.options.corner_rounding,
+            canvas_extent=float(max(trace.width, trace.height)),
             # Root fitting follows the trace curve family, but it must not
             # run a second command-reduction search over a mask that has just
             # been material-merged.  This establishes the merged boundary.
@@ -534,98 +669,33 @@ def _surface_shape_with_corners(
         else {"subpaths": diagnostics}
     )
     corners["path"] = str(params["d"])
-    return Shape("path", params), corners
+    return _SurfaceFit(Shape("path", params), corners, tuple(stage.baseline_evidence for stage in stages))
 
 
 def _surface_shape(surface: Region, trace: TraceResult) -> Shape | None:
     """Return only geometry where callers do not retain a drawing region."""
     fitted = _surface_shape_with_corners(surface, trace)
-    return fitted[0] if fitted is not None else None
+    return fitted.shape if fitted is not None else None
 
 
 def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> RenderedDrawing:
-    """Render cached regions without changing the drawing-version state."""
+    """Serialize retained geometry and paint; execution owns all reconstruction."""
+    def validate(region: VectorRegion) -> None:
+        symmetry = region.diagnostics.get("symmetry")
+        if isinstance(symmetry, Mapping) and (
+            (region.is_branch and symmetry.get("mode") == "self")
+            or symmetry.get("mode") == "self_mirror"
+        ):
+            raise ValueError("self-symmetry must be materialized before rendering")
+        for child in region.children:
+            validate(child)
+    for region in regions:
+        validate(region)
     targets = _targets(regions)
     ordered = sorted(targets.values(), key=lambda target: (target.region.z, target.region.id))
-    # A self-symmetry branch owns two coincident copies of its axis edge. SVG
-    # renderers can expose that shared edge as a hairline even after endpoint
-    # stitching.  Emit one Skia union for the whole branch while leaving
-    # ordinary clone leaves as SVG <use> elements.
-    combined: dict[str, tuple[Shape, Fill]] = {}
-    skipped: set[str] = set()
-    targets_by_object = {id(target.region): target for target in ordered}
-
-    def combine_self_symmetry(region: VectorRegion) -> None:
-        if region.is_leaf:
-            return
-        symmetry = region.diagnostics.get("symmetry")
-        if isinstance(symmetry, Mapping) and symmetry.get("mode") == "self":
-            leaves = tuple(region.leaves())
-            leaf_targets = [targets_by_object.get(id(leaf)) for leaf in leaves]
-            if (
-                leaves
-                and all(target is not None for target in leaf_targets)
-                and all(leaf.current is not None and leaf.fill == leaves[0].fill for leaf in leaves)
-            ):
-                footprint = unary_union([leaf.footprint for leaf in leaves])
-                if isinstance(footprint, SkPath) and not footprint.is_empty and leaves[0].fill is not None:
-                    anchor = leaf_targets[0]
-                    assert anchor is not None
-                    # A self-symmetry pair is one geometric surface.  Serialize
-                    # the Skia union, rather than its two reflected halves, so
-                    # the former mirror axis is not an interior SVG edge.  The
-                    # terminal atomic reducer can now also see L+L pairs that
-                    # used to straddle that axis.
-                    combined_d = atomic_flatten_path_d(
-                        footprint.to_svg_d(),
-                        epsilon=trace.options.simplify_tolerance,
-                    )
-                    combined[anchor.id] = (Shape("path", {"d": combined_d}), leaves[0].fill)
-                    skipped.update(target.id for target in leaf_targets[1:] if target is not None)
-                    return
-        for child in region.children:
-            combine_self_symmetry(child)
-
-    for root in regions:
-        combine_self_symmetry(root)
-
-    target_ids = {
-        target.region.id: target.id
-        for target in ordered
-        if target.id not in skipped
-    }
-    id_map = {
-        target.region.id: target_ids[target.region.id]
-        for target in ordered
-        if target.id not in skipped
-    }
-    # A material group shares a fill but intentionally retains its individual
-    # editable geometry.  Paint an unmodified union-mask overlay beneath those
-    # paths so fitted palette fragments cannot expose a hairline at their
-    # internal boundary.  This is a render projection only: plan targets and
-    # retained VectorRegions are still the original fitted members.
-    surface_members: dict[object, list[_Target]] = {}
-    for target in ordered:
-        surface_fill = target.region.diagnostics.get("surface_fill")
-        if isinstance(surface_fill, Mapping) and surface_fill.get("shared") is True:
-            surface_members.setdefault(surface_fill.get("group"), []).append(target)
-    surface_overlays: dict[str, tuple[Shape, Fill, str]] = {}
-    for group, members in surface_members.items():
-        if len(members) < 2 or any(member.id in skipped for member in members):
-            continue
-        if any(member.region.current is None or member.region.current.kind == "use" for member in members):
-            continue
-        fill = members[0].region.fill
-        if fill is None or any(member.region.fill != fill for member in members[1:]):
-            continue
-        mask = np.zeros((trace.height, trace.width), dtype=bool)
-        for member in members:
-            mask |= member.region.raster
-        overlay = _surface_shape(Region(0, mask, members[0].region.color_hex or "#000000"), trace)
-        if overlay is None:
-            continue
-        anchor = min(members, key=lambda member: (member.region.z, member.region.id))
-        surface_overlays[anchor.id] = (overlay, fill, f"surface-{group}")
+    reference_index = index_region_paths(regions)
+    targets_by_path = {target.region_path: target for target in ordered}
+    resolved_sources: dict[str, str] = {}
     defs: list[str] = []
     # A clone shares geometry, not paint.  An SVG ``<use fill=...>`` cannot
     # override a ``fill`` attribute on the referenced source element, so the
@@ -638,18 +708,19 @@ def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> Rende
         current = target.region.current
         if current is None or current.kind != "use":
             continue
+        source_path = resolve_source_path(reference_index, target.region_path, current.params)
+        if source_path not in targets_by_path:
+            raise ValueError("clone source is not a retained target")
+        source_target_id = targets_by_path[source_path].id
+        resolved_sources[target.id] = source_target_id
         clone_diagnostics = target.region.diagnostics.get("clones")
         is_clone = isinstance(clone_diagnostics, Mapping) or isinstance(target.region.diagnostics.get("clone"), Mapping)
         if not is_clone:
             continue
-        source_object_id = current.params.get("href_obj_id")
-        if not isinstance(source_object_id, int) or source_object_id not in target_ids:
-            continue
-        source_target_id = target_ids[source_object_id]
         source_target = targets_by_id[source_target_id]
         source_shape = source_target.region.current
         if source_shape is None or source_shape.kind == "use":
-            continue
+            raise ValueError("clone source must be retained concrete geometry")
         clone_sources[source_target_id] = source_target
         clone_definition_ids[source_target_id] = f"{source_target_id}-geometry"
 
@@ -662,33 +733,29 @@ def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> Rende
     report_targets: list[dict[str, object]] = []
     for target in ordered:
         assert target.region.current is not None
-        if target.id in surface_overlays:
-            overlay, overlay_fill, overlay_id = surface_overlays[target.id]
-            body.append(shape_to_svg(overlay, resolve_fill(overlay_fill, defs), overlay_id))
-        replacement = combined.get(target.id)
-        shape = replacement[0] if replacement is not None else resolve_use_shape(target.region.current, id_map)
-        fill = replacement[1] if replacement is not None else target.region.fill
+        current = target.region.current
+        id_map = {current.params["href_obj_id"]: resolved_sources[target.id]} if current.kind == "use" else {}
+        shape = resolve_use_shape(current, id_map)
+        fill = target.region.fill
         if fill is None:
             raise ValueError(f"drawing region {target.id!r} has no fill")
         resolved_fill = resolve_fill(fill, defs)
-        if replacement is None and target.id in clone_definition_ids:
+        if target.id in clone_definition_ids:
             shape = Shape(
                 "use",
                 {"href": clone_definition_ids[target.id], "transform": (1, 0, 0, 1, 0, 0)},
             )
-        elif replacement is None and shape.kind == "use":
+        elif shape.kind == "use":
             clone_diagnostics = target.region.diagnostics.get("clones")
             is_clone = isinstance(clone_diagnostics, Mapping) or isinstance(target.region.diagnostics.get("clone"), Mapping)
-            source_object_id = target.region.current.params.get("href_obj_id")
-            if is_clone and isinstance(source_object_id, int) and source_object_id in target_ids:
-                source_target_id = target_ids[source_object_id]
+            if is_clone:
+                source_target_id = resolved_sources[target.id]
                 definition_id = clone_definition_ids.get(source_target_id)
                 if definition_id is not None:
                     params = dict(shape.params)
                     params["href"] = definition_id
                     shape = Shape("use", params)
-        if target.id not in skipped:
-            body.append(shape_to_svg(shape, resolved_fill, target.id))
+        body.append(shape_to_svg(shape, resolved_fill, target.id))
         report_targets.append(
             {
                 "id": target.id,
@@ -702,7 +769,7 @@ def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> Rende
         )
     return RenderedDrawing(
         render_svg_doc(trace.width, trace.height, body, defs),
-        {"targets": tuple(report_targets)},
+        {"targets": tuple(report_targets), "groups": _drawing_groups(regions)},
     )
 
 
@@ -730,6 +797,7 @@ def drawing_summary(trace: TraceResult, regions: Sequence[VectorRegion]) -> dict
                 for command in svg_path_commands(
                     str(shape.params["d"]),
                     target.id,
+                    path_ids=shape.params.get("path_ids"),
                     corner_diagnostics=(
                         target.region.diagnostics.get("corners")
                         if isinstance(target.region.diagnostics.get("corners"), Mapping)
@@ -748,40 +816,45 @@ def drawing_summary(trace: TraceResult, regions: Sequence[VectorRegion]) -> dict
                 "fill": _public_fill(target.region.fill),
             }
         )
-    return {"width": trace.width, "height": trace.height, "options": asdict(trace.options), "regions": summaries}
+    return {"width": trace.width, "height": trace.height, "options": asdict(trace.options), "regions": summaries,
+            "groups": _drawing_groups(regions)}
 
 
 def labeled_drawing_svg(trace: TraceResult, regions: Sequence[VectorRegion]) -> str:
     """Render the public, plan-addressable region map for a drawing version."""
-    targets = _targets(regions)
-    ordered = sorted(targets.values(), key=lambda target: (target.region.z, target.region.id, target.id))
-    body: list[str] = []
-    for target in ordered:
-        label = target.id
-        footprint = target.region.footprint
-        if isinstance(footprint, SkPath) and not footprint.is_empty:
-            shape = Shape("path", {"d": footprint.to_svg_d()})
-            body.append(f'<g opacity="0.45">{shape_to_svg(shape, "#4C9AFF", f"map-{label}")}</g>')
-            min_x, min_y, max_x, max_y = footprint.bounds
-            body.append(
-                f'<text x="{_fmt((min_x + max_x) / 2)}" y="{_fmt((min_y + max_y) / 2)}" '
-                f'text-anchor="middle" dominant-baseline="middle">{label}</text>'
-            )
-    return render_svg_doc(trace.width, trace.height, body)
+    from .drawing_render import render_labeled_drawing
+
+    return render_labeled_drawing(drawing_from_vector_regions(
+        "region-map", width=trace.width, height=trace.height, regions=regions,
+    ))
 
 
 def stitch_regions(trace: TraceResult, regions: Sequence[VectorRegion]) -> DrawingRegions:
-    """Normalize shared root boundaries before retaining interactive ``v0``."""
-    return _normalize_drawing_addresses(
-        _run_detection(
+    """Normalize shared root boundaries before retaining interactive ``v0``.
+
+    Initial trace stitching may snap existing shared geometry, but it must not
+    construct an underlap beneath a neighbouring region. More invasive seam
+    reconstruction remains available to explicit and automatic refinement.
+    """
+    return stitch_regions_with_intent(trace, regions).regions
+
+
+def stitch_regions_with_intent(
+    trace: TraceResult, regions: Sequence[VectorRegion], *, enabled: bool = True
+) -> RecordedRefinement:
+    """Normalize initial seams and retain the accepted concrete constraints."""
+    if not enabled:
+        return RecordedRefinement(_normalize_drawing_addresses(tuple(regions)), (), ())
+    recorded = _run_detection_recorded(
             regions,
             trace,
             "stitch",
             None,
             epsilon=trace.options.simplify_tolerance,
             max_error=trace.options.curve_tolerance,
-        )
+            allow_underlap=False,
     )
+    return replace(recorded, regions=_normalize_drawing_addresses(recorded.regions))
 
 
 def auto_refine(
@@ -789,6 +862,8 @@ def auto_refine(
     regions: Sequence[VectorRegion],
     *,
     rgb: np.ndarray | None = None,
+    corner_normalize: bool = False,
+    refinement_passes: RefinementPasses | None = None,
     on_pass: Callable[[str, DrawingRegions], None] | None = None,
 ) -> DrawingRegions:
     """Run the one-shot optimizer over already-traced drawing roots.
@@ -798,6 +873,27 @@ def auto_refine(
     it owns stable region and command IDs, and every auto-refined version must
     remain a descendant of those roots.
     """
+    return auto_refine_with_intent(
+        trace,
+        regions,
+        rgb=rgb,
+        corner_normalize=corner_normalize,
+        refinement_passes=refinement_passes,
+        on_pass=on_pass,
+    ).regions
+
+
+def auto_refine_with_intent(
+    trace: TraceResult,
+    regions: Sequence[VectorRegion],
+    *,
+    rgb: np.ndarray | None = None,
+    allow_gradients: bool = True,
+    corner_normalize: bool = False,
+    refinement_passes: RefinementPasses | None = None,
+    on_pass: Callable[[str, DrawingRegions], None] | None = None,
+) -> RecordedRefinement:
+    """Run automatic refinement and retain its exact committed operations."""
     # Import locally: pipeline owns the pass ordering, while drawing_refine owns
     # the persistent VectorRegion forest used by MCP drawing versions.
     from .pipeline import _optimizer_passes
@@ -807,33 +903,51 @@ def auto_refine(
         max_error=trace.options.curve_tolerance,
         cubic_paths=False,
         aa_contours=trace.options.trace_level == "subpixel",
-        max_colors=trace.options.max_colors,
+        max_sampling_colors=trace.options.max_sampling_colors,
         min_region_size=trace.options.min_region_size,
         optimizer=True,
-        corner_normalize=trace.options.corner_normalize,
+        corner_normalize=corner_normalize,
+        refinement_passes=refinement_passes or RefinementPasses(),
     )
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
+    regions = normalize_retained_topology(materialize_self_symmetry(regions))
     before = {region.id: region for region in regions}
     masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
     def _capture(pass_name: str, current: list[VectorRegion]) -> None:
         if on_pass is not None:
             on_pass(
                 pass_name,
-                tuple(_restore_root_metadata(region, before.get(region.id)) for region in current),
+                normalize_retained_topology(_normalize_drawing_addresses(tuple(
+                    _restore_root_metadata(region, before.get(region.id)) for region in current
+                ))),
             )
 
-    optimized = optimize(list(regions), masks, _optimizer_passes(options), on_pass=_capture)
-    result = _normalize_drawing_addresses(
-        tuple(_restore_root_metadata(region, before.get(region.id)) for region in optimized)
+    optimized = optimize_with_intent(
+        list(regions), masks, _optimizer_passes(options), on_pass=_capture
     )
+    result = normalize_retained_topology(_normalize_drawing_addresses(
+        tuple(
+            _restore_root_metadata(region, before.get(region.id))
+            for region in optimized.objects
+        )
+    ))
     if rgb is None:
-        return result
+        return RecordedRefinement(result, optimized.batches, optimized.outcomes)
     # Automatic refinement is a geometry pipeline.  Re-fit every final leaf
     # from the source only after the full pass sequence has established its
     # footprint, rather than retaining palette-fragment fills merely because a
     # particular leaf's geometry key happened not to change.
-    return refill_all_regions_from_source(result, rgb)
+    result = refill_all_regions_from_source(
+        result,
+        rgb,
+        allow_gradients=allow_gradients,
+        # Gradient pretrace has already converted quantization bands into
+        # intentional material supports. Sibling leaves may therefore be
+        # different gradients that merely share one exterior geometry root.
+        share_root_gradients=trace.material_pretrace is None,
+    )
+    return RecordedRefinement(result, optimized.batches, optimized.outcomes)
 
 
 def refine(
@@ -842,11 +956,12 @@ def refine(
     plan: DrawingPlan,
     *,
     rgb: np.ndarray | None = None,
+    fit_sources: Mapping[str, np.ndarray] | None = None,
 ) -> DrawingRegions:
     """Execute *plan* as immutable transformations over native vector regions."""
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
-    regions = tuple(base)
+    regions = normalize_retained_topology(materialize_self_symmetry(base))
     validate_plan(
         plan,
         drawing_from_vector_regions(
@@ -862,7 +977,8 @@ def refine(
         before = regions
         op = action.model_dump(exclude_none=True)
         name = action.op
-        epsilon, max_error = _tolerances(trace, plan, op)
+        settings = _action_settings(trace, plan, op)
+        epsilon, max_error = settings.epsilon, settings.max_error
         if name == "merge":
             regions = _group_regions(regions, op)
         elif name == "split":
@@ -887,53 +1003,83 @@ def refine(
             regions = _clone(regions, op)
         elif name == "align":
             regions = _align(regions, op)
-        elif name == "update_geometry":
+        elif name == "fit_path":
             targets = _targets(regions)
             target = targets[op["target"]]
-            geometry_ops = op["ops"]
-            primitive = geometry_ops[0] if geometry_ops[0]["op"] == "fit_primitive" else None
-            geometry = {"type": "path", "ops": geometry_ops}
             try:
-                shape = (
-                    _primitive_shape(
-                        target,
-                        primitive["type"],
-                        epsilon=epsilon,
-                        max_error=max_error,
-                    )
-                    if primitive is not None
-                    else _path_shape(
-                        trace,
-                        target,
-                        geometry,
-                        references=_segment_references(targets),
-                        epsilon=epsilon,
-                        max_error=max_error,
-                    )
-                )
+                shape = _fit_target_path(target, settings=settings)
             except ValueError as error:
-                raise PlanValidationError(f"/ops/{index}/ops", str(error)) from error
-            geometry_kind = primitive["type"] if primitive is not None else "path"
+                raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
             regions = _replace_leaf(
                 regions,
                 target.id,
                 lambda region: region.with_current(
                     shape,
                     footprint=to_polygon(shape),
-                    diagnostics={"geometry": {"explicit": geometry_kind}},
+                    diagnostics={"geometry": {"explicit": "path"}},
                 ),
             )
-            path_ops = geometry_ops if primitive is None else ()
-            if any(path_op["op"] == "simplify" for path_op in path_ops):
-                regions = _run_detection(regions, trace, "simplify", target.id, epsilon=epsilon, max_error=max_error)
-            if any(path_op["op"] == "normalize_corners" for path_op in path_ops):
-                regions = _run_detection(
-                    regions,
-                    trace,
-                    "normalize_corners",
-                    target.id,
+        elif name == "fit_primitive":
+            targets = _targets(regions)
+            target = targets[op["target"]]
+            try:
+                shape = _primitive_shape(
+                    target,
+                    op["type"],
                     epsilon=epsilon,
                     max_error=max_error,
+                )
+            except ValueError as error:
+                raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
+            regions = _replace_leaf(
+                regions,
+                target.id,
+                lambda region: region.with_current(
+                    shape,
+                    footprint=to_polygon(shape),
+                    diagnostics={"geometry": {"explicit": op["type"]}},
+                ),
+            )
+        elif name == "update_geometry":
+            geometry_ops = op["ops"]
+            target_id = op["target"]
+            for stage_name, stage_ops in ordered_path_operation_stages(geometry_ops):
+                if stage_name != "direct":
+                    regions = _run_detection(
+                        regions,
+                        trace,
+                        stage_name,
+                        target_id,
+                        epsilon=epsilon,
+                        max_error=max_error,
+                    )
+                    continue
+                targets = _targets(regions)
+                target = targets[target_id]
+                geometry = {"type": "path", "ops": stage_ops}
+                try:
+                    shape = _path_shape(
+                        trace,
+                        target,
+                        geometry,
+                        references=_segment_references(targets),
+                        epsilon=epsilon,
+                        max_error=max_error,
+                        fit_sources=fit_sources,
+                    )
+                except ValueError as error:
+                    raise PlanValidationError(f"/ops/{index}/ops", str(error)) from error
+                regions = _replace_leaf(
+                    regions,
+                    target.id,
+                    lambda region: region.with_current(
+                        shape,
+                        footprint=to_polygon(shape),
+                        diagnostics={
+                            "geometry": {"explicit": "path"},
+                            "fit_acceptance": shape.params.get("fit_acceptance", {}),
+                        },
+                    ),
                 )
         elif name == "set_fill":
             target_id = op["target"]
@@ -948,12 +1094,25 @@ def refine(
         # intentionally excluded because it is already the caller's final
         # fill decision for that operation.
         if rgb is not None and name not in {"set_fill", "set_z_order"}:
-            regions = refill_regions(_invalidate_changed_fills(before, regions), rgb)
+            regions = refill_changed_regions_from_source(before, regions, rgb)
+        regions = normalize_retained_topology(regions)
 
     if z_order is not None:
-        for z, target_id in enumerate(z_order):
+        targets = _targets(regions)
+        expanded = _expand_merge_regions(z_order, set(targets), "/ops")
+        if set(expanded) != set(targets):
+            raise PlanValidationError("/ops", "z order must include every retained leaf exactly once")
+        # Expand each declared group in its existing retained paint order.
+        expanded_order = tuple(
+            member for selected in z_order
+            for member in sorted(
+                (key for key in expanded if key == selected or key.startswith(f"{selected}-")),
+                key=lambda key: (targets[key].region.z, tuple(targets).index(key)),
+            )
+        )
+        for z, target_id in enumerate(expanded_order):
             regions = _replace_leaf(regions, target_id, lambda region, z=z: _with_z(region, z))
-    return _normalize_drawing_addresses(regions)
+    return normalize_retained_topology(_normalize_drawing_addresses(regions))
 
 
 def _run_detection(
@@ -964,10 +1123,32 @@ def _run_detection(
     *,
     epsilon: float,
     max_error: float,
+    allow_underlap: bool = True,
 ) -> DrawingRegions:
     """Run one existing optimizer pass over the cached region forest."""
-    if operation in {"simplify", "stitch"}:
-        regions = _bake_self_symmetry_uses_for_polish(regions)
+    return run_detection_with_intent(
+        regions,
+        trace,
+        operation,
+        target_id,
+        epsilon=epsilon,
+        max_error=max_error,
+        allow_underlap=allow_underlap,
+    ).regions
+
+
+def run_detection_with_intent(
+    regions: Sequence[VectorRegion],
+    trace: TraceResult,
+    operation: str,
+    target_id: object | None,
+    *,
+    epsilon: float,
+    max_error: float,
+    allow_underlap: bool = True,
+) -> RecordedRefinement:
+    """Run one producer and return only its typed accepted intent for replay."""
+    regions = normalize_retained_topology(materialize_self_symmetry(regions))
     cubic = False
     if operation == "detect_primitives":
         def pass_fn(objects, masks):
@@ -992,7 +1173,14 @@ def _run_detection(
             )
     elif operation == "stitch":
         def pass_fn(objects, masks):
-            return seams_pass(objects, masks, epsilon=epsilon, max_error=max_error, cubic=cubic)
+            return seams_pass(
+                objects,
+                masks,
+                epsilon=epsilon,
+                max_error=max_error,
+                cubic=cubic,
+                allow_underlap=allow_underlap,
+            )
     elif operation == "normalize_corners":
         def pass_fn(objects, masks):
             return corner_normalize_pass(objects, masks, max_error=max_error, enabled=True)
@@ -1026,9 +1214,22 @@ def _run_detection(
 
     before = {region.id: region for region in regions}
     masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
-    optimized = optimize(list(regions), masks, [pass_fn])
-    restored = tuple(_restore_root_metadata(region, before.get(region.id)) for region in optimized)
-    return _rebind_corner_provenance(regions, restored, tolerance=max(1.0, epsilon * 2.0))
+    optimized = optimize_with_intent(list(regions), masks, [pass_fn])
+    restored = tuple(
+        _restore_root_metadata(region, before.get(region.id))
+        for region in optimized.objects
+    )
+    result = normalize_retained_topology(
+        _rebind_corner_provenance(
+            regions, restored, tolerance=max(1.0, epsilon * 2.0)
+        )
+    )
+    return RecordedRefinement(result, optimized.batches, optimized.outcomes)
+
+
+# Transitional private alias for internal callers retained until Task 17C removes
+# the VectorRegion adapter boundary.
+_run_detection_recorded = run_detection_with_intent
 
 
 def _rebind_corner_provenance(
@@ -1073,40 +1274,6 @@ def _rebind_corner_provenance(
     return tuple(visit(region) for region in after)
 
 
-def _bake_self_symmetry_uses_for_polish(regions: Sequence[VectorRegion]) -> DrawingRegions:
-    """Bake only self-symmetry mirrors before geometry polishing.
-
-    Clones stay as SVG ``<use>`` relations.  A self-symmetry mirror, however,
-    shares a seam with its source half; seam/simplify passes must see both
-    concrete paths to avoid preserving or exposing a renderer hairline.
-    """
-    def bake_root(root: VectorRegion) -> VectorRegion:
-        leaves = {leaf.id: leaf for leaf in root.leaves()}
-
-        def visit(region: VectorRegion) -> VectorRegion:
-            if region.is_branch:
-                children = tuple(visit(child) for child in region.children)
-                return region.with_children(children) if children != region.children else region
-            assert region.current is not None
-            symmetry = region.diagnostics.get("symmetry")
-            if (
-                region.current.kind != "use"
-                or not isinstance(symmetry, Mapping)
-                or symmetry.get("mode") != "self_mirror"
-            ):
-                return region
-            source_id = region.current.params.get("href_obj_id")
-            source = leaves.get(int(source_id)) if isinstance(source_id, int) else None
-            if source is None or source.current is None:
-                raise ValueError("self-symmetry mirror is missing its source geometry")
-            shape = bake_shape_transform(source.current, tuple(region.current.params["transform"]))
-            baked_diagnostics = dict(symmetry)
-            baked_diagnostics["baked_for_polish"] = True
-            return region.with_current(shape, footprint=region.footprint, diagnostics={"symmetry": baked_diagnostics})
-
-        return visit(root)
-
-    return tuple(bake_root(root) for root in regions)
 
 
 def _restore_root_metadata(region: VectorRegion, original: VectorRegion | None) -> VectorRegion:
@@ -1142,13 +1309,16 @@ def _restore_root_metadata(region: VectorRegion, original: VectorRegion | None) 
         drawing_id=original.drawing_id,
         source_regions=original.source_regions,
         diagnostics=region.diagnostics,
+        original=region.original,
     )
 
 
 def _clone(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
     targets = _targets(regions)
-    source = targets[op["source"]].region
-    target = targets[op["target"]].region
+    source_info = targets[op["source"]]
+    source = source_info.region
+    target_info = targets[op["target"]]
+    target = target_info.region
     assert source.current is not None and source.fill is not None and target.current is not None and target.fill is not None
     transforms = tuple(_affine_tuple(transform) for transform in op["transforms"])
     footprints = tuple(
@@ -1156,7 +1326,8 @@ def _clone(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> Drawing
         for transform in transforms
     )
     if len(transforms) == 1:
-        shape = Shape("use", {"href_obj_id": source.id, "transform": transforms[0]})
+        shape = Shape("use", {"href_obj_id": source.id, "transform": transforms[0],
+                              "href_region_path": relative_source_path(target_info.region_path, source_info.region_path)})
         footprint = footprints[0]
     else:
         if not all(isinstance(footprint, SkPath) for footprint in footprints):
@@ -1193,7 +1364,8 @@ def _transform_footprint(
 def _set_symmetry(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
     """Reconstruct one target from the best-fitting half around an explicit axis."""
     targets = _targets(regions)
-    target = targets[op["target"]].region
+    target_info = targets[op["target"]]
+    target = target_info.region
     assert target.current is not None and target.fill is not None
     if not isinstance(target.footprint, SkPath):
         raise ValueError("set_symmetry requires a polygonal footprint")
@@ -1221,17 +1393,12 @@ def _set_symmetry(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> 
     if not candidates:
         raise ValueError("symmetry reconstruction produced no valid geometry")
     residual, footprint = min(candidates, key=lambda item: item[0])
-    shape = Shape("path", {"d": footprint.to_svg_d()})
-    return _replace_leaf(
-        regions,
-        op["target"],
-        lambda region: region.with_current(
-            shape,
-            fill=target.fill,
-            footprint=footprint,
-            diagnostics={"symmetry": {"mode": "explicit_self", "axis": dict(axis), "residual": residual}},
-        ),
+    joined = union_self_symmetry(
+        target, (footprint,),
+        diagnostics={"mode": "explicit_self", "axis": dict(axis), "residual": residual},
     )
+    replaced = _replace_leaf(regions, op["target"], lambda region: joined)
+    return remap_symmetry_clones(replaced, {target_info.region_path: target_info.region_path}, before=regions)
 
 
 def _reflection_matrix(theta: float, cx: float, cy: float) -> tuple[float, float, float, float, float, float]:
@@ -1242,11 +1409,26 @@ def _reflection_matrix(theta: float, cx: float, cy: float) -> tuple[float, float
     return tuple(0.0 if abs(value) < 1e-12 else float(value) for value in (a, b, c, d, e, f))
 
 
+def _drawing_groups(regions: Sequence[VectorRegion]) -> tuple[dict[str, object], ...]:
+    """Derive unpainted containers independently of the painted target list."""
+    groups = []
+    def visit(region, address):
+        if region.is_leaf:
+            return
+        children = tuple(child.drawing_id or f"{address}-{child.id}" for child in region.children)
+        groups.append({"id": address, "child_ids": children, "diagnostics": _public_diagnostics(region.diagnostics)})
+        for child, child_id in zip(region.children, children, strict=True):
+            visit(child, child_id)
+    for region in regions:
+        visit(region, _root_label(region))
+    return tuple(groups)
+
+
 def _targets(regions: Sequence[VectorRegion]) -> dict[str, _Target]:
     """Derive public target handles from the region tree; do not persist an index."""
     result: dict[str, _Target] = {}
 
-    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> None:
+    def visit(region: VectorRegion, root_label: str, legacy_label: str, path: tuple[int, ...]) -> None:
         if region.is_leaf:
             label = _leaf_address(root_label, region, legacy_label)
             if label in result:
@@ -1255,16 +1437,16 @@ def _targets(regions: Sequence[VectorRegion]) -> dict[str, _Target]:
             # container.  A root can be a semantic union while its children
             # remain independently traced, cloned, or split regions.
             sources = frozenset(region.source_regions or (root_label,))
-            result[label] = _Target(label, root_label, region, sources)
+            result[label] = _Target(label, root_label, region, sources, path)
             return
         for child in region.children:
-            visit(child, root_label, f"{legacy_label}-{child.id}")
+            visit(child, root_label, f"{legacy_label}-{child.id}", (*path, child.id))
 
     for region in regions:
         drawing_id = region.drawing_id
         if type(drawing_id) is not str:
             raise ValueError("drawing root is missing a stable drawing_id")
-        visit(region, drawing_id, drawing_id)
+        visit(region, drawing_id, drawing_id, (region.id,))
     return result
 
 
@@ -1618,6 +1800,16 @@ def _invalidate_changed_fills(
     return tuple(visit(region) for region in current)
 
 
+def refill_changed_regions_from_source(
+    before: Sequence[VectorRegion],
+    current: Sequence[VectorRegion],
+    rgb: np.ndarray,
+    *, allow_gradients: bool = True,
+) -> DrawingRegions:
+    """Apply the shared fill resolver only to geometry changed since *before*."""
+    return refill_regions(_invalidate_changed_fills(before, current), rgb, allow_gradients=allow_gradients)
+
+
 def _sampled_flat_hex(mask: np.ndarray, rgb: np.ndarray) -> str:
     """Use the source's median color when gradient fitting selects a flat fill."""
     pixels = rgb[mask]
@@ -1692,7 +1884,58 @@ def _fill_sample_mask(
     return visible_mask, "visible_footprint"
 
 
-def refill_regions(regions: Sequence[VectorRegion], rgb: np.ndarray) -> DrawingRegions:
+def apply_output_fill_settings(
+    regions: Sequence[VectorRegion], rgb: np.ndarray, settings: DrawingOutputSettings,
+) -> DrawingRegions:
+    """Constrain final paint without touching geometry or source evidence."""
+    if settings.allow_gradients and settings.max_output_colors is None:
+        return tuple(regions)
+    palette = (
+        extract_palette(rgb, max_sampling_colors=settings.max_output_colors, min_fraction=0.0)
+        if settings.max_output_colors is not None else None
+    )
+
+    def flat_source_color(region: VectorRegion) -> str:
+        # Select the representative paint from the finalized shape itself.
+        # Its old segmentation raster may contain only a boundary fringe after
+        # compound splitting; that fringe must not choose the flat output color.
+        footprint = region.footprint if isinstance(region.footprint, SkPath) else to_polygon(region.current)
+        sample = rasterize(footprint, rgb.shape[:2])
+        core = ndimage.binary_erosion(sample, iterations=2)
+        return _sampled_flat_hex(core if core.any() else sample, rgb)
+
+    def color(value: str) -> str:
+        if palette is None:
+            return value
+        sample = np.asarray([[[int(value[i:i + 2], 16) for i in (1, 3, 5)]]], dtype=np.uint8)
+        red, green, blue = quantize(sample, palette)[0, 0]
+        return f"#{red:02X}{green:02X}{blue:02X}"
+
+    def visit(region: VectorRegion) -> VectorRegion:
+        if not region.is_leaf:
+            return region.with_children(tuple(visit(child) for child in region.children))
+        assert region.current is not None
+        fill = region.fill
+        if not settings.allow_gradients and not isinstance(fill, FlatFill):
+            fill = FlatFill(flat_source_color(region))
+        if isinstance(fill, FlatFill):
+            fill = FlatFill(color(fill.hex))
+        elif isinstance(fill, (LinearGradientFill, RadialGradientFill)):
+            stops = [(offset, color(value)) for offset, value in fill.stops]
+            if len({value for _offset, value in stops}) == 1:
+                fill = FlatFill(stops[0][1])
+            else:
+                fill = replace(fill, stops=stops)
+        elif isinstance(fill, RasterFill) and palette is not None:
+            # A raster paint cannot honor a finite vector palette. Resolve it
+            # to the same source-derived representative used for flat output.
+            fill = FlatFill(color(flat_source_color(region)))
+        return region.with_current(region.current, fill=fill, footprint=region.footprint)
+
+    return tuple(visit(region) for region in regions)
+
+
+def refill_regions(regions: Sequence[VectorRegion], rgb: np.ndarray, *, allow_gradients: bool = True) -> DrawingRegions:
     """Run the shared fill stage for leaves invalidated by a geometry mutation.
 
     Callers deliberately leave an invalidated leaf with ``fill=None``.  This
@@ -1711,7 +1954,7 @@ def refill_regions(regions: Sequence[VectorRegion], rgb: np.ndarray) -> DrawingR
             if not isinstance(footprint, SkPath):
                 footprint = to_polygon(region.current)
             sample_mask, sample_domain = _fill_sample_mask(region, visible_masks[region.id])
-            fill = fit_fill(sample_mask, rgb, flat_hex=_sampled_flat_hex(sample_mask, rgb))
+            fill = fit_fill(sample_mask, rgb, flat_hex=_sampled_flat_hex(sample_mask, rgb), allow_gradients=allow_gradients)
             return region.with_current(
                 region.current,
                 fill=fill,
@@ -1728,7 +1971,13 @@ def refill_regions(regions: Sequence[VectorRegion], rgb: np.ndarray) -> DrawingR
     return tuple(visit(region) for region in regions)
 
 
-def refill_all_regions_from_source(regions: Sequence[VectorRegion], rgb: np.ndarray) -> DrawingRegions:
+def refill_all_regions_from_source(
+    regions: Sequence[VectorRegion],
+    rgb: np.ndarray,
+    *,
+    share_root_gradients: bool = True,
+    allow_gradients: bool = True,
+) -> DrawingRegions:
     """Discard every existing fill and re-fit finalized geometry from *rgb*.
 
     Geometry-guide retracing deliberately uses a palette-labelled image to
@@ -1770,8 +2019,10 @@ def refill_all_regions_from_source(regions: Sequence[VectorRegion], rgb: np.ndar
     # the finalized union and assign that paint to both implementation leaves.
     # This is deliberately distinct from ``root_self``: the latter retains
     # genuine material children and must continue to fit them independently.
-    shared = _refill_self_symmetry_surfaces(cleared, rgb)
-    refilled = refill_regions(shared, rgb)
+    shared = _refill_self_symmetry_surfaces(cleared, rgb, allow_gradients=allow_gradients)
+    refilled = refill_regions(shared, rgb, allow_gradients=allow_gradients)
+    if not share_root_gradients or not allow_gradients:
+        return refilled
     visible_masks = _visible_leaf_masks(refilled, rgb.shape[:2])
     return _refit_shared_root_gradients(refilled, rgb, gradient_roots, visible_masks)
 
@@ -1779,6 +2030,7 @@ def refill_all_regions_from_source(regions: Sequence[VectorRegion], rgb: np.ndar
 def _refill_self_symmetry_surfaces(
     regions: Sequence[VectorRegion],
     rgb: np.ndarray,
+    *, allow_gradients: bool = True,
 ) -> DrawingRegions:
     """Restore one source-derived fill to leaves created only for reflection."""
     visible_masks = _visible_leaf_masks(regions, rgb.shape[:2])
@@ -1824,7 +2076,7 @@ def _refill_self_symmetry_surfaces(
         for leaf in leaves:
             visible |= visible_masks.get(leaf.id, np.zeros_like(visible))
         sample_mask, sample_domain = _fill_sample_mask(updated, visible)
-        fill = fit_fill(sample_mask, rgb, flat_hex=_sampled_flat_hex(sample_mask, rgb))
+        fill = fit_fill(sample_mask, rgb, flat_hex=_sampled_flat_hex(sample_mask, rgb), allow_gradients=allow_gradients)
         return with_fill(updated, fill, sample_mask, sample_domain)
 
     return tuple(visit(region) for region in regions)
@@ -1991,6 +2243,31 @@ def _primitive_shape(target: _Target, kind: str, *, epsilon: float, max_error: f
     raise ValueError(f"target {target.id!r} is not a polygon within epsilon={epsilon}")
 
 
+def _fit_target_path(target: _Target, *, settings: ActionSettings) -> Shape:
+    """Fit every retained contour of one region with the resolved action settings."""
+    contours = [contour for contour in region_contours(target.region.raster) if len(contour) >= 3]
+    if not contours:
+        raise ValueError(f"cannot fit an empty drawing region {target.id!r}")
+    paths = [
+        str(
+            fit_path(
+                contour,
+                epsilon=settings.epsilon,
+                max_error=settings.max_error,
+                cubic=False,
+                progressive=settings.fit_strategy != "quadratic",
+                progressive_allow_lines=settings.fit_strategy == "progressive_allow_lines",
+                prefer_simple_curves=False,
+            ).params["d"]
+        )
+        for contour in contours
+    ]
+    params: dict[str, object] = {"d": " ".join(paths)}
+    if len(paths) > 1:
+        params["fill_rule"] = "evenodd"
+    return Shape("path", params)
+
+
 def _path_shape(
     trace: TraceResult,
     target: _Target,
@@ -1999,9 +2276,10 @@ def _path_shape(
     references: Mapping[str, tuple[object, np.ndarray]],
     epsilon: float,
     max_error: float,
+    fit_sources: Mapping[str, np.ndarray] | None = None,
 ) -> Shape:
     assert target.region.current is not None and target.region.current.kind == "path"
-    source_commands = svg_path_commands(str(target.region.current.params["d"]), target.id)
+    source_commands = svg_path_commands(str(target.region.current.params["d"]), target.id, path_ids=target.region.current.params.get("path_ids"))
     return _path_shape_from_segment_fits(
         target,
         source_commands,
@@ -2009,6 +2287,7 @@ def _path_shape(
         references=references,
         epsilon=epsilon,
         max_error=max_error,
+        fit_sources=fit_sources,
     )
 
 
@@ -2020,8 +2299,17 @@ def _path_shape_from_segment_fits(
     references: Mapping[str, tuple[object, np.ndarray]],
     epsilon: float,
     max_error: float,
+    fit_sources: Mapping[str, np.ndarray] | None = None,
 ) -> Shape:
     """Apply command-addressed refits without dropping untouched path geometry."""
+    fit_metrics: dict[str, object] = {}
+    def source_for(command_id: str) -> np.ndarray | None:
+        if fit_sources is None:
+            return None
+        if command_id not in fit_sources:
+            raise ValueError(f"fit {command_id} has no exact original material-polyline span")
+        return fit_sources[command_id]
+
     fits = {
         op["target"]: _fit_mode(op)
         for op in geometry["ops"]
@@ -2079,14 +2367,15 @@ def _path_shape_from_segment_fits(
         left_index, right_index = command_index[left_id], command_index[right_id]
         interior = tuple(
             command.id
-            for command in commands[left_index + 1:right_index]
+            for command in commands[left_index + 1:right_index + 1]
             if command.command not in {"M", "Z"}
         )
         # ``drawing_plan.validate_plan`` has already proved that this is a
         # non-empty, target-local, ordered span in one subpath.
         assert interior and right_id in raw_starts
         kind, recursive = _fit_mode(op)
-        span_fits[interior[0]] = (interior, raw_starts[right_id], kind, recursive)
+        end = tuple(float(value) for value in values_by_command[right_id][-2:])
+        span_fits[interior[0]] = (interior, end, kind, recursive)
         skipped_by_span.update(interior[1:])
     parallel_lines: set[str] = set()
     for index, command in enumerate(commands):
@@ -2117,12 +2406,25 @@ def _path_shape_from_segment_fits(
         values_by_command[command.id] = (float(fitted_end[0]), float(fitted_end[1]))
         parallel_lines.add(command.id)
     pieces: list[str] = []
+    command_lineage: dict[str, str] = {}
+    output_index = -1
+    output_path_id = ""
+
+    def append_piece(piece: str, source_id: str) -> None:
+        nonlocal output_index, output_path_id
+        if piece.startswith("M"):
+            output_path_id = source_id.rsplit(".c", 1)[0]
+            output_index = -1
+        pieces.append(piece)
+        output_index += sum(char in "MLQCA" for char in piece)
+        command_lineage[source_id] = f"{output_path_id}.c{output_index}"
+
     current: tuple[float, float] | None = None
     subpath_start: tuple[float, float] | None = None
     for index, command in enumerate(commands):
         if command.command == "M":
             values = values_by_command[command.id]
-            pieces.append(f"M{_fmt(values[0])} {_fmt(values[1])}")
+            append_piece(f"M{_fmt(values[0])} {_fmt(values[1])}", command.id)
             current = (float(values[0]), float(values[1]))
             subpath_start = current
             continue
@@ -2137,17 +2439,27 @@ def _path_shape_from_segment_fits(
         start = current
         if (span := span_fits.get(command.id)) is not None:
             interior, end, kind, recursive = span
-            samples = [start]
-            for interior_id in interior:
-                values = values_by_command[interior_id]
-                samples.extend((float(values[offset]), float(values[offset + 1])) for offset in range(0, len(values), 2))
+            samples = _sample_subpath(
+                [("M", list(start)), *[
+                    (commands[command_index[interior_id]].command,
+                     list(values_by_command[interior_id]))
+                    for interior_id in interior
+                ]],
+                samples=32,
+            )
             if not np.allclose(samples[-1], end):
                 samples.append(end)
             sample_points = np.asarray(samples, dtype=float)
+            source_points = source_for(interior[-1])
             if recursive:
-                pieces.append(_recursive_fit_d(sample_points, kind, max_error=max_error, epsilon=epsilon))
+                fitted = _recursive_fit_d(sample_points, kind, max_error=max_error, epsilon=epsilon)
+                fitted = _validate_fit_source(start, fitted, source_points, max_error, f"{interior[0]}..{interior[-1]}", diagnostics=fit_metrics)
             else:
-                pieces.append(_single_fit_d(sample_points, kind, max_error=max_error))
+                fitted = _single_fit_d(
+                    sample_points, kind, max_error=max_error,
+                    address=f"{interior[0]}..{interior[-1]}", source_points=source_points, diagnostics=fit_metrics,
+                )
+            append_piece(fitted, interior[-1])
             current = end
             continue
         kind, recursive = fits.get(command.id, ("keep", False))
@@ -2192,20 +2504,83 @@ def _path_shape_from_segment_fits(
             snapped = list(values)
             snapped[-2:] = reference_command.values[-2:]
             values = tuple(snapped)
-        if kind == "keep":
-            pieces.append(output_command + " ".join(_fmt(value) for value in values))
+        # A retained command already in the requested family is an exact,
+        # zero-residual one-command fit; numerical refitting can only lose it.
+        exact_family = {"line": "L", "quadratic": "Q", "cubic": "C"}
+        if kind == "keep" or (not recursive and output_command == exact_family.get(kind)):
+            fitted = output_command + " ".join(_fmt(value) for value in values)
+            if kind != "keep":
+                fitted = _validate_fit_source(start, fitted, source_for(command.id), max_error, command.id, diagnostics=fit_metrics)
+            append_piece(fitted, command.id)
         else:
-            points = np.asarray([start, *[values[offset:offset + 2] for offset in range(0, len(values), 2)]], dtype=float)
-            pieces.append(
-                _recursive_fit_d(points, kind, max_error=max_error, epsilon=epsilon)
-                if recursive
-                else _single_fit_d(points, kind, max_error=max_error)
-            )
+            points = np.asarray(_sample_subpath(
+                [("M", list(start)), (output_command, list(values))],
+                samples=32,
+            ), dtype=float)
+            source_points = source_for(command.id)
+            if recursive:
+                fitted = _recursive_fit_d(points, kind, max_error=max_error, epsilon=epsilon)
+                fitted = _validate_fit_source(start, fitted, source_points, max_error, command.id, diagnostics=fit_metrics)
+            else:
+                fitted = _single_fit_d(points, kind, max_error=max_error, address=command.id, source_points=source_points, diagnostics=fit_metrics)
+            append_piece(fitted, command.id)
         current = (float(values[-2]), float(values[-1]))
     params: dict[str, object] = {"d": " ".join(pieces)}
+    if fit_metrics:
+        params["fit_acceptance"] = fit_metrics
     assert target.region.current is not None
     if (fill_rule := target.region.current.params.get("fill_rule")) is not None:
         params["fill_rule"] = fill_rule
+    if "path_ids" in target.region.current.params:
+        params["path_ids"] = target.region.current.params["path_ids"]
+    immediate = dict(command_lineage)
+    previous_lineage = target.region.current.params.get("path_command_lineage")
+    input_d = str(target.region.current.params["d"])
+    if isinstance(previous_lineage, Mapping):
+        input_d = str(previous_lineage["input_d"])
+        command_lineage = {
+            old: command_lineage[intermediate]
+            for old, intermediate in previous_lineage["commands"].items()
+            if intermediate in command_lineage
+        }
+    params["path_command_lineage"] = {
+        "input_d": input_d,
+        "output_d": params["d"],
+        "commands": command_lineage,
+    }
+    annotated = drawing_from_vector_regions(
+        "path-refit", width=1.0, height=1.0, regions=(target.region,)
+    ).regions[0].geometry
+    if isinstance(annotated, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+        originals = component_paths(annotated)
+        parsed = parse_svg_paths(str(params["d"]), region_id=target.id, path_ids=tuple(path.path.id for path in originals))
+        # Only endpoint/owned-command bindings proven by the executor survive.
+        # A refit that explicitly consumes a corner retires that declaration.
+        rebound_paths = []
+        for path, original in zip(parsed, originals, strict=True):
+            ids = tuple(command.id for command in path.path.commands)
+            rebound_anchors = []
+            for anchor in original.anchors:
+                if isinstance(anchor, CornerAnchor):
+                    if not all(item in immediate for item in (anchor.entry_command_id, anchor.exit_command_id)):
+                        continue
+                    entry = immediate[anchor.entry_command_id]
+                    exit = immediate[anchor.exit_command_id]
+                    owned = []
+                    index = ids.index(entry)
+                    while index != ids.index(exit):
+                        index = (index + 1) % len(ids)
+                        if index != 0:
+                            owned.append(ids[index])
+                    rebound_anchors.append(replace(anchor,
+                        entry_command_id=entry, exit_command_id=exit,
+                        owned_command_ids=tuple(owned)))
+                elif all(item in immediate for item in anchor.command_ids):
+                    rebound_anchors.append(replace(anchor,
+                        command_ids=tuple(immediate[item] for item in anchor.command_ids)))
+            rebound_paths.append(replace(path, anchors=tuple(rebound_anchors)))
+        rebound = tuple(rebound_paths)
+        params["canonical_path_geometry"] = replace_component_paths(annotated, rebound)
     return Shape("path", params)
 
 
@@ -2216,28 +2591,118 @@ def _fit_mode(op: Mapping[str, object]) -> tuple[str, bool]:
     return str(op["strategy"]), True
 
 
-def _single_fit_d(points: np.ndarray, kind: str, *, max_error: float) -> str:
+def _single_fit_d(
+    points: np.ndarray, kind: str, *, max_error: float, address: str = "",
+    source_points: np.ndarray | None = None,
+    diagnostics: dict[str, object] | None = None,
+) -> str:
     """Emit exactly one command or reject a forced fit that exceeds tolerance."""
     start, end = points[0], points[-1]
+
+    def reject(residual: float, split: int) -> None:
+        worst = points[split]
+        raise ValueError(
+            f"single {kind} fit exceeds max_error; "
+            f"target={address or 'unspecified'}; "
+            f"measured_error_px={float(np.sqrt(residual)):.6g}; "
+            f"max_error_px={max_error:.6g}; "
+            f"worst_sample={split}/{len(points) - 1}; "
+            f"worst_point=({worst[0]:.6g}, {worst[1]:.6g}); "
+            "metric=parameterized_sample_distance; "
+            f"use strategy='{kind}' to allow recursive splitting or inspect the span boundaries"
+        )
+
     if kind == "line":
-        return f"L{_fmt(end[0])} {_fmt(end[1])}"
+        return _validate_fit_source(start, f"L{_fmt(end[0])} {_fmt(end[1])}", source_points, max_error, address, diagnostics=diagnostics)
     if kind == "quadratic":
-        curve, residual, _ = fit_quadratic_once(points, max_error)
-        if residual > max_error * max_error:
-            raise ValueError("single quadratic fit exceeds max_error; use strategy='quadratic' to allow recursive splitting")
-        return f"Q{_fmt(curve[1][0])} {_fmt(curve[1][1])} {_fmt(curve[2][0])} {_fmt(curve[2][1])}"
+        curve, residual, split = fit_quadratic_once(points, max_error)
+        if source_points is None and residual > max_error * max_error:
+            reject(residual, split)
+        return _validate_fit_source(start, f"Q{_fmt(curve[1][0])} {_fmt(curve[1][1])} {_fmt(curve[2][0])} {_fmt(curve[2][1])}", source_points, max_error, address, diagnostics=diagnostics)
     if kind == "cubic":
         # ``type`` is an explicit geometric instruction: unlike automatic
         # cubic fitting, it deliberately permits an S-curve when that is what
-        # best represents the requested retained command or span.
-        curve, residual, _ = fit_cubic_once(points, max_error, guard_inflections=False)
-        if residual > max_error * max_error:
-            raise ValueError("single cubic fit exceeds max_error; use strategy='cubic' to allow recursive splitting")
-        return (
+        # best represents the requested retained command or span. Its controls
+        # are unconstrained unless the plan explicitly adds tangent constraints.
+        curve, residual, split = fit_cubic_once(
+            points, max_error, guard_inflections=False, constrain_tangents=False
+        )
+        if source_points is None and residual > max_error * max_error:
+            reject(residual, split)
+        return _validate_fit_source(start, (
             f"C{_fmt(curve[1][0])} {_fmt(curve[1][1])} {_fmt(curve[2][0])} {_fmt(curve[2][1])} "
             f"{_fmt(curve[3][0])} {_fmt(curve[3][1])}"
-        )
+        ), source_points, max_error, address, diagnostics=diagnostics)
     raise ValueError(f"unsupported one-command fit type {kind!r}")
+
+
+def _validate_fit_source(
+    start: Sequence[float], d: str, source_points: np.ndarray | None,
+    max_error: float, address: str, *, diagnostics: dict[str, object] | None = None,
+) -> str:
+    """Check an emitted L/Q/C span against its exact original material span."""
+    if source_points is None:
+        return d
+    # Subdivide Bézier control polygons until their chord error is bounded.
+    # This also validates the rounded emitted coordinates, not hidden controls.
+    flatten_error = min(0.01, max_error / 20.0)
+    vertices = [np.asarray(start, dtype=float)]
+
+    def flatten(control: np.ndarray, depth: int = 0) -> None:
+        a, b = control[0], control[-1]
+        chord = b - a
+        denom = float(chord @ chord)
+        t = np.clip(((control - a) @ chord) / denom, 0, 1) if denom else np.zeros(len(control))
+        error = float(np.max(np.linalg.norm(control - (a + t[:, None] * chord), axis=1)))
+        if error <= flatten_error:
+            vertices.append(b)
+            return
+        if depth >= 24:
+            raise ValueError("fit source validation could not bound curve linearization")
+        levels = [control]
+        while len(levels[-1]) > 1:
+            levels.append((levels[-1][:-1] + levels[-1][1:]) / 2.0)
+        flatten(np.asarray([level[0] for level in levels]), depth + 1)
+        flatten(np.asarray([level[-1] for level in reversed(levels)]), depth + 1)
+
+    for command in svg_path_commands(f"M{_fmt(start[0])} {_fmt(start[1])} {d}", "fit-check"):
+        if command.command == "M":
+            vertices[0] = np.asarray(command.values, dtype=float)
+        elif command.command in {"L", "Q", "C"}:
+            control = np.vstack([vertices[-1], np.asarray(command.values).reshape(-1, 2)])
+            flatten(control)
+        else:
+            raise ValueError("source fit guard supports only open L/Q/C spans")
+    original = [list(map(tuple, source_points))]
+    candidate = [list(map(tuple, vertices))]
+    measured = polyline_boundary_distance(
+        original, candidate,
+        closed=False, precision=flatten_error, direction="replacement_to_source",
+    ) + flatten_error
+    reverse = polyline_boundary_distance(
+        original, candidate,
+        closed=False, precision=flatten_error, direction="source_to_replacement",
+    ) + flatten_error
+    if diagnostics is not None:
+        diagnostics[address] = {
+            "reference": "original_material_polyline",
+            "acceptance_direction": "curve_to_original",
+            "curve_to_original_px": measured,
+            "original_to_curve_px": reverse,
+            "reverse_is_diagnostic_only": True,
+            "max_error_px": max_error,
+            "measurement_precision_px": 2 * flatten_error,
+        }
+    if not math.isfinite(measured) or measured > max_error:
+        raise ValueError(
+            f"fit exceeds max_error; target={address}; "
+            f"measured_error_px={measured:.6g}; max_error_px={max_error:.6g}; "
+            "reference=original_material_polyline; metric=curve_to_original_distance_upper_bound; "
+            f"original_to_curve_diagnostic_px={reverse:.6g}; "
+            f"measurement_precision_px={2 * flatten_error:.6g}; "
+            "inspect source span boundaries or use recursive fitting"
+        )
+    return d
 
 
 def _recursive_fit_d(points: np.ndarray, strategy: str, *, max_error: float, epsilon: float) -> str:
@@ -2259,7 +2724,7 @@ def _segment_references(targets: Mapping[str, _Target]) -> dict[str, tuple[objec
         assert target.region.current is not None
         if target.region.current.kind != "path":
             continue
-        commands = svg_path_commands(str(target.region.current.params["d"]), target.id)
+        commands = svg_path_commands(str(target.region.current.params["d"]), target.id, path_ids=target.region.current.params.get("path_ids"))
         for index, command in enumerate(commands):
             if command.command in {"M", "Z"}:
                 continue
@@ -2267,12 +2732,46 @@ def _segment_references(targets: Mapping[str, _Target]) -> dict[str, tuple[objec
     return references
 
 
-def _tolerances(trace: TraceResult, plan: DrawingPlan, op: Mapping[str, object]) -> tuple[float, float]:
-    """Resolve trace defaults, plan defaults, then an operation override."""
-    defaults = plan.defaults
-    epsilon = float(defaults.epsilon if defaults.epsilon is not None else trace.options.simplify_tolerance)
-    max_error = float(defaults.max_error if defaults.max_error is not None else trace.options.curve_tolerance)
-    return float(op.get("epsilon", epsilon)), float(op.get("max_error", max_error))
+def _action_settings(trace: TraceResult, plan: DrawingPlan, op: Mapping[str, object]) -> ActionSettings:
+    """Resolve retained trace settings, plan settings, then one action override."""
+    plan_settings = plan.settings
+    action_override = op.get("settings", {})
+    assert isinstance(action_override, Mapping)
+    return ActionSettings(
+        epsilon=float(
+            action_override.get(
+                "epsilon",
+                plan_settings.epsilon
+                if plan_settings.epsilon is not None
+                else trace.options.simplify_tolerance,
+            )
+        ),
+        max_error=float(
+            action_override.get(
+                "max_error",
+                plan_settings.max_error
+                if plan_settings.max_error is not None
+                else trace.options.curve_tolerance,
+            )
+        ),
+        fit_strategy=action_override.get(
+            "fit_strategy",
+            plan_settings.fit_strategy
+            if plan_settings.fit_strategy is not None
+            else trace.options.fit_strategy,
+        ),
+        purpose=action_override.get("purpose", plan_settings.purpose or "accuracy"),
+        execution=action_override.get("execution", plan_settings.execution or "deterministic"),
+    )
+
+
+def resolved_action_settings(
+    trace: TraceResult, plan: DrawingPlan, action: object
+) -> ActionSettings:
+    """Expose the one retained/plan/action settings resolution to recipe capture."""
+    if not hasattr(action, "model_dump"):
+        raise TypeError("drawing action must be a typed action contract")
+    return _action_settings(trace, plan, action.model_dump(exclude_none=True))
 
 
 def _fill(spec: Mapping[str, object]) -> Fill:

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+from collections.abc import Mapping
 import html
 import io
 import json
@@ -27,9 +28,12 @@ from PIL import Image, ImageDraw, ImageFont
 
 from vectormark._fitcurve import cubic_inflects
 from vectormark.contour import region_contours
+from vectormark.drawing_adapter import drawing_from_vector_regions
+from vectormark.drawing_render import render_path_map
 from vectormark.drawing_refine import auto_refine, labeled_drawing_svg, render_drawing, root_regions, stitch_regions
 from vectormark.emit import render_svg_doc, resolve_fill
 from vectormark.fit import _fmt
+from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
 from vectormark.optimizer.corners import path_corner_diagnostics
 from vectormark.optimizer.vector_region import _parse_subpaths
@@ -52,7 +56,7 @@ def _parse_args() -> argparse.Namespace:
         default="pixel",
         help="Boundary extraction precision used before path fitting.",
     )
-    parser.add_argument("--max-size", type=int, default=1024, help="MCP preprocess maximum edge")
+    parser.add_argument("--max-size", type=int, default=DEFAULT_MAX_SIZE_PX, help="MCP preprocess maximum edge")
     parser.add_argument(
         "--debug-passes",
         action="store_true",
@@ -62,6 +66,21 @@ def _parse_args() -> argparse.Namespace:
         "--corner-normalize",
         action="store_true",
         help="Canonicalize recognized rounded corners during automatic refinement.",
+    )
+    parser.add_argument(
+        "--gradient-pretrace",
+        action="store_true",
+        help="Build a gradient-neutral material proxy before palette inference and tracing.",
+    )
+    parser.add_argument(
+        "--support-weighted-corners",
+        action="store_true",
+        help="Preserve shallow turns when long supporting runs make their displacement significant.",
+    )
+    parser.add_argument(
+        "--v0-only",
+        action="store_true",
+        help="Stop after initial stitching instead of running automatic refinement.",
     )
     return parser.parse_args()
 
@@ -119,13 +138,21 @@ def _path_inflections(d: str) -> int:
     return count
 
 
-def _path_diagnostics(svg: str) -> dict[str, dict[str, int]]:
-    """Return command/corner metrics keyed by emitted target ID."""
-    diagnostics: dict[str, dict[str, int]] = {}
+def _path_elements(svg: str) -> dict[str, str]:
+    """Return emitted path data keyed by the same target IDs used in reports."""
+    paths: dict[str, str] = {}
     for index, match in enumerate(_PATH_ELEMENT.finditer(svg)):
         attributes, d = match.group("attributes"), match.group("d")
         identifier = _ID_ATTRIBUTE.search(attributes)
-        region_id = identifier.group(1) if identifier is not None else f"path_{index}"
+        target_id = identifier.group(1) if identifier is not None else f"path_{index}"
+        paths[target_id] = d
+    return paths
+
+
+def _path_diagnostics(paths: Mapping[str, str]) -> dict[str, dict[str, int]]:
+    """Return command/corner metrics keyed by emitted target ID."""
+    diagnostics: dict[str, dict[str, int]] = {}
+    for region_id, d in paths.items():
         commands = {command: _SVG_COMMAND.findall(d).count(command) for command in ("L", "Q", "C", "A")}
         corners = path_corner_diagnostics(d)
         diagnostics[region_id] = {
@@ -139,6 +166,37 @@ def _path_diagnostics(svg: str) -> dict[str, dict[str, int]]:
     return diagnostics
 
 
+def _declared_corner_metrics(diagnostics: Mapping[str, object]) -> dict[str, int] | None:
+    """Count retained pre-fit corners without rediscovering them from geometry."""
+    subpaths = diagnostics.get("subpaths")
+    if isinstance(subpaths, (list, tuple)):
+        children = [
+            metrics
+            for child in subpaths
+            if isinstance(child, Mapping)
+            for metrics in [_declared_corner_metrics(child)]
+            if metrics is not None
+        ]
+        if not children:
+            return None
+        return {
+            key: sum(child[key] for child in children)
+            for key in ("corners", "corner_commands", "free_commands", "corner_anchors")
+        }
+
+    spans = diagnostics.get("spans")
+    commands = diagnostics.get("commands")
+    anchors = diagnostics.get("anchor_counts")
+    if not isinstance(spans, (list, tuple)) or not isinstance(commands, Mapping):
+        return None
+    return {
+        "corners": len(spans),
+        "corner_commands": int(commands.get("corner", 0)),
+        "free_commands": int(commands.get("free", 0)),
+        "corner_anchors": int(anchors.get("corner", 0)) if isinstance(anchors, Mapping) else 0,
+    }
+
+
 def _report_with_path_diagnostics(svg: str, report: dict[str, object] | None = None) -> dict[str, object]:
     """Return the standard MCP drawing-report shape enriched with path metrics.
 
@@ -146,7 +204,8 @@ def _report_with_path_diagnostics(svg: str, report: dict[str, object] | None = N
     snapshots synthesize the same target envelope so the panel never exposes a
     second diagnostics schema.
     """
-    path_metrics = _path_diagnostics(svg)
+    path_data = _path_elements(svg)
+    path_metrics = _path_diagnostics(path_data)
     if report is None:
         return {
             "targets": [
@@ -168,7 +227,15 @@ def _report_with_path_diagnostics(svg: str, report: dict[str, object] | None = N
         diagnostics = dict(target_record.get("diagnostics", {}))
         target_id = str(target_record["id"])
         if target_id in path_metrics:
-            diagnostics["path"] = path_metrics.pop(target_id)
+            metrics = path_metrics.pop(target_id)
+            declared = diagnostics.get("corners")
+            declared_metrics = _declared_corner_metrics(declared) if isinstance(declared, Mapping) else None
+            if declared_metrics is not None:
+                # Counts describe detected design intent, so they come from
+                # retained pre-fit provenance. The emitted SVG is still the
+                # authority for L/Q/C totals and actual cubic inflections.
+                metrics.update(declared_metrics)
+            diagnostics["path"] = metrics
         target_record["diagnostics"] = diagnostics
         targets.append(target_record)
     # SVG-only overlays can exist without a retained target. Keep them
@@ -191,16 +258,30 @@ def _stage_parameters(
     trace,
     *,
     min_region_fraction: float,
+    corner_normalize: bool,
 ) -> dict[str, object]:
     """Expose only the controls that govern the named diagnostic stage."""
+    from vectormark.fit import FIT_REFERENCE_CANVAS_EXTENT, MIN_PROTECTED_POLYLINE_LINE_LENGTH
+
     options = trace.options
     trace_fit = {
         "simplify_tolerance": options.simplify_tolerance,
         "curve_tolerance": options.curve_tolerance,
         "fit_strategy": options.fit_strategy,
+        "corner_rounding": options.corner_rounding,
+        "geometric_support_scale": max(trace.width, trace.height) / FIT_REFERENCE_CANVAS_EXTENT,
+        "protected_line_support_px": MIN_PROTECTED_POLYLINE_LINE_LENGTH * max(trace.width, trace.height) / FIT_REFERENCE_CANVAS_EXTENT,
     }
     if name == "source":
         return {"canvas": [trace.width, trace.height]}
+    if name == "high_color_quantized":
+        return {"max_sampling_colors": 64, "min_region_size": trace.options.min_region_size}
+    if name == "shape_merged_supports":
+        return {"merge_evidence": "noncredible shared boundary"}
+    if name == "color_field_merged_supports":
+        return {"merge_evidence": ["soft source-color seam", "single accepted gradient model"]}
+    if name == "material_proxy":
+        return {"gradient_replacement": "per-support perceptual average", "final_fill_source": "original RGB"}
     if name == "boundary_polyline_trace":
         return {
             "remove_background": options.remove_background,
@@ -234,15 +315,22 @@ def _stage_parameters(
     return {
         "epsilon": options.simplify_tolerance,
         "max_error": options.curve_tolerance,
-        "corner_normalize": options.corner_normalize,
+        "corner_normalize": corner_normalize,
     }
 
 
-def _write_pass_index(output: Path, snapshots, trace, *, min_region_fraction: float) -> None:
+def _write_pass_index(
+    output: Path,
+    snapshots,
+    trace,
+    *,
+    min_region_fraction: float,
+    corner_normalize: bool,
+) -> None:
     cards = "\n".join(
         f'''<article><h2>{html.escape(label)}</h2>
 <a class="artifact" href="{html.escape(filename)}" title="Open {html.escape(filename)}"><object data="{html.escape(filename)}" type="image/svg+xml"></object></a>
-<details><summary>parameters and report</summary><pre>{html.escape(json.dumps({"parameters": _stage_parameters(name, trace, min_region_fraction=min_region_fraction), "report": _report_with_path_diagnostics(svg, report)}, indent=2, sort_keys=True))}</pre></details>
+<details><summary>parameters and report</summary><pre>{html.escape(json.dumps({"parameters": _stage_parameters(name, trace, min_region_fraction=min_region_fraction, corner_normalize=corner_normalize), "report": _report_with_path_diagnostics(svg, report)}, indent=2, sort_keys=True))}</pre></details>
 <p><a href="{html.escape(filename)}">{html.escape(filename)}</a></p></article>'''
         for name, label, filename, svg, report in snapshots
     )
@@ -311,16 +399,19 @@ def main() -> None:
     source = args.image.expanduser().resolve()
     raw = source.read_bytes()
     image = ImageRef(data_uri="data:image/png;base64," + base64.b64encode(raw).decode())
-    max_colors = "auto" if args.colors == "auto" else int(args.colors)
+    max_sampling_colors = "auto" if args.colors == "auto" else int(args.colors)
     options = TraceDrawingOptions(
         refine="auto",
-        max_colors=max_colors,
+        max_sampling_colors=max_sampling_colors,
         fit_strategy=args.fit_strategy,
         trace_level=args.trace_level,
         corner_normalize=args.corner_normalize,
+        gradient_pretrace=args.gradient_pretrace,
+        support_weighted_corners=args.support_weighted_corners,
         preprocess={"max_size_px": args.max_size},
     )
     trace, rgb = _trace_result(image, options)
+    material_pretrace = trace.material_pretrace
     # Keep the assembled, pre-stitch roots distinct from retained v0.  The
     # stage names deliberately describe drawing representations rather than
     # implementation helpers, so a reviewer can localize a regression without
@@ -330,18 +421,26 @@ def main() -> None:
     def capture_decomposition_stage(name, regions, fills) -> None:
         decomposition_snapshots.append((name, _region_polyline_svg(trace, regions, fills), None))
 
-    raw_roots = root_regions(
+    rooted = root_regions(
         trace,
         rgb,
         min_region_fraction=options.min_region_fraction,
         on_decomposition_stage=capture_decomposition_stage,
     )
+    trace, raw_roots = rooted.trace, rooted.regions
     raw_rendered = render_drawing(trace, raw_roots)
     v0 = stitch_regions(trace, raw_roots)
     v0_rendered = render_drawing(trace, v0)
     pass_snapshots = [
         ("source", _source_svg(rgb), None),
     ]
+    if material_pretrace is not None:
+        pass_snapshots.extend([
+            ("high_color_quantized", _raster_svg(material_pretrace.high_color_quantized), None),
+            ("shape_merged_supports", _raster_svg(material_pretrace.shape_merged), None),
+            ("color_field_merged_supports", _raster_svg(material_pretrace.color_field_merged), None),
+            ("material_proxy", _raster_svg(material_pretrace.material_proxy), None),
+        ])
     if trace.geometry_regions:
         pass_snapshots.extend([
             ("boundary_polyline_trace", _trace_stage_svg(trace, "contours", geometry=True), None),
@@ -357,10 +456,11 @@ def main() -> None:
         rendered = render_drawing(trace, regions)
         pass_snapshots.append((name, rendered.svg, dict(rendered.report)))
 
-    auto = auto_refine(
+    auto = v0 if args.v0_only else auto_refine(
         trace,
         v0,
         rgb=rgb,
+        corner_normalize=options.corner_normalize,
         on_pass=capture_auto_pass,
     )
     v0_svg = render_drawing(trace, v0).svg
@@ -371,8 +471,8 @@ def main() -> None:
     frames = (
         (Image.fromarray(np.asarray(rgb, dtype=np.uint8)), "source (MCP preprocess)"),
         (_render_svg(v0_svg, width, height), "MCP trace v0"),
-        (_render_svg(auto_svg, width, height), "MCP auto"),
-        (_render_svg(labels_svg, width, height), "auto labels"),
+        (_render_svg(auto_svg, width, height), "MCP v0" if args.v0_only else "MCP auto"),
+        (_render_svg(labels_svg, width, height), "v0 labels" if args.v0_only else "auto labels"),
     )
     font = ImageFont.load_default()
     panel = Image.new("RGB", (760, 640), "white")
@@ -382,13 +482,19 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     panel.save(output)
     output.with_suffix(".v0.svg").write_text(v0_svg)
-    output.with_suffix(".auto.svg").write_text(auto_svg)
+    if not args.v0_only:
+        output.with_suffix(".auto.svg").write_text(auto_svg)
     output.with_suffix(".labels.svg").write_text(labels_svg)
+    paths_svg = render_path_map(drawing_from_vector_regions(
+        "path-map", width=trace.width, height=trace.height, regions=auto,
+    ))
+    output.with_suffix(".paths.svg").write_text(paths_svg)
     if args.debug_passes:
         final = _render_svg(auto_svg, trace.width, trace.height)
         difference = np.abs(np.asarray(rgb, dtype=np.int16) - np.asarray(final, dtype=np.int16))
         pass_snapshots.extend([
             ("region_map", labels_svg, None),
+            ("path_map", paths_svg, None),
             (
                 "source_vector_diff",
                 _raster_svg(np.clip(difference * 4, 0, 255).astype(np.uint8)),
@@ -409,6 +515,7 @@ def main() -> None:
             index_entries,
             trace,
             min_region_fraction=options.min_region_fraction,
+            corner_normalize=options.corner_normalize,
         )
         print(debug_dir / "index.html")
     print(f"{output} targets={len(render_drawing(trace, auto).report['targets'])}")

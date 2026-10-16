@@ -101,7 +101,7 @@ def generate_variants(
 ) -> list[Variant]:
     """idealize() the image once per (epsilon, max_error) cell, row-major (epsilon
     outer, max_error inner). `base` supplies the non-geometry knobs held constant
-    across the grid (max_colors, no_symmetry, …); epsilon/max_error are overridden
+    across the grid (max_sampling_colors, no_symmetry, …); epsilon/max_error are overridden
     per cell. A cell that raises is captured as a failed Variant, never aborting
     the grid."""
     arr = _as_rgb(image)

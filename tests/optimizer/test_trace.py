@@ -85,7 +85,7 @@ def test_trace_gradient_strip_merges_adjacent_regions_to_one_gradient_object():
     strip = np.round(left[None, :] * (1.0 - xs[:, None]) + right[None, :] * xs[:, None]).astype(np.uint8)
     img[strip_y0:strip_y1, strip_x0:strip_x1] = strip[None, :, :]
 
-    opt = Options(max_colors=3)
+    opt = Options(max_sampling_colors=3)
     _, _, regions = _segment_image(img, opt)
     strip_mask = np.zeros((h, w), dtype=bool)
     strip_mask[strip_y0:strip_y1, strip_x0:strip_x1] = True

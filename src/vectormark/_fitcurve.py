@@ -110,6 +110,25 @@ def _compute_max_error(pts, ctrl, u):
     return float(errs[split]), max(1, min(split, len(pts) - 2))
 
 
+def _refine_once_candidate(pts, u, ctrl, error, split, max_error, *, generate, reparameterize, residual, acceptable=None):
+    """Retry parameter assignment without ever replacing a better candidate."""
+    if acceptable is not None and not acceptable(ctrl):
+        return ctrl, error, split
+    best = (ctrl, error, split)
+    for _ in range(20):
+        previous_error = error
+        u = reparameterize(pts, u, ctrl)
+        ctrl = generate(pts, u)
+        error, split = residual(pts, ctrl, u)
+        if acceptable is not None and not acceptable(ctrl):
+            break
+        if error < best[1]:
+            best = (ctrl, error, split)
+        if error < max_error * max_error or error >= previous_error:
+            break
+    return best
+
+
 def fit_quadratic_once(points: np.ndarray, max_error: float) -> tuple[np.ndarray, float, int]:
     """Fit one quadratic, returning its squared residual and useful split."""
     pts = np.asarray(points, dtype=float)
@@ -119,14 +138,12 @@ def fit_quadratic_once(points: np.ndarray, max_error: float) -> tuple[np.ndarray
     u = _chord_length_parameterize(pts)
     ctrl = _generate_quadratic(pts, u)
     max_err, split = _compute_max_error(pts, ctrl, u)
-    if max_err < max_error * max_error:
-        for _ in range(20):
-            u = _reparameterize(pts, u, ctrl)
-            ctrl = _generate_quadratic(pts, u)
-            max_err, split = _compute_max_error(pts, ctrl, u)
-            if max_err < max_error * max_error:
-                break
-    return ctrl, max_err, split
+    return _refine_once_candidate(
+        pts, u, ctrl, max_err, split, max_error,
+        generate=_generate_quadratic,
+        reparameterize=_reparameterize,
+        residual=_compute_max_error,
+    )
 
 
 # --- Inflection-guarded cubic fitting ----------------------------------------
@@ -342,11 +359,24 @@ def _compute_max_error_cubic(pts, ctrl, u):
     return float(errs[split]), max(1, min(split, len(pts) - 2))
 
 
+def _generate_free_cubic(pts: np.ndarray, parameters: np.ndarray) -> np.ndarray | None:
+    """Solve both interior controls with fixed endpoints, without tangent locks."""
+    t = np.asarray(parameters, dtype=float)
+    inverse = 1.0 - t
+    basis = np.column_stack((3.0 * inverse * inverse * t, 3.0 * inverse * t * t))
+    remainder = pts - inverse[:, None] ** 3 * pts[0] - t[:, None] ** 3 * pts[-1]
+    controls, _residuals, rank, _singular_values = np.linalg.lstsq(basis, remainder, rcond=None)
+    if rank < 2:
+        return None
+    return np.asarray([pts[0], controls[0], controls[1], pts[-1]], dtype=float)
+
+
 def fit_cubic_once(
     points: np.ndarray,
     max_error: float,
     *,
     guard_inflections: bool = True,
+    constrain_tangents: bool = True,
 ) -> tuple[np.ndarray, float, int]:
     """Fit one cubic, returning its squared residual and useful split."""
     pts = np.asarray(points, dtype=float)
@@ -355,13 +385,19 @@ def fit_cubic_once(
         return np.array([pts[0], pts[0] + delta, pts[1] - delta, pts[1]]), 0.0, 1
     tangent_start, tangent_end = _endpoint_tangents(pts)
     u = _chord_length_parameterize(pts)
-    ctrl = _generate_cubic(pts, u, tangent_start, tangent_end)
+    def generate(samples, parameters):
+        if not constrain_tangents:
+            free = _generate_free_cubic(samples, parameters)
+            if free is not None:
+                return free
+        return _generate_cubic(samples, parameters, tangent_start, tangent_end)
+
+    ctrl = generate(pts, u)
     max_err, split = _compute_max_error_cubic(pts, ctrl, u)
-    if max_err < max_error * max_error and (not guard_inflections or not cubic_inflects(ctrl)):
-        for _ in range(20):
-            u = _reparameterize_cubic(pts, u, ctrl)
-            ctrl = _generate_cubic(pts, u, tangent_start, tangent_end)
-            max_err, split = _compute_max_error_cubic(pts, ctrl, u)
-            if max_err < max_error * max_error and (not guard_inflections or not cubic_inflects(ctrl)):
-                break
-    return ctrl, max_err, split
+    return _refine_once_candidate(
+        pts, u, ctrl, max_err, split, max_error,
+        generate=generate,
+        reparameterize=_reparameterize_cubic,
+        residual=_compute_max_error_cubic,
+        acceptable=(lambda candidate: not cubic_inflects(candidate)) if guard_inflections else None,
+    )

@@ -20,6 +20,7 @@ from .path_geometry import (
     PathCommand,
     PathGeometry,
     PathGeometryWithCutouts,
+    CompoundPathGeometry,
     PathGeometryWithSymmetry,
 )
 
@@ -35,7 +36,7 @@ class PlanValidationError(ValueError):
 
 _SCHEMA_VARIANT_TOKENS = frozenset({
     "align", "break", "detect_clones", "detect_primitives", "detect_symmetry",
-    "fit", "flat", "linear_gradient", "match", "match_length", "merge",
+    "fit", "fit_path", "flat", "linear_gradient", "match", "match_length", "merge",
     "mirror", "normalize_corners", "path", "radial_gradient", "raster",
     "remove", "reverse", "assign_clone", "set_fill", "update_geometry", "fit_primitive",
     "set_parallel", "set_symmetry", "set_z_order", "simplify", "snap",
@@ -126,12 +127,14 @@ def validate_plan(plan: DrawingPlan, drawing: Drawing) -> None:
                 _known_target(str(target_id), known_targets, f"{pointer}/targets/{target_index}")
             continue
 
+        if name in {"fit_path", "fit_primitive"}:
+            _known_target(str(op["target"]), known_targets, f"{pointer}/target")
+            continue
+
         if name == "update_geometry":
             target_id = str(op["target"])
             _known_target(target_id, known_targets, f"{pointer}/target")
-            geometry_ops = op["ops"]
-            if geometry_ops[0]["op"] != "fit_primitive":
-                _validate_path_ops(geometry_ops, f"{pointer}/ops", commands, target_id)
+            _validate_path_ops(op["ops"], f"{pointer}/ops", commands, target_id)
             continue
 
         if name == "set_fill":
@@ -215,7 +218,7 @@ def _validate_path_ops(
                     for command_id, (owner, subpath, command_index, command) in commands.items()
                     if owner == target_id
                     and subpath == left_subpath
-                    and left_index < command_index < right_index
+                    and left_index < command_index <= right_index
                     and not isinstance(command, MoveCommand)
                 )
                 if not fitted_targets:
@@ -311,6 +314,9 @@ def _target_commands(drawing: Drawing) -> dict[str, tuple[str, int, int, PathCom
             geometry = region.geometry
             if isinstance(geometry, PathGeometry):
                 index_path(region.id, geometry, 0)
+            elif isinstance(geometry, CompoundPathGeometry):
+                for subpath, path in enumerate(geometry.paths):
+                    index_path(region.id, path, subpath)
             elif isinstance(geometry, PathGeometryWithCutouts):
                 index_path(region.id, geometry.outer, 0)
                 for subpath, cutout in enumerate(geometry.cutouts, start=1):

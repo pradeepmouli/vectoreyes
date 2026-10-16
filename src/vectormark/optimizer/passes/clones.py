@@ -6,6 +6,7 @@ import numpy as np
 
 from ...skia_geometry import SkPath, affinity
 from ...fit import Shape
+from ..automatic_replay import AssignCloneOperation, draft_input_ref, operation_intent
 from ..framework import Proposal
 from ..shape_transform import bake_shape_transform
 from ..vector_region import VectorRegion
@@ -15,6 +16,9 @@ _AREA_RATIO_TOL = 0.01
 _PERIMETER_RATIO_TOL = 0.01
 _GEOM_RESIDUAL_TOL = 0.01
 _REFLECTION_RESIDUAL_TOL = 0.02
+_FAMILY_RATIO_TOL = 0.05
+_FAMILY_RESIDUAL_TOL = 0.05
+_MIN_FAMILY_SIZE = 3
 
 
 def _polygonal_flat(flat: object) -> SkPath | None:
@@ -29,7 +33,16 @@ def _has_self_symmetry(region: VectorRegion) -> bool:
 
 
 def _shape_descriptor(flat: SkPath) -> tuple[float, float, int]:
-    return (float(flat.area), float(flat.length), len(getattr(flat, "geoms", ()) or []))
+    components = tuple(getattr(flat, "geoms", ()) or (flat,))
+    # Ignore detached trace specks when comparing topology. Their area remains
+    # part of the footprint residual, but a sub-pixel artifact must not make an
+    # otherwise single-component family fail the descriptor prefilter.
+    minimum_component_area = max(1.0, float(flat.area) * 0.005)
+    meaningful_components = sum(
+        float(component.area) >= minimum_component_area
+        for component in components
+    )
+    return (float(flat.area), float(flat.length), max(meaningful_components, 1))
 
 
 def _within_ratio(a: float, b: float, tol: float) -> bool:
@@ -93,6 +106,9 @@ def _apply_svg_matrix(
 def _best_transform(
     canonical: SkPath,
     target: SkPath,
+    *,
+    geom_tolerance: float = _GEOM_RESIDUAL_TOL,
+    reflection_tolerance: float = _REFLECTION_RESIDUAL_TOL,
 ) -> tuple[tuple[float, float, float, float, float, float], SkPath] | None:
     canonical_centroid = (float(canonical.centroid.x), float(canonical.centroid.y))
     target_centroid = (float(target.centroid.x), float(target.centroid.y))
@@ -140,10 +156,69 @@ def _best_transform(
         ),
     )
     determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2]
-    tolerance = _REFLECTION_RESIDUAL_TOL if determinant < 0.0 else _GEOM_RESIDUAL_TOL
+    tolerance = reflection_tolerance if determinant < 0.0 else geom_tolerance
     if residual > tolerance:
         return None
     return matrix, transformed
+
+
+def _clone_proposal(
+    canonical: VectorRegion,
+    target: VectorRegion,
+    *,
+    matrix: tuple[float, float, float, float, float, float],
+    transformed: SkPath,
+    symbolic: bool,
+    family_size: int | None = None,
+) -> Proposal:
+    replacement = apply_clone_assignment(
+        canonical,
+        target,
+        matrix=matrix,
+        symbolic=symbolic,
+        family_size=family_size,
+        transformed=transformed,
+    )
+    source_ref = draft_input_ref(canonical.id)
+    target_ref = draft_input_ref(target.id)
+    action = AssignCloneOperation(source_ref, target_ref, matrix, symbolic, family_size)
+    return Proposal(
+        (target.id,),
+        [replacement],
+        intent=operation_intent(action, (source_ref, target_ref), (target.id,)),
+    )
+
+
+def apply_clone_assignment(
+    canonical: VectorRegion,
+    target: VectorRegion,
+    *,
+    matrix: tuple[float, float, float, float, float, float],
+    symbolic: bool,
+    family_size: int | None = None,
+    transformed: SkPath | None = None,
+) -> VectorRegion:
+    """Materialize an already selected clone relation without detecting it."""
+    diagnostics: dict[str, object] = {
+        "accepted": True,
+        "matched_source": int(canonical.id),
+        "fill_preserved": type(target.fill).__name__,
+        "transform": matrix,
+    }
+    if family_size is not None:
+        diagnostics["family_size"] = family_size
+    if canonical.current is None:
+        raise ValueError("clone source has no geometry")
+    geometry = (
+        Shape("use", {"href_obj_id": canonical.id, "transform": matrix})
+        if symbolic
+        else bake_shape_transform(canonical.current, matrix)
+    )
+    return target.with_current(
+        geometry,
+        footprint=transformed if transformed is not None else _apply_svg_matrix(canonical.footprint, matrix),
+        diagnostics={"clones": diagnostics},
+    )
 
 
 def clones_pass(
@@ -165,7 +240,60 @@ def clones_pass(
 
     proposals: list[Proposal] = []
     queued_targets: set[int] = set()
+
+    # A repeated family carries stronger semantic evidence than one approximate
+    # pair. Raster overlap and seam slicing can perturb otherwise congruent
+    # members by several percent, so admit the looser tolerance only when one
+    # canonical agrees with at least two targets.
+    for index, (canonical_obj, canonical_flat, canonical_desc) in enumerate(usable):
+        if canonical_obj.id in queued_targets:
+            continue
+        matches: list[
+            tuple[
+                VectorRegion,
+                tuple[float, float, float, float, float, float],
+                SkPath,
+            ]
+        ] = []
+        for target_obj, target_flat, target_desc in usable[index + 1:]:
+            if target_obj.id in queued_targets:
+                continue
+            if canonical_desc[2] != target_desc[2]:
+                continue
+            if not _within_ratio(canonical_desc[0], target_desc[0], _FAMILY_RATIO_TOL):
+                continue
+            if not _within_ratio(canonical_desc[1], target_desc[1], _FAMILY_RATIO_TOL):
+                continue
+            best = _best_transform(
+                canonical_flat,
+                target_flat,
+                geom_tolerance=_FAMILY_RESIDUAL_TOL,
+                reflection_tolerance=_FAMILY_RESIDUAL_TOL,
+            )
+            if best is None:
+                continue
+            matrix, transformed = best
+            matches.append((target_obj, matrix, transformed))
+
+        family_size = len(matches) + 1
+        if family_size < _MIN_FAMILY_SIZE:
+            continue
+        for target_obj, matrix, transformed in matches:
+            proposals.append(
+                _clone_proposal(
+                    canonical_obj,
+                    target_obj,
+                    matrix=matrix,
+                    transformed=transformed,
+                    symbolic=symbolic,
+                    family_size=family_size,
+                )
+            )
+            queued_targets.add(int(target_obj.id))
+
     for index, (target_obj, target_flat, target_desc) in enumerate(usable):
+        if target_obj.id in queued_targets:
+            continue
         matched = False
         for canonical_obj, canonical_flat, canonical_desc in usable[:index]:
             if canonical_obj.id in queued_targets:
@@ -183,26 +311,12 @@ def clones_pass(
             matrix, transformed = best
 
             proposals.append(
-                Proposal(
-                    (target_obj.id,),
-                    [
-                        target_obj.with_current(
-                            (
-                                Shape("use", {"href_obj_id": canonical_obj.id, "transform": matrix})
-                                if symbolic
-                                else bake_shape_transform(canonical_obj.current, matrix)
-                            ),
-                            footprint=transformed,
-                            diagnostics={
-                                "clones": {
-                                    "accepted": True,
-                                    "matched_source": int(canonical_obj.id),
-                                    "fill_preserved": type(target_obj.fill).__name__,
-                                    "transform": matrix,
-                                }
-                            },
-                        )
-                    ],
+                _clone_proposal(
+                    canonical_obj,
+                    target_obj,
+                    matrix=matrix,
+                    transformed=transformed,
+                    symbolic=symbolic,
                 )
             )
             queued_targets.add(int(target_obj.id))

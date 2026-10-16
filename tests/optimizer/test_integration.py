@@ -19,6 +19,20 @@ from vectormark.optimizer.passes.symmetry import symmetry_pass
 from vectormark.optimizer.trace import _trace_shape_from_contours
 from vectormark.pipeline import Options, _optimizer_passes, _optimizer_report, _prefer_optimizer_svg, _render_optimizer_body, idealize
 import vectormark.pipeline as pipeline_module
+from tests._render import render_svg
+from vectormark.emit import render_svg_doc
+
+
+def _painted_on(regions, background, width=140, height=140):
+    body, defs = _render_optimizer_body(regions)
+    return render_svg(render_svg_doc(width, height, [
+        f'<rect width="{width}" height="{height}" fill="{background}"/>', *body,
+    ], defs), width, height)
+
+
+def _assert_same_paint(before, after):
+    for background in ("#123456", "#ef7090"):
+        np.testing.assert_array_equal(_painted_on(before, background), _painted_on(after, background))
 
 
 def _disk(h: int, w: int, cy: int, cx: int, r: int) -> np.ndarray:
@@ -192,23 +206,20 @@ def test_optimizer_simplifies_compound_children_after_split():
         _optimizer_passes(Options(optimizer=True)),
     )
 
-    branch = out[0]
-    assert branch.is_branch
-    cutout_leaves = [leaf for leaf in branch.leaves() if leaf.fill == FlatFill("#FFFFFF")]
-    assert cutout_leaves
-    assert all(leaf.current.kind in {"path", "rect", "use"} for leaf in cutout_leaves)
-    path_leaves = [leaf for leaf in cutout_leaves if leaf.current.kind == "path"]
-    if path_leaves:
-        assert sum(leaf.current.params["d"].count("Q") for leaf in path_leaves) >= 3
-        assert sum(leaf.current.params["d"].count("L") for leaf in path_leaves) <= hole.count("L")
+    assert all(leaf.fill == fill for root in out for leaf in root.leaves())
+    for background, rgb in (("#123456", (18, 52, 86)), ("#ef7090", (239, 112, 144))):
+        np.testing.assert_array_equal(_painted_on(out, background)[60, 60], rgb)
+    assert not out[0].footprint._path.contains(60, 60)
 
 
 def test_optimizer_recolored_clone_retains_a_use_with_its_own_fill():
     svg = idealize(_two_colored_square_image(), options=Options(optimizer=True))
 
-    assert '<use id="s1" href="#s0"' in svg
-    assert 'fill="#112233"' in svg
-    assert 'fill="#ABCDEF"' in svg
+    assert '<rect id="s0-geometry"' in svg
+    assert '<use id="s0" href="#s0-geometry"' in svg
+    assert '<use id="s1" href="#s0-geometry"' in svg
+    assert svg.count('fill="#112233"') == 1
+    assert svg.count('fill="#ABCDEF"') == 1
 
 
 def test_optimizer_no_symmetry_skips_symmetry_pass():
@@ -233,7 +244,11 @@ def test_optimizer_threads_epsilon_into_primitives_pass(monkeypatch):
         FlatFill("#111111"),
         0,
     )
-    pass_fn = _optimizer_passes(Options(optimizer=True, epsilon=0.25))[0]
+    pass_fn = next(
+        pass_fn
+        for pass_fn in _optimizer_passes(Options(optimizer=True, epsilon=0.25))
+        if pass_fn.__name__ == "primitives_pass"
+    )
 
     pass_fn([obj], {obj.id: rasterize(obj.footprint, (32, 32))})
 
@@ -266,7 +281,11 @@ def test_optimizer_no_symmetry_threads_into_occlusion_pass(monkeypatch):
         left.id: left.raster,
         right.id: right.raster,
     }
-    pass_fn = _optimizer_passes(Options(optimizer=True, no_symmetry=True))[1]
+    pass_fn = next(
+        pass_fn
+        for pass_fn in _optimizer_passes(Options(optimizer=True, no_symmetry=True))
+        if pass_fn.__name__ == "occlusion_pass"
+    )
 
     pass_fn([left, right], masks)
 
@@ -295,13 +314,18 @@ def test_optimizer_pipeline_reconstructs_mastercard_as_scene_branch():
     svg, report = idealize(_synthetic_mastercard_image(), options=Options(optimizer=True), report=True)
 
     assert svg.count("<circle") == 1
-    assert svg.count("<use") == 1
+    assert svg.count("<use") == 2
     assert svg.count("<path") == 1
+    assert svg.count('href="#s0-0-geometry"') == 2
+    assert 'fill="#F79E1B"' in svg
+    assert 'fill="#EB001B"' in svg
+    assert 'fill="#FF5F00"' in svg
     diagnostics = report.diagnostics.to_dict()
     assert diagnostics["optimizer_fallback"] is None
     assert diagnostics["optimizer_regions"][0]["kind"] == "branch"
     assert diagnostics["optimizer_regions"][0]["children"] == 3
     assert [obj["shape"] for obj in diagnostics["optimizer_objects"]] == ["circle", "use", "path"]
+    assert diagnostics["optimizer_objects"][2]["diagnostics"]["symmetry"]["materialized"] is True
 
 
 def test_optimizer_inlines_same_gradient_fill_mirror_to_preserve_paint_space():
@@ -439,7 +463,10 @@ def test_optimizer_combines_self_symmetry_branch_on_final_output():
         diagnostics={"symmetry": {"accepted": True, "mode": "self"}},
     )
 
-    body, _defs = _render_optimizer_body([branch])
+    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
+    retained = materialize_self_symmetry((branch,))
+    assert retained[0].is_leaf
+    body, _defs = _render_optimizer_body(retained)
     svg_body = "".join(body)
 
     assert svg_body.count("<path") == 1
@@ -473,7 +500,10 @@ def test_optimizer_self_symmetry_uses_union_footprints_not_drifting_fitted_halve
         diagnostics={"symmetry": {"accepted": True, "mode": "self"}},
     )
 
-    body, _defs = _render_optimizer_body([branch])
+    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
+    retained = materialize_self_symmetry((branch,))
+    assert retained[0].is_leaf
+    body, _defs = _render_optimizer_body(retained)
     emitted = to_polygon(Shape("path", {"d": body[0].split(' d="', 1)[1].split('"', 1)[0]}))
 
     assert body[0].count("M") == 1
@@ -521,15 +551,26 @@ def test_optimizer_trace_uses_quadratic_base_even_when_cubics_are_enabled():
             )
         )
 
+    contour_array = np.asarray(contour, dtype=float)
     shape = _trace_shape_from_contours(
-        [np.asarray(contour, dtype=float)],
+        [contour_array],
         Options(optimizer=True, cubic_paths=True, epsilon=1.0, max_error=1.0),
     )
 
     d = str(shape.params["d"])
     assert "C" not in d
-    assert d.count("L") == 0
     assert d.count("Q") >= 4
+    # This fixture is curved everywhere; quadratic-base tracing must not need
+    # an artificial line just to satisfy a command-count expectation.
+    assert "L" not in d
+    contour_path = " ".join(
+        [f"M{contour_array[0, 0]} {contour_array[0, 1]}"]
+        + [f"L{x} {y}" for x, y in contour_array[1:]]
+        + ["Z"]
+    )
+    source = to_polygon(Shape("path", {"d": contour_path}))
+    traced = to_polygon(shape)
+    assert traced.symmetric_difference(source).area / source.area < 0.03
 
 
 def test_compound_split_keeps_uncovered_cutout_subpaths_subtractive():
@@ -547,6 +588,11 @@ def test_compound_split_keeps_uncovered_cutout_subpaths_subtractive():
 
     assert len(out) == 1
     assert out[0].current == shape
+    body, defs = _render_optimizer_body(out)
+    assert defs == []
+    assert len(body) == 1
+    assert speck in body[0]
+    assert 'fill-rule="evenodd"' in body[0]
 
 
 def test_compound_split_keeps_disjoint_subpaths_parent_filled():
@@ -574,11 +620,10 @@ def test_compound_split_keeps_disjoint_subpaths_parent_filled():
     assert [child.fill for child in branch.children] == [region.fill, region.fill, region.fill]
 
 
-def test_compound_split_separates_nested_winding_cutout_without_fill_rule():
+def test_compound_split_preserves_same_winding_nonzero_painted_interior():
     outer = "M0 0 L100 0 L100 100 L0 100 Z"
     inner = "M25 25 L75 25 L75 75 L25 75 Z"
-    # SVG permits this hole to be described only by subpath winding.  The
-    # splitter must still expose independent geometry for primitive fitting.
+    # Both contours have the same winding: this is filled, not a hole.
     shape = Shape("path", {"d": f"{outer} {inner}"})
     region = VectorRegion(1, shape, FlatFill("#C837AB"), 0)
 
@@ -592,11 +637,12 @@ def test_compound_split_separates_nested_winding_cutout_without_fill_rule():
     )
 
     assert len(out) == 1
-    assert out[0].is_branch
-    assert [child.current.kind for child in out[0].children] == ["rect", "rect"]
+    assert out[0].is_leaf
+    _assert_same_paint([region], out)
+    assert out[0].footprint._path.contains(50, 50)
 
 
-def test_compound_split_uses_source_mask_not_containment_for_child_fill():
+def test_compound_split_ignores_source_mask_that_incorrectly_fills_a_hole():
     outer = "M0 0 L100 0 L100 100 L0 100 Z"
     inner = "M30 30 L70 30 L70 70 L30 70 Z"
     shape = Shape("path", {"d": f"{outer} {inner}", "fill_rule": "evenodd"})
@@ -610,10 +656,9 @@ def test_compound_split_uses_source_mask_not_containment_for_child_fill():
     )
 
     assert len(out) == 1
-    branch = out[0]
-    assert branch.is_branch
-    assert len(branch.children) == 2
-    assert [child.fill for child in branch.children] == [region.fill, region.fill]
+    assert out[0].is_leaf and out[0].current == shape
+    _assert_same_paint([region], out)
+    assert not out[0].footprint._path.contains(50, 50)
 
 
 def test_compound_split_carries_visible_region_fill_for_uncovered_subpath():
@@ -636,12 +681,14 @@ def test_compound_split_carries_visible_region_fill_for_uncovered_subpath():
         [split_compound_pass],
     )
 
-    branch = next(obj for obj in out if obj.id == region.id)
-    assert branch.is_branch
-    assert [child.fill for child in branch.children] == [region.fill, visible.fill]
+    retained = next(obj for obj in out if obj.id == region.id)
+    assert retained.is_leaf and retained.current == shape
+    assert len(out) == 2
+    _assert_same_paint([visible, region], out)
+    np.testing.assert_array_equal(_painted_on(out, "#123456")[50, 50], (0, 85, 204))
 
 
-def test_gradient_compound_split_materializes_background_cutout():
+def test_gradient_compound_split_preserves_transparent_cutout():
     outer = "M0 0 L100 0 L100 100 L0 100 Z"
     inner = "M25 25 L75 25 L75 75 L25 75 Z"
     shape = Shape("path", {"d": f"{outer} {inner}", "fill_rule": "evenodd"})
@@ -655,12 +702,12 @@ def test_gradient_compound_split_materializes_background_cutout():
     )
 
     assert len(out) == 1
-    assert out[0].is_branch
-    assert [child.current.kind for child in out[0].children] == ["path", "path"]
-    assert [child.fill for child in out[0].children] == [fill, FlatFill("#FFFFFF")]
+    assert out[0].is_leaf and out[0].fill == fill
+    _assert_same_paint([region], out)
+    np.testing.assert_array_equal(_painted_on(out, "#123456")[50, 50], (18, 52, 86))
 
 
-def test_compound_split_materializes_gradient_cutout_as_white_occluder():
+def test_compound_split_preserves_transparency_through_stacked_gradient_holes():
     lower_outer = "M0 0 L100 0 L100 100 L0 100 Z"
     lower_inner = "M10 10 L90 10 L90 90 L10 90 Z"
     lower_shape = Shape("path", {"d": f"{lower_outer} {lower_inner}", "fill_rule": "evenodd"})
@@ -682,12 +729,8 @@ def test_compound_split_materializes_gradient_cutout_as_white_occluder():
         [split_compound_pass, primitives_pass],
     )
 
-    lower_branch = next(obj for obj in out if obj.id == lower.id)
-    assert lower_branch.is_branch
-    assert [child.fill for child in lower_branch.children] == [lower_fill, FlatFill("#FFFFFF")]
-
-    branch = next(obj for obj in out if obj.id == top.id)
-    assert branch.is_branch
-    assert [child.current.kind for child in branch.children] == ["path", "circle"]
-    assert branch.children[0].fill == top_fill
-    assert branch.children[1].fill == FlatFill("#FFFFFF")
+    assert all(region.is_leaf for region in out)
+    assert [region.fill for region in out] == [lower_fill, top_fill]
+    _assert_same_paint([lower, top], out)
+    for background, rgb in (("#123456", (18, 52, 86)), ("#ef7090", (239, 112, 144))):
+        np.testing.assert_array_equal(_painted_on(out, background)[50, 50], rgb)

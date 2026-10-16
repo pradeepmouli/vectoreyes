@@ -1,4 +1,3 @@
-import math
 from pathlib import Path
 
 import numpy as np
@@ -7,8 +6,17 @@ from PIL import Image
 
 from vectormark.drawing_plan import parse_plan
 from vectormark import drawing_refine
+from vectormark.drawing_actions import ActionSettings
+from vectormark.drawing_engine import RasterImage
+from vectormark.drawing_recipe import (
+    EffectiveDrawingRecipe,
+    build_geometry_evidence,
+    build_paint_evidence,
+)
+from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
 from vectormark.drawing_refine import drawing_summary, labeled_drawing_svg, refine, render_drawing, root_regions
-from vectormark.drawing_state import DrawingStore
+from vectormark.drawing_render import render_drawing as render_canonical_drawing
+from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.drawing_trace import PythonTraceEngine, TraceCommand, TraceOptions, TracePath, TraceRegion, TraceResult, svg_path_commands
 from vectormark.candidate import FlatFill, LinearGradientFill
 from vectormark.fill_fit import fit_fill
@@ -31,6 +39,27 @@ def _two_regions() -> np.ndarray:
     return image
 
 
+def _canonical_inputs(trace, regions, rgb):
+    source = RasterImage(trace.width, trace.height, "rgb8", rgb.tobytes())
+    evidence = build_geometry_evidence(
+        kind="source",
+        trace=trace,
+        geometry_source=source,
+        trace_roots=tuple(regions),
+    )
+    paint = build_paint_evidence(source)
+    recipe = EffectiveDrawingRecipe(
+        evidence.revision,
+        evidence.engine_revision,
+        ActionSettings(
+            epsilon=trace.options.simplify_tolerance,
+            max_error=trace.options.curve_tolerance,
+            fit_strategy=trace.options.fit_strategy,
+        ),
+    )
+    return evidence, paint, recipe
+
+
 def _gradient_bands() -> np.ndarray:
     image = np.full((48, 96, 3), 255, dtype=np.uint8)
     for x in range(16, 80):
@@ -43,11 +72,13 @@ def test_refine_forces_circle_and_flat_fill_without_mutating_trace():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
     original = trace.regions[0].trace_path.d
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "circle"}},
+        {"op": "fit_primitive", "target": "r1", "type": "circle"},
         {"op": "set_fill", "target": "r1", "fill": {"type": "flat", "color": "#FF6600"}},
     ]})
 
-    regions = refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    regions = refine(trace, rooted.regions, plan)
     rendered = render_drawing(trace, regions)
 
     assert '<circle id="r1"' in rendered.svg
@@ -57,9 +88,10 @@ def test_refine_forces_circle_and_flat_fill_without_mutating_trace():
 
 def test_root_regions_surface_merge_soft_gradient_bands_and_keep_raw_provenance():
     image = _gradient_bands()
-    trace = PythonTraceEngine().trace(image, TraceOptions(max_colors=8))
+    trace = PythonTraceEngine().trace(image, TraceOptions(max_sampling_colors=8))
 
-    regions = root_regions(trace, image)
+    rooted = root_regions(trace, image)
+    trace, regions = rooted.trace, rooted.regions
     summary = drawing_summary(trace, regions)
     rendered = render_drawing(trace, regions)
 
@@ -71,7 +103,7 @@ def test_root_regions_surface_merge_soft_gradient_bands_and_keep_raw_provenance(
     assert all("geometry" in region and "source_regions" in region for region in summary["regions"])
 
 
-def test_geometry_trace_is_the_root_geometry_and_partitions_source_fill():
+def test_material_polylines_own_root_geometry_and_source_fill():
     image = np.full((48, 48, 3), (254, 254, 254), dtype=np.uint8)
     image[12:36, 12:36] = (10, 120, 240)
     trace = PythonTraceEngine().trace(
@@ -79,18 +111,21 @@ def test_geometry_trace_is_the_root_geometry_and_partitions_source_fill():
         TraceOptions(source_has_alpha=False, remove_background="auto"),
     )
 
-    roots = root_regions(trace, image)
+    rooted = root_regions(trace, image)
+    trace, roots = rooted.trace, rooted.regions
 
     assert len(roots) == len(trace.geometry_regions) == 1
     assert roots[0].is_leaf
-    assert roots[0].diagnostics["geometry_seed"]["trace_region"] == "g1"
+    assert "geometry_seed" not in roots[0].diagnostics
+    assert roots[0].diagnostics["surface_merge"]["geometry_source"] == "material_polyline_union"
     assert np.array_equal(roots[0].raster, rasterize(roots[0].footprint, image.shape[:2]))
 
 
 def test_auto_refine_refits_every_final_leaf_from_source_after_geometry_passes():
     image = _two_regions()
     trace = PythonTraceEngine().trace(image, TraceOptions())
-    roots = root_regions(trace, image)
+    rooted = root_regions(trace, image)
+    trace, roots = rooted.trace, rooted.regions
     stale = tuple(
         region.with_current(region.current, fill=FlatFill("#010203"))
         for region in roots
@@ -143,7 +178,8 @@ def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(
 
 def test_drawing_summary_exposes_commands_as_the_canonical_path_addresses():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
-    summary = drawing_summary(trace, root_regions(trace))
+    rooted = root_regions(trace)
+    summary = drawing_summary(rooted.trace, rooted.regions)
     geometry = summary["regions"][0]["geometry"]
 
     assert geometry["commands"]
@@ -193,8 +229,10 @@ def test_merge_one_semantic_root_unions_all_of_its_current_children():
     merged = refine(trace, (root,), plan)
     report = render_drawing(trace, merged).report
 
-    assert [target["id"] for target in report["targets"]] == ["blue"]
+    assert [target["id"] for target in report["targets"]] == ["blue-1", "blue-2"]
     assert report["targets"][0]["source_regions"] == ("r1", "r2")
+    assert merged[0].is_branch
+    assert merged[0].footprint.symmetric_difference(root.footprint).area == 0
 
 
 @pytest.mark.parametrize(
@@ -251,7 +289,9 @@ def test_merge_invalidates_its_inherited_fill_then_refills_from_the_cached_sourc
         merged_mask, rgb, flat_hex=drawing_refine._sampled_flat_hex(merged_mask, rgb)
     )
     assert merged[0].fill != FlatFill("#112233")
-    assert merged[0].diagnostics["fill"] == {"status": "refit", "mask": "current_footprint"}
+    assert merged[0].diagnostics["fill"]["status"] == "refit"
+    assert merged[0].diagnostics["fill"]["mask"] == "visible_source_material_core"
+    assert 0 < merged[0].diagnostics["fill"]["sampled_pixels"] <= int(merged_mask.sum())
 
 
 def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cached_source():
@@ -276,7 +316,8 @@ def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cach
             child_mask, rgb, flat_hex=drawing_refine._sampled_flat_hex(child_mask, rgb)
         )
         assert child.fill != FlatFill("#FF6600")
-    assert all(child.diagnostics["fill"] == {"status": "refit", "mask": "current_footprint"} for child in split[0].leaves())
+    assert all(child.diagnostics["fill"]["status"] == "refit" for child in split[0].leaves())
+    assert all(child.diagnostics["fill"]["mask"] == "visible_source_material_core" for child in split[0].leaves())
 
 
 def test_refine_uses_declared_z_order():
@@ -285,7 +326,9 @@ def test_refine_uses_declared_z_order():
         {"op": "set_z_order", "targets": ["r2", "r1"]},
     ]})
 
-    regions = refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    regions = refine(trace, rooted.regions, plan)
     rendered = render_drawing(trace, regions)
 
     assert rendered.svg.index('id="r2"') < rendered.svg.index('id="r1"')
@@ -298,11 +341,21 @@ def test_merge_creates_one_native_target_with_combined_source_provenance():
         {"op": "set_z_order", "targets": ["g1"]},
     ]})
 
-    regions = refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    regions = refine(trace, rooted.regions, plan)
     report = render_drawing(trace, regions).report
 
     assert len(regions) == 1
-    assert report["targets"] == ({"id": "g1", "root_id": "g1", "source_regions": ("r1", "r2"), "geometry": "path", "fill": "FlatFill", "z": 0.0, "diagnostics": {"merge": {"unioned": True, "sources": ["r1", "r2"]}}},)
+    assert regions[0].is_branch
+    assert [target["id"] for target in report["targets"]] == ["g1-1", "g1-2"]
+    assert [target["z"] for target in report["targets"]] == [0.0, 1.0]
+    assert all(target["source_regions"] == ("r1", "r2") for target in report["targets"])
+    assert all(target["diagnostics"]["merge"] == {"unioned": True, "sources": ["r1", "r2"]}
+               for target in report["targets"])
+    assert regions[0].footprint.symmetric_difference(
+        drawing_refine.unary_union([root.footprint for root in rooted.regions])
+    ).area == 0
 
 
 def test_merge_unions_adjacent_same_fill_geometry_before_svg_emission():
@@ -351,26 +404,23 @@ def test_merge_accepts_a_child_region_target_and_removes_it_from_its_parent_tree
     assert merged[0].footprint.area == 200.0
 
 
-def test_path_local_simplify_and_stitch_run_after_the_requested_path_is_fitted():
+def test_path_local_simplify_runs_after_the_requested_path_is_fitted():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
     command = next(command for command in trace.regions[0].trace_path.commands if command.command not in {"M", "Z"})
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {
-            "op": "set_geometry",
+            "op": "update_geometry",
             "target": "r1",
-            "geometry": {
-                "type": "path",
-                "ops": [
+            "ops": [
                     {"op": "fit", "target": command.id, "type": "quadratic"},
                     {"op": "simplify"},
-                    {"op": "stitch"},
-                    {"op": "close"},
                 ],
-            },
         },
     ]})
 
-    refined = refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    refined = refine(trace, rooted.regions, plan)
 
     assert refined[0].current is not None and refined[0].current.kind == "path"
 
@@ -402,16 +452,14 @@ def test_path_geometry_preserves_compound_subpaths_and_evenodd_fill_rule():
         z=0, raster=np.ones((10, 10), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "path", "ops": [
+        {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "fit", "target": "r1.p0.c1", "type": "keep"},
             {"op": "fit", "target": "r1.p0.c2", "type": "keep"},
             {"op": "fit", "target": "r1.p0.c3", "type": "keep"},
-            {"op": "close"},
             {"op": "fit", "target": "r1.p1.c1", "type": "keep"},
             {"op": "fit", "target": "r1.p1.c2", "type": "keep"},
             {"op": "fit", "target": "r1.p1.c3", "type": "keep"},
-            {"op": "close"},
-        ]}},
+        ]},
     ]})
 
     refined = refine(trace, (root,), plan)
@@ -423,14 +471,15 @@ def test_path_geometry_preserves_compound_subpaths_and_evenodd_fill_rule():
 
 def test_path_fit_addresses_a_segment_child_and_preserves_unedited_retained_geometry():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
-    root = root_regions(trace)[0]
+    rooted = root_regions(trace)
+    trace, root = rooted.trace, rooted.regions[0]
     assert root.current is not None
     original = root.current.params["d"]
     line_command = next(command for command in svg_path_commands(original, "r1") if command.command == "Q")
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "path", "ops": [
+        {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "fit", "target": line_command.id, "type": "line"},
-        ]}},
+        ]},
     ]})
 
     refined = refine(trace, (root,), plan)
@@ -462,9 +511,9 @@ def test_path_match_length_uses_another_retained_segment_as_its_reference():
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "path", "ops": [
+        {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "match_length", "target": "r1.p0.c2", "reference": "r1.p0.c1"},
-        ]}},
+        ]},
     ]})
 
     refined = refine(trace, (root,), plan)
@@ -476,7 +525,7 @@ def test_path_match_length_uses_another_retained_segment_as_its_reference():
 @pytest.mark.parametrize(
     ("path_op", "expected_d"),
     [
-        ({"op": "match", "target": "r1.p0.c2", "reference": "r1.p0.c1", "transform": [1, 0, 0, 1, 6, 0]}, "M0 0 L6 0 L12 0 Z"),
+        ({"op": "match", "target": "r1.p0.c2", "reference": "r1.p0.c1", "transform": {"tx": 6}}, "M0 0 L6 0 L12 0 Z"),
         ({"op": "set_parallel", "target": "r1.p0.c2", "reference": "r1.p0.c1"}, "M0 0 L4.5 1.5 L7.5 1.5 Z"),
         ({"op": "align", "target": "r1.p0.c2", "reference": "r1.p0.c1", "axes": ["y"]}, "M0 0 L6 0 L6 0 Z"),
         ({"op": "snap", "target": "r1.p0.c2", "reference": "r1.p0.c1"}, "M0 0 L6 0 L6 0 Z"),
@@ -503,7 +552,7 @@ def test_path_constraints_reconstruct_a_segment_from_a_retained_reference(path_o
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "path", "ops": [path_op]}},
+        {"op": "update_geometry", "target": "r1", "ops": [path_op]},
     ]})
 
     refined = refine(trace, (root,), plan)
@@ -534,9 +583,9 @@ def test_path_remove_joins_the_surviving_segments():
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "path", "ops": [
+        {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "remove", "target": "r1.p0.c2"},
-        ]}},
+        ]},
     ]})
 
     refined = refine(trace, (root,), plan)
@@ -547,7 +596,8 @@ def test_path_remove_joins_the_surviving_segments():
 
 def test_path_remove_does_not_schedule_implicit_cleanup(monkeypatch):
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
-    root = root_regions(trace)[0]
+    rooted = root_regions(trace)
+    trace, root = rooted.trace, rooted.regions[0]
     assert root.current is not None
     removable = next(command for command in svg_path_commands(root.current.params["d"], "r1") if command.command not in {"M", "Z"})
     calls: list[str] = []
@@ -558,9 +608,9 @@ def test_path_remove_does_not_schedule_implicit_cleanup(monkeypatch):
 
     monkeypatch.setattr(drawing_refine, "_run_detection", record_smoothing)
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_geometry", "target": "r1", "geometry": {"type": "path", "ops": [
+        {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "remove", "target": removable.id},
-        ]}},
+        ]},
     ]})
 
     refine(trace, (root,), plan)
@@ -589,70 +639,63 @@ def test_align_centers_one_retained_region_on_another_along_selected_axes():
     assert aligned.current.params["d"] == "M 3 2 L 7 2 L 7 8 L 3 8 Z"
 
 
-def test_plan_tolerances_apply_defaults_then_an_operation_override(monkeypatch):
+def test_plan_settings_preserve_global_values_and_an_operation_override():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
     command = next(command for command in trace.regions[0].trace_path.commands if command.command not in {"M", "Z"})
-    observed: list[tuple[float, float]] = []
-    original_curved_run = drawing_refine._curved_run_d
-
-    def observe_curved_run(points, max_error, *, cubic, line_epsilon, **kwargs):
-        observed.append((line_epsilon, max_error))
-        return original_curved_run(points, max_error, cubic=cubic, line_epsilon=line_epsilon, **kwargs)
-
-    monkeypatch.setattr(drawing_refine, "_curved_run_d", observe_curved_run)
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
-        "defaults": {"epsilon": 0.25, "max_error": 0.75}, "ops": [
-            {"op": "set_geometry", "target": "r1", "epsilon": 0.5, "geometry": {"type": "path", "ops": [
-                {"op": "fit", "target": command.id, "strategy": "quadratic"},
-                {"op": "close"},
-            ]}},
+        "settings": {"epsilon": 0.25, "max_error": 0.75}, "ops": [
+            {"op": "update_geometry", "target": "r1", "settings": {"epsilon": 0.5}, "ops": [
+                    {"op": "fit", "target": command.id, "type": "quadratic"},
+            ]},
         ]})
 
-    refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    refined = refine(trace, rooted.regions, plan)
 
-    assert observed == [(0.5, 0.75)]
+    assert plan.settings.model_dump(exclude_none=True) == {"epsilon": 0.25, "max_error": 0.75}
+    assert plan.ops[0].settings.model_dump(exclude_none=True) == {"epsilon": 0.5}
+    assert refined[0].current is not None and refined[0].current.kind == "path"
 
 
 def test_daikonic_root_symmetry_can_be_detected_then_explicitly_set():
     image = np.asarray(Image.open(Path("tests/fixtures/daikonic/source.png")).convert("RGB"))
     trace = PythonTraceEngine().trace(image, TraceOptions())
-    roots = root_regions(trace, image)
+    rooted = root_regions(trace, image)
+    trace, roots = rooted.trace, rooted.regions
 
     detected = refine(trace, roots, parse_plan({
         "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
         "ops": [{"op": "detect_symmetry", "target": "r1"}],
     }))
     symmetric_root = next(region for region in detected if region.drawing_id == "r1")
-    assert symmetric_root.is_branch and len(symmetric_root.children) == 2
-    axis = symmetric_root.diagnostics["symmetry"]["axis"]
-    source, target = (
-        item["id"]
-        for item in render_drawing(trace, detected).report["targets"]
-        if item["id"].startswith("r1-")
-    )
+    assert symmetric_root.is_leaf and symmetric_root.diagnostics["symmetry"]["materialized"]
+    detected_axis = symmetric_root.diagnostics["symmetry"]["axis"]
+    assert set(detected_axis) == {"point", "angle_degrees"}
+    source = target = "r1"
 
     refined = refine(trace, detected, parse_plan({
         "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0.0",
-        "ops": [{"op": "set_symmetry", "source": source, "target": target, "axis": axis}],
+        "ops": [{"op": "set_symmetry", "target": target, "axis": detected_axis}],
     }))
     updated_root = next(region for region in refined if region.drawing_id == "r1")
 
-    assert updated_root.children[1].diagnostics["symmetry"]["mode"] == "pair"
+    assert updated_root.diagnostics["symmetry"]["mode"] == "explicit_self"
     reported_target = next(target for target in render_drawing(trace, detected).report["targets"] if target["id"] == source)
-    assert reported_target["diagnostics"]["symmetry"]["axis"] == axis
+    assert reported_target["diagnostics"]["symmetry"]["axis"] == detected_axis
 
 
 def test_daikonic_supports_geometry_choices_then_a_targeted_symmetry_block():
     image = np.asarray(Image.open(Path("tests/fixtures/daikonic/source.png")).convert("RGB"))
     trace = PythonTraceEngine().trace(image, TraceOptions())
-    roots = root_regions(trace, image)
+    rooted = root_regions(trace, image)
+    trace, roots = rooted.trace, rooted.regions
     plan = parse_plan({
         "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
         "ops": [
-            {"op": "set_geometry", "target": "r1", "geometry": {"type": "cap"}},
-            {"op": "set_geometry", "target": "r2", "geometry": {"type": "rounded_rect"}},
-            {"op": "set_geometry", "target": "r3", "geometry": {"type": "rounded_trapezoid"}},
-            {"op": "detect_clones", "target": "r7"},
+            {"op": "fit_primitive", "target": "r1", "type": "circle"},
+            {"op": "fit_primitive", "target": "r2", "type": "rounded_rect"},
+            {"op": "fit_primitive", "target": "r3", "type": "ellipse"},
             {"op": "detect_symmetry", "target": "r1"},
             {"op": "detect_symmetry", "target": "r2"},
             {"op": "detect_symmetry", "target": "r3"},
@@ -666,7 +709,8 @@ def test_daikonic_supports_geometry_choices_then_a_targeted_symmetry_block():
     assert '<rect id="r2"' in rendered.svg and 'rx="' in rendered.svg
     target_ids = {target["id"] for target in rendered.report["targets"]}
     assert {"r1", "r3", "r8"} <= target_ids
-    assert any(target_id.startswith("r4-") for target_id in target_ids)
+    assert "r4" in target_ids
+    assert next(region for region in refined if region.drawing_id == "r4").diagnostics["symmetry"]["materialized"]
     base_band = next(region for region in roots if region.drawing_id == "r2")
     refined_band = next(region for region in refined if region.drawing_id == "r2")
     assert base_band is not refined_band
@@ -675,32 +719,49 @@ def test_daikonic_supports_geometry_choices_then_a_targeted_symmetry_block():
     for target_id in ("r1", "r2", "r3"):
         target = next(target for target in rendered.report["targets"] if target["id"] == target_id)
         assert target["diagnostics"]["symmetry"]["mode"] == "intrinsic"
-    leaf = next(target for target in rendered.report["targets"] if target["id"] == "r8")
-    assert leaf["geometry"] == "use"
-    assert leaf["diagnostics"]["clones"]["matched_source"] == 7
-    a, b, c, d, *_translation = leaf["diagnostics"]["clones"]["transform"]
-    assert a * d - b * c < 0.0
 
 
-def test_refined_regions_are_the_retained_version_state_and_svg_is_a_projection():
-    trace = PythonTraceEngine().trace(_disk(), TraceOptions())
-    regions = root_regions(trace)
+def test_canonical_drawing_is_the_retained_version_and_svg_is_a_projection():
+    rgb = _disk()
+    trace = PythonTraceEngine().trace(rgb, TraceOptions())
+    rooted = root_regions(trace, rgb)
+    trace, regions = rooted.trace, rooted.regions
     store = DrawingStore()
-    session = object()
-    drawing = store.create(session, trace, regions=regions)
-    version = store.append(session, drawing.id, "v0", plan={}, regions=regions)
+    drawing_id = store.new_drawing_id()
+    evidence, paint, recipe = _canonical_inputs(trace, regions, rgb)
+    execution = propose_effective_recipe(
+        drawing_id=drawing_id, evidence=evidence, paint=paint, recipe=recipe
+    )
+    (version,) = store.create(
+        drawing_id,
+        paint,
+        (VersionCandidate(
+            execution.drawing,
+            evidence,
+            None,
+            (),
+            recipe,
+            execution.replay,
+            baseline_candidate_index=0,
+        ),),
+    )
 
-    assert all(isinstance(region, VectorRegion) for region in version.regions)
-    assert render_drawing(trace, version.regions).svg == render_drawing(trace, regions).svg
+    assert version.drawing == execution.drawing
+    assert not hasattr(version, "regions")
+    assert render_canonical_drawing(version.drawing) == render_canonical_drawing(
+        execution.drawing
+    )
 
 
 def test_refine_applies_an_explicit_clone_to_native_vector_regions():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "clone", "source": "r1", "target": "r2", "transform": [1, 0, 0, 1, 32, 0]},
+        {"op": "assign_clone", "source": "r1", "target": "r2", "transforms": [{"tx": 32}]},
     ]})
 
-    regions = refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    regions = refine(trace, rooted.regions, plan)
     rendered = render_drawing(trace, regions)
 
     assert '<use id="r2" href="#r1-geometry"' in rendered.svg
@@ -710,10 +771,12 @@ def test_refine_applies_an_explicit_clone_to_native_vector_regions():
 def test_clone_instances_keep_distinct_target_fills():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "clone", "source": "r1", "target": "r2", "transform": [1, 0, 0, 1, 32, 0]},
+        {"op": "assign_clone", "source": "r1", "target": "r2", "transforms": [{"tx": 32}]},
     ]})
 
-    regions = refine(trace, root_regions(trace), plan)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    regions = refine(trace, rooted.regions, plan)
     rendered = render_drawing(trace, regions)
 
     assert '<path id="r1-geometry"' in rendered.svg
@@ -731,15 +794,17 @@ def test_detect_clones_and_set_symmetry_apply_the_existing_region_relationships(
         {"op": "detect_clones"},
     ]})
 
-    cloned = refine(trace, root_regions(trace), clones)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    cloned = refine(trace, rooted.regions, clones)
     assert cloned[1].diagnostics["clones"]["accepted"] is True
 
     symmetry = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
-        {"op": "set_symmetry", "source": "r1", "target": "r2", "axis": {"theta": math.pi / 2, "cx": 30, "cy": 16}},
+        {"op": "set_symmetry", "target": "r2", "axis": {"point": [46, 16], "angle_degrees": 90}},
     ]})
-    mirrored = refine(trace, root_regions(trace), symmetry)
+    mirrored = refine(trace, rooted.regions, symmetry)
 
-    assert mirrored[1].diagnostics["symmetry"]["mode"] == "pair"
+    assert mirrored[1].diagnostics["symmetry"]["mode"] == "explicit_self"
 
 
 def test_branch_children_are_addressable_with_the_existing_hyphenated_convention():
@@ -766,42 +831,113 @@ def test_branch_children_are_addressable_with_the_existing_hyphenated_convention
     assert 'id="r1-2" fill="#FF6600"' in rendered.svg
 
 
-def test_detect_symmetry_exposes_refinable_hyphenated_child_regions():
+def test_detect_symmetry_publishes_one_joined_target_for_polish_and_versions():
     image = np.full((64, 64, 3), 255, dtype=np.uint8)
     image[16:48, 16:48] = (20, 100, 240)
     trace = PythonTraceEngine().trace(image, TraceOptions())
     detect = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "detect_symmetry", "target": "r1"},
     ]})
-    regions = refine(trace, root_regions(trace), detect)
+    rooted = root_regions(trace)
+    trace = rooted.trace
+    regions = refine(trace, rooted.regions, detect)
 
-    assert {target["id"] for target in render_drawing(trace, regions).report["targets"]} == {"r1-1", "r1-2"}
+    assert {target["id"] for target in render_drawing(trace, regions).report["targets"]} == {"r1"}
 
     polished = drawing_refine._run_detection(
         regions,
         trace,
         "stitch",
-        "r1-1",
+        "r1",
         epsilon=trace.options.simplify_tolerance,
         max_error=trace.options.curve_tolerance,
     )
     polished_root = polished[0]
-    assert polished_root.children[1].current is not None
-    assert polished_root.children[1].current.kind == "path"
-    assert polished_root.children[1].diagnostics["symmetry"]["baked_for_polish"] is True
+    assert polished_root.current is not None
+    assert polished_root.current.kind == "path"
+    assert polished_root.diagnostics["symmetry"]["materialized"] is True
 
     fill_child = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0.0", "ops": [
-        {"op": "set_fill", "target": "r1-2", "fill": {"type": "flat", "color": "#FF6600"}},
+        {"op": "set_fill", "target": "r1", "fill": {"type": "flat", "color": "#FF6600"}},
     ]})
     refined = refine(trace, regions, fill_child)
 
-    assert 'id="r1-2"' in render_drawing(trace, refined).svg
+    assert 'id="r1"' in render_drawing(trace, refined).svg
 
     store = DrawingStore()
-    session = object()
-    drawing = store.create(session, trace, regions=root_regions(trace))
-    version = store.append(session, drawing.id, "v0", plan={}, regions=refined)
-    _, retained = store.get(session, drawing.id, version.id)
+    drawing_id = store.new_drawing_id()
+    evidence, paint, base_recipe = _canonical_inputs(trace, rooted.regions, image)
+    base_execution = propose_effective_recipe(
+        drawing_id=drawing_id,
+        evidence=evidence,
+        paint=paint,
+        recipe=base_recipe,
+    )
+    (base_version,) = store.create(
+        drawing_id,
+        paint,
+        (VersionCandidate(
+            base_execution.drawing,
+            evidence,
+            None,
+            (),
+            base_recipe,
+            base_execution.replay,
+            baseline_candidate_index=0,
+        ),),
+    )
+    detected_recipe = extend_recipe_with_plan(
+        evidence=evidence,
+        paint=paint,
+        base_recipe=base_recipe,
+        plan=detect,
+    ).recipe
+    detected_execution = propose_effective_recipe(
+        drawing_id=drawing_id,
+        evidence=evidence,
+        paint=paint,
+        recipe=detected_recipe,
+    )
+    (detected_version,) = store.append(
+        drawing_id,
+        base_version.id,
+        (VersionCandidate(
+            detected_execution.drawing,
+            None,
+            detect,
+            (),
+            detected_recipe,
+            detected_execution.replay,
+            baseline_version_id=base_version.id,
+        ),),
+    )
+    filled_recipe = extend_recipe_with_plan(
+        evidence=evidence,
+        paint=paint,
+        base_recipe=detected_recipe,
+        plan=fill_child,
+    ).recipe
+    filled_execution = propose_effective_recipe(
+        drawing_id=drawing_id,
+        evidence=evidence,
+        paint=paint,
+        recipe=filled_recipe,
+    )
+    (filled_version,) = store.append(
+        drawing_id,
+        detected_version.id,
+        (VersionCandidate(
+            filled_execution.drawing,
+            None,
+            fill_child,
+            (),
+            filled_recipe,
+            filled_execution.replay,
+            baseline_version_id=base_version.id,
+        ),),
+    )
+    retained = store.get_version(drawing_id, filled_version.id)
 
-    assert retained.regions is not None
-    assert 'id="r1-2"' in render_drawing(trace, retained.regions).svg
+    assert retained.parent_id == detected_version.id
+    assert retained.drawing == filled_execution.drawing
+    assert 'id="r1"' in render_canonical_drawing(retained.drawing).svg

@@ -5,7 +5,9 @@ from __future__ import annotations
 from bisect import bisect_left, insort
 
 import numpy as np
+from scipy.ndimage import gaussian_filter1d
 from skimage.measure import find_contours
+from .types import CoverageField
 
 _CORNER_RDP_EPS = 2.0        # contour->polygon simplification tolerance (px): 2.0 avoids arc fragmentation
 _CORNER_STRAIGHT_TOL = 2.5   # max TLS perpendicular residual (px) for an edge to count as a straight side
@@ -20,29 +22,37 @@ def _polygon_area(c: np.ndarray) -> float:
     return float(abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1))) / 2.0)
 
 
-def region_contours(mask: np.ndarray, *, coverage: np.ndarray | None = None) -> list[np.ndarray]:
+def _coverage_contours(mask: np.ndarray, coverage: CoverageField | np.ndarray | None) -> list[np.ndarray]:
+    if isinstance(coverage, CoverageField):
+        if coverage.canvas_shape != mask.shape:
+            raise ValueError("coverage canvas does not match the region mask")
+        field = coverage.values
+        x, y = coverage.origin
+    else:
+        field = mask.astype(float) if coverage is None else coverage
+        x = y = 0
+    contours = find_contours(np.pad(field, 1), 0.5)
+    return [np.column_stack([c[:, 1] - 1 + x, c[:, 0] - 1 + y]) for c in contours]
+
+
+def region_contours(mask: np.ndarray, *, coverage: CoverageField | np.ndarray | None = None) -> list[np.ndarray]:
     """All sub-pixel contours (outer + holes), (N,2) (x,y), area-sorted (outer first).
     With `coverage` (a float α field, boundary at 0.5) the contour is extracted from the
     smooth field instead of the bilevel mask; `coverage=None` is the original behavior."""
-    field = mask.astype(float) if coverage is None else coverage
-    padded = np.pad(field, 1)
-    contours = find_contours(padded, 0.5)               # (row, col) == (y, x)
-    out = [np.column_stack([c[:, 1] - 1, c[:, 0] - 1]) for c in contours]  # -> (x,y), unpad
+    out = _coverage_contours(mask, coverage)
     out.sort(key=_polygon_area, reverse=True)
     return out
 
 
-def outer_contour(mask: np.ndarray, *, coverage: np.ndarray | None = None) -> np.ndarray:
+def outer_contour(mask: np.ndarray, *, coverage: CoverageField | np.ndarray | None = None) -> np.ndarray:
     """Longest sub-pixel contour of `mask`, as an (N, 2) array of (x, y) points.
     With `coverage` (a float α field, boundary at 0.5) the contour is extracted from the
     smooth field instead of the bilevel mask; `coverage=None` is the original behavior."""
-    field = mask.astype(float) if coverage is None else coverage
-    padded = np.pad(field, 1)
-    contours = find_contours(padded, 0.5)
+    contours = _coverage_contours(mask, coverage)
     if not contours:
         return np.empty((0, 2))
     longest = max(contours, key=len)                 # rows of (row, col) == (y, x)
-    return np.column_stack([longest[:, 1] - 1, longest[:, 0] - 1])  # -> (x, y), unpad
+    return longest
 
 
 def rdp(points: np.ndarray, epsilon: float) -> np.ndarray:
@@ -79,11 +89,10 @@ def corner_indices(
 
     `poly` is assumed closed (first point repeated at the end).
 
-    ``support_radius`` measures the two tangents over arc length on either
-    side of a candidate rather than using its immediate neighbours.  This
-    recovers a real corner whose raster/AA transition occupies a few short
-    polyline edges; nearby detections from that same transition are reduced to
-    their strongest turn.
+    ``support_radius`` is a maximum, not a symmetric window. Each side grows
+    independently while its tangent remains stable, stopping before a distinct
+    neighboring bend. Nearby same-direction detections from one AA transition
+    are reduced to their strongest turn; opposing turns remain independent.
     """
     pts = np.asarray(poly, dtype=float)
     n = len(pts) - 1 if np.allclose(pts[0], pts[-1]) else len(pts)
@@ -98,11 +107,17 @@ def corner_indices(
     perimeter = float(edge_lengths.sum())
 
     def point_at_arc(index: int, step: int, distance: float) -> np.ndarray:
-        """Return the closed-polyline point ``distance`` from one vertex."""
+        """Grow one side's support without crossing another resolved bend."""
+        origin = pts[index % n]
         point = pts[index % n].astype(float, copy=True)
         remaining = distance
         current = index % n
-        while remaining > 1e-9:
+        # A tangent estimate should span raster noise, not turn onto the next
+        # design side. This stability bound is separate from corner acceptance.
+        stability_dot = float(np.cos(np.radians(10.0)))
+        for _ in range(n):
+            if remaining <= 1e-9:
+                break
             following = (current + step) % n
             end = pts[following].astype(float, copy=False)
             direction = end - point
@@ -110,6 +125,12 @@ def corner_indices(
             if length <= 1e-12:
                 current = following
                 continue
+            support = point - origin
+            support_length = float(np.hypot(*support))
+            if support_length > 1e-9:
+                alignment = float(np.dot(support, direction) / (support_length * length))
+                if alignment < stability_dot:
+                    break
             if length >= remaining:
                 return point + direction * (remaining / length)
             point = end.copy()
@@ -121,7 +142,7 @@ def corner_indices(
         distance = abs(right - left)
         return min(distance, perimeter - distance)
 
-    scored: list[tuple[int, float]] = []
+    scored: list[tuple[int, float, int]] = []
     for i in range(n):
         prev, cur, nxt = pts[(i - 1) % n], pts[i % n], pts[(i + 1) % n]
         # The support window below makes the *angle* AA-tolerant.  It does not
@@ -143,18 +164,22 @@ def corner_indices(
             continue
         cross = v1[0] * v2[1] - v1[1] * v2[0]   # 2-D scalar cross (NumPy 2.0)
         ang = np.arctan2(cross, np.dot(v1, v2))
-        if abs(ang) >= thresh:
-            scored.append((i, abs(float(ang))))
+        turn = abs(float(ang))
+        if turn >= thresh:
+            scored.append((i, turn, 1 if ang > 0.0 else -1))
     if not radius:
-        return [index for index, _score in scored]
+        return [index for index, _score, _orientation in scored]
 
     # An AA corner often produces two adjacent candidate vertices.  Retain the
     # stronger turn once, rather than splitting the curve fit at both sides of
     # the same soft transition.
     selected: list[int] = []
-    selected_arcs: list[float] = []
-    for index, _score in sorted(scored, key=lambda item: (-item[1], item[0])):
+    selected_arcs_by_orientation: dict[int, list[float]] = {-1: [], 1: []}
+    for index, _score, orientation in sorted(scored, key=lambda item: (-item[1], item[0])):
         arc = float(arc_at_vertex[index])
+        # Opposing bends bound a step/serif, not duplicate AA observations of
+        # one corner. Deduplicate only turns with matching orientation.
+        selected_arcs = selected_arcs_by_orientation[orientation]
         insertion = bisect_left(selected_arcs, arc)
         neighbours: list[float] = []
         if selected_arcs:
@@ -198,7 +223,10 @@ def _line_intersection(c1, d1, c2, d2):
     return c1 + t[0] * d1
 
 
-def _corner_radius_at(before: np.ndarray, after: np.ndarray, vertex: np.ndarray):
+def _corner_radius_at(
+    before: np.ndarray, after: np.ndarray, vertex: np.ndarray,
+    *, aa_margin: float | None = None,
+):
     """Angle-corrected fillet radius at one polygon corner, or None if it is not a clean
     corner. `before`/`after` are the contour points on the two edges meeting at `vertex`.
 
@@ -221,6 +249,18 @@ def _corner_radius_at(before: np.ndarray, after: np.ndarray, vertex: np.ndarray)
                    float(np.hypot(*(after[0] - after[-1]))))
     if edge_len <= 0 or inset > _CORNER_MAX_FILLET_FRAC * edge_len:
         return None                                  # too deep -> a cap, not a corner fillet
+    if aa_margin is not None:
+        if not np.isfinite(aa_margin) or aa_margin < 0:
+            raise ValueError("aa_margin must be finite and nonnegative")
+        # The AA allowance measures visible contour displacement, not the
+        # angle-amplified fillet radius. Include line-fit uncertainty: the
+        # intersection of shallow edges is less well-conditioned.
+        sine = abs(float(d1[0] * d2[1] - d1[1] * d2[0]))
+        if sine <= 1e-9:
+            return None
+        intersection_uncertainty = (r1 + r2) / sine
+        if inset <= aa_margin + intersection_uncertainty:
+            return 0.0
     # interior angle between the two edges (directions point from P into each edge body)
     m1 = before[:max(1, len(before) // 2)].mean(axis=0) - p
     m2 = after[len(after) // 2:].mean(axis=0) - p
@@ -234,7 +274,150 @@ def _corner_radius_at(before: np.ndarray, after: np.ndarray, vertex: np.ndarray)
     return inset / denom
 
 
-def region_corner_radius(mask: np.ndarray, *, coverage: np.ndarray | None = None) -> float:
+def corner_curve_radius_at(
+    contour: np.ndarray,
+    *,
+    previous_index: int,
+    corner_index: int,
+    following_index: int,
+    aa_margin: float | None = None,
+) -> float | None:
+    """Measure one source-contour corner curve from three established vertices.
+
+    The vertices must be indexes into the same closed, sub-pixel contour. A
+    returned value is the geometric fillet radius; ``None`` means the adjacent
+    sides do not supply enough clean line evidence to classify the turn.
+    When ``aa_margin`` is supplied, a source inset within that pixel allowance
+    plus edge-fit uncertainty returns zero (a point boundary). Radius describes
+    rounding only after this source-displacement gate succeeds.
+    """
+    points = np.asarray(contour, dtype=float)
+    if len(points) < 3:
+        return None
+    count = len(points)
+    before = _slice_loop(points, previous_index % count, corner_index % count)
+    after = _slice_loop(points, corner_index % count, following_index % count)
+    return _corner_radius_at(before, after, points[corner_index % count], aa_margin=aa_margin)
+
+
+def _corner_turn_at(
+    contour: np.ndarray, index: int, *, scale: float, aa_margin: float,
+    rounding_known: bool = False, point_only: bool = False,
+) -> tuple[int, int] | None:
+    """Locate an established corner's local turn on the source polyline.
+
+    Tangents are sampled by arc length, independently of raster sample density.
+    A point corner sampled through the same filter supplies the blur baseline;
+    only excess turn extent beyond the AA allowance establishes new rounding.
+    ``rounding_known`` locates the extent of an already classified rounded turn.
+    It does not discover corners or change source points.
+    """
+    ring = np.asarray(contour, dtype=float)
+    if len(ring) < 3:
+        return None
+    points = np.vstack([ring, ring[0]])
+    arc = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))]
+    window = min(24.0 * scale, arc[-1] / 8.0)
+    if window < 12.0 * scale:
+        return None
+    offsets = np.linspace(-window, window, 97)
+    spacing = float(offsets[1] - offsets[0])
+    center = arc[index % len(ring)]
+
+    def sample(distances: np.ndarray) -> np.ndarray:
+        positions = (center + distances) % arc[-1]
+        return np.column_stack([
+            np.interp(positions, arc, points[:, axis]) for axis in (0, 1)
+        ])
+
+    def angles(tangents: np.ndarray) -> np.ndarray:
+        return gaussian_filter1d(
+            np.unwrap(np.arctan2(tangents[:, 1], tangents[:, 0])),
+            scale / spacing, mode="nearest",
+        )
+
+    angle = angles(sample(offsets + 2.0 * scale) - sample(offsets - 2.0 * scale))
+    outer = np.abs(offsets) >= window * 0.6
+    turn = float(np.median(angle[outer & (offsets > 0)]) - np.median(angle[outer & (offsets < 0)]))
+    if abs(turn) < np.radians(25.0) or abs(turn) > np.radians(170.0):
+        return None
+    local = np.flatnonzero(np.abs(offsets) <= window * 0.5)
+    peak = int(local[np.argmax(np.gradient(angle, offsets)[local] * np.sign(turn))])
+    peak_offset = offsets[peak]
+    before = float(np.median(angle[(offsets >= peak_offset - 10.0 * scale) & (offsets <= peak_offset - 6.0 * scale)]))
+    after = float(np.median(angle[(offsets >= peak_offset + 6.0 * scale) & (offsets <= peak_offset + 10.0 * scale)]))
+    turn = after - before
+    if abs(turn) < np.radians(25.0) or abs(turn) > np.radians(170.0):
+        return None
+
+    def extent(profile: np.ndarray, peak_index: int) -> tuple[int, int] | None:
+        progress = (profile - before) / turn
+        left = np.flatnonzero((np.arange(len(offsets)) < peak_index) & (progress <= 0.1))
+        right = np.flatnonzero((np.arange(len(offsets)) > peak_index) & (progress >= 0.9))
+        return (int(left[-1]), int(right[0])) if len(left) and len(right) else None
+
+    measured = extent(angle, peak)
+    incoming = np.array([np.cos(before), np.sin(before)])
+    outgoing = np.array([np.cos(after), np.sin(after)])
+
+    def point_corner(distances: np.ndarray) -> np.ndarray:
+        return np.where((distances < 0)[:, None], distances[:, None] * incoming, distances[:, None] * outgoing)
+
+    ideal = angles(point_corner(offsets + 2.0 * scale) - point_corner(offsets - 2.0 * scale))
+    ideal += round((before - ideal[0]) / (2.0 * np.pi)) * 2.0 * np.pi
+    sharp = extent(ideal, len(offsets) // 2)
+    if measured is None or sharp is None:
+        return None
+    width = offsets[measured[1]] - offsets[measured[0]]
+    blur_width = offsets[sharp[1]] - offsets[sharp[0]]
+    # A turn spread through most of the support is side curvature, not a
+    # localized corner transition. Never promote that support to ownership.
+    if width > window * 0.75:
+        return None
+    if point_only:
+        # A rounded turn already has entry/exit localization below; moving its
+        # seed to the peak can incorrectly erase that rounded classification.
+        if width - blur_width > max(scale, aa_margin):
+            return None
+        position = (center + peak_offset) % arc[-1]
+        distances = np.abs(arc[:-1] - position)
+        peak_index = int(np.argmin(np.minimum(distances, arc[-1] - distances)))
+        return peak_index, peak_index
+    if not rounding_known and width - blur_width <= max(scale, aa_margin):
+        return None
+    indices = []
+    for boundary in measured:
+        position = (center + offsets[boundary]) % arc[-1]
+        distances = np.abs(arc[:-1] - position)
+        indices.append(int(np.argmin(np.minimum(distances, arc[-1] - distances))))
+    return (indices[0], indices[1]) if indices[0] != indices[1] else None
+
+
+def corner_turn_index_at(
+    contour: np.ndarray, index: int, *, scale: float, aa_margin: float,
+) -> int:
+    """Localize an existing detection on the raw ring before classification.
+
+    This does not detect additional corners or change source coordinates.
+    Rounded and unsupported turns retain their seed: rounded turns use their
+    independently localized entry/exit span, not a point apex.
+    """
+    location = _corner_turn_at(contour, index, scale=scale, aa_margin=aa_margin, point_only=True)
+    return index if location is None else location[0]
+
+
+def corner_curve_span_at(
+    contour: np.ndarray, index: int, *, scale: float, aa_margin: float,
+    rounding_known: bool = False,
+) -> tuple[int, int] | None:
+    """Locate the AA-aware rounded extent of an established source turn."""
+    return _corner_turn_at(
+        contour, index, scale=scale, aa_margin=aa_margin,
+        rounding_known=rounding_known,
+    )
+
+
+def region_corner_radius(mask: np.ndarray, *, coverage: CoverageField | np.ndarray | None = None) -> float:
     """One representative corner-fillet radius (px) for the shape in `mask`, measured from
     its outer contour; 0.0 for a sharp-cornered shape. rdp-approximates the contour to
     find its corners, measures the angle-corrected fillet radius at each (see

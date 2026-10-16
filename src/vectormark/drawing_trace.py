@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field
-from typing import Literal, Mapping, Protocol
+from typing import Literal, Protocol
 
 import numpy as np
 from scipy.ndimage import binary_erosion, distance_transform_edt, label
 
 from .color import extract_palette, quantize, white_canvas_mask
+from .background import BackgroundColor, background_matches
 from .contour import region_contours
 from .emit import render_svg_doc
 from .fit import fit_path_stages
+from .path_fit_evidence import AutomaticFitEvidence
+from .json_value import to_json_value
+from .material_pretrace import MaterialPretraceResult
 from .optimizer.corners import path_corner_diagnostics
 from .pipeline import attach_coverage_field
 from .segment import fill_tiny_isolated_holes, segment
@@ -20,8 +25,8 @@ from .segment import fill_tiny_isolated_holes, segment
 
 @dataclass(frozen=True)
 class TraceOptions:
-    max_colors: int = 16
-    requested_max_colors: int | Literal["auto"] | None = None
+    max_sampling_colors: int = 16
+    requested_max_sampling_colors: int | Literal["auto"] | None = None
     reserve_white_background: bool = False
     min_region_size: int = 16
     max_hole_area: int = 128
@@ -29,12 +34,14 @@ class TraceOptions:
     simplify_tolerance: float = 1.5
     curve_tolerance: float = 1.0
     fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"] = "quadratic"
-    corner_normalize: bool = False
+    support_weighted_corners: bool = False
+    corner_rounding: bool = True
     remove_background: Literal["auto", "off", "on"] = "auto"
     # ``None`` means this lower-level engine was given RGB only and must retain
     # legacy behaviour.  MCP supplies an explicit value from the source image.
     source_has_alpha: bool | None = None
     background_tolerance: float = 32.0
+    background_color: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,24 @@ class TracePath:
     commands: tuple[TraceCommand, ...]
     fit_stages: dict[str, str] = field(default_factory=dict)
     corner_diagnostics: dict[str, object] = field(default_factory=dict)
+    path_evidence: tuple[AutomaticFitEvidence, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True)
+class RootPathEvidence:
+    """One normalized leaf/subpath at root construction, before stitching.
+
+    ``path_id`` is a target reference only. Correspondence addresses belong to
+    ``fit.revision`` and must never be treated as current display command IDs.
+    """
+
+    region_id: str
+    path_id: str
+    fit: AutomaticFitEvidence
+    stage: Literal["root-pre-stitch"] = "root-pre-stitch"
+
+    def matches_output(self, d: str, *, stage: str, revision: str) -> bool:
+        return stage == self.stage and revision == self.fit.revision and self.fit.matches_output(d)
 
 
 @dataclass(frozen=True)
@@ -120,7 +145,9 @@ class TraceResult:
     regions: tuple[TraceRegion, ...]
     region_map_svg: str
     geometry_regions: tuple[GeometryTraceRegion, ...] = ()
-    background: dict[str, object] = field(default_factory=dict)
+    background: Mapping[str, object] = field(default_factory=dict)
+    material_pretrace: MaterialPretraceResult | None = field(default=None, compare=False, repr=False)
+    root_path_evidence: tuple[RootPathEvidence, ...] = field(default=(), repr=False)
 
     def to_public_dict(self, *, include_region_map: bool = False) -> dict[str, object]:
         """Return the stable, JSON-ready portion of the trace artifact."""
@@ -152,7 +179,7 @@ class TraceResult:
                 for region in self.regions
             ],
             "geometry": {
-                "background": self.background,
+                "background": to_json_value(self.background),
                 "regions": [
                     {
                         "id": region.id,
@@ -177,6 +204,13 @@ class TraceResult:
         }
         if include_region_map:
             result["region_map_svg"] = self.region_map_svg
+        if self.material_pretrace is not None:
+            result["material_pretrace"] = {
+                "shape_region_count": self.material_pretrace.shape_region_count,
+                "color_region_count": self.material_pretrace.color_region_count,
+                "gradient_support_count": len(self.material_pretrace.gradient_supports),
+                "resolved_max_sampling_colors": self.material_pretrace.resolved_max_sampling_colors,
+            }
         return result
 
 
@@ -196,6 +230,7 @@ def svg_path_commands(
     declared_corners: tuple[tuple[float, float], ...] = (),
     declared_corner_spans: tuple[tuple[tuple[float, float], tuple[float, float]], ...] = (),
     corner_diagnostics: Mapping[str, object] | None = None,
+    path_ids: Sequence[str] | None = None,
 ) -> tuple[TraceCommand, ...]:
     """Parse SVG path data into stable, target-scoped command IDs."""
     tokens = _PATH_TOKEN.findall(d)
@@ -233,7 +268,7 @@ def svg_path_commands(
         annotation = anchors_by_command.get((current_subpath - subpath_index, command_index))
         commands.append(
             TraceCommand(
-                id=f"{region_id}.p{current_subpath}.c{command_index}",
+                id=f"{path_ids[current_subpath - subpath_index] if path_ids is not None else f'{region_id}.p{current_subpath}'}.c{command_index}",
                 command=command,  # type: ignore[arg-type]
                 values=values,
                 anchor_kind="corner" if annotation is not None else None,
@@ -283,6 +318,9 @@ def _fit_trace_path(
             cubic=False,
             progressive=options.fit_strategy != "quadratic",
             progressive_allow_lines=options.fit_strategy == "progressive_allow_lines",
+            support_weighted_corners=options.support_weighted_corners,
+            corner_rounding=options.corner_rounding,
+            canvas_extent=float(max(mask.shape)),
             # Command reduction is an explicit downstream optimization, not a
             # trace-time choice.  Preserve the baseline fit here so the
             # editable drawing begins faithful to the extracted contour.
@@ -314,6 +352,7 @@ def _fit_trace_path(
         d=" ".join(paths),
         fill_rule="evenodd" if len(paths) > 1 else "nonzero",
         commands=commands,
+        path_evidence=tuple(stages.baseline_evidence for stages in path_stages),
         fit_stages={
             "baseline": " ".join(stages.baseline_d for stages in path_stages),
             "simple": " ".join(stages.simple_d for stages in path_stages),
@@ -335,7 +374,7 @@ def _polyline_trace_path(
     """Expose raw material contours without eagerly curve-fitting them.
 
     Material traces are provenance for the decomposition.  The canonical
-    drawing paths are fitted only after boundary clipping and material merging,
+    drawing paths are fitted only after compatible material polyline merging,
     so fitting every palette fragment here would be both misleading and wasted
     work.  The polyline remains addressable through the normal trace-command
     IDs when raw provenance is explicitly inspected.
@@ -373,7 +412,7 @@ def _geometry_trace(
     if options.remove_background == "off":
         return (), {"mode": "native_alpha" if options.source_has_alpha else "opaque", "applied": False}
 
-    if alpha is not None:
+    if alpha is not None and options.background_color is None:
         if alpha.shape != quantized.shape[:2]:
             raise ValueError("alpha coverage dimensions must match the trace image")
         return _geometry_components(
@@ -382,20 +421,22 @@ def _geometry_trace(
             background={"mode": "native_alpha", "applied": True, "threshold": 8},
         )
 
-    if options.remove_background == "auto" and options.source_has_alpha is not False:
+    if options.remove_background == "auto" and options.source_has_alpha is not False and options.background_color is None:
         return (), {"mode": "native_alpha" if options.source_has_alpha else "opaque", "applied": False}
 
     border = np.concatenate((quantized[0], quantized[-1], quantized[:, 0], quantized[:, -1]))
     colors, counts = np.unique(border, axis=0, return_counts=True)
-    background = colors[int(counts.argmax())].astype(float)
-    distance = np.linalg.norm(quantized.astype(float) - background, axis=2)
-    candidates = distance <= options.background_tolerance
+    background = BackgroundColor(
+        color=options.background_color or "#{:02X}{:02X}{:02X}".format(*(int(value) for value in colors[int(counts.argmax())])),
+        tolerance=options.background_tolerance,
+    )
+    candidates = background_matches(quantized, background)
     labels, _ = label(candidates, structure=np.ones((3, 3), dtype=np.uint8))
     border_labels = np.unique(np.concatenate((labels[0], labels[-1], labels[:, 0], labels[:, -1])))
     outer_background = candidates & np.isin(labels, border_labels)
     border_coverage = float(outer_background[0].sum() + outer_background[-1].sum()
                             + outer_background[:, 0].sum() + outer_background[:, -1].sum()) / float(len(border))
-    if options.remove_background == "auto" and border_coverage < 0.75:
+    if options.remove_background == "auto" and options.background_color is None and border_coverage < 0.75:
         return (), {
             "mode": "opaque",
             "applied": False,
@@ -403,12 +444,12 @@ def _geometry_trace(
         }
 
     return _geometry_components(
-        ~outer_background,
+        ~outer_background if alpha is None else (~outer_background & (alpha > 8)),
         options=options,
         background={
             "mode": "inferred_alpha",
             "applied": True,
-            "color": "#{:02X}{:02X}{:02X}".format(*(int(value) for value in background)),
+            "color": background.color,
             "tolerance": options.background_tolerance,
             "confidence": border_coverage,
         },
@@ -474,6 +515,7 @@ class PythonTraceEngine:
         options: TraceOptions,
         *,
         alpha: np.ndarray | None = None,
+        geometry_rgb: np.ndarray | None = None,
     ) -> TraceResult:
         image = np.asarray(rgb, dtype=np.uint8)
         if image.ndim != 3 or image.shape[2] != 3:
@@ -483,21 +525,21 @@ class PythonTraceEngine:
         # a relative palette floor must not erase a region before segmentation.
         white_canvas = white_canvas_mask(image) if options.reserve_white_background else None
         if white_canvas is None:
-            palette = extract_palette(image, max_colors=options.max_colors, min_fraction=0.0)
+            palette = extract_palette(image, max_sampling_colors=options.max_sampling_colors, min_fraction=0.0)
         else:
             background_pixels = image[white_canvas]
             colors, counts = np.unique(background_pixels, axis=0, return_counts=True)
             background = colors[int(counts.argmax())][None, :]
             foreground = extract_palette(
                 image[~white_canvas],
-                max_colors=options.max_colors,
+                max_sampling_colors=options.max_sampling_colors,
                 min_fraction=0.0,
             )
             palette = np.vstack((background, foreground))
         quantized = quantize(image, palette)
         regions = segment(quantized, min_area=options.min_region_size)
         if options.trace_level == "subpixel":
-            attach_coverage_field(regions, image, options.max_colors, palette=palette)
+            attach_coverage_field(regions, image, options.max_sampling_colors, palette=palette)
 
         ordered = sorted(
             regions,
@@ -534,7 +576,10 @@ class PythonTraceEngine:
                 )
             )
         result_regions = tuple(traced)
-        geometry_regions, background = _geometry_trace(quantized, options=options, alpha=alpha)
+        geometry_source = quantized if geometry_rgb is None else np.asarray(geometry_rgb, dtype=np.uint8)
+        if geometry_source.shape != image.shape:
+            raise ValueError("geometry RGB dimensions must match the trace image")
+        geometry_regions, background = _geometry_trace(geometry_source, options=options, alpha=alpha)
         return TraceResult(
             width=width,
             height=height,

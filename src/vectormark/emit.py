@@ -208,7 +208,8 @@ def transform_path_d(d: str, m: tuple[float, float, float, float, float, float])
         if cmd == "Z":
             continue
         if cmd == "A":
-            rx, ry, xrot, large, sweep, x, y = toks[i:i + 7]
+            arc_tokens = list(toks[i:i + 7])
+            rx, ry, xrot, large, sweep, x, y = arc_tokens
             i += 7
             nx, ny = pt(float(x), float(y))
             theta = math.radians(float(xrot))

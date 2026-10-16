@@ -2,20 +2,42 @@ from __future__ import annotations
 
 import math
 from collections import namedtuple
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from ...skia_geometry import SkPath, unary_union, affinity
 from ...candidate import FlatFill
+from ...drawing_actions import SymmetryAxisInput
 from ...contour import region_corner_radius
 from ...fit import Shape, _fmt, fit_path
 from ...refine import fit_path_half_fit, half_ellipse_cap_half_fit, symmetric_half_fit
+from ..automatic_replay import (
+    DeclareIntrinsicSymmetryOperation,
+    MirrorRegionOperation,
+    ReconstructSelfSymmetryOperation,
+    draft_input_ref,
+    operation_intent,
+)
 from ..framework import Proposal
 from ..gate import rasterize
 from ..shape_transform import bake_shape_transform
+from ..symmetry_materialize import remap_symmetry_clones, union_self_symmetry
 from ..vector_region import VectorRegion, _parse_subpaths, to_polygon
 
 Axis2D = namedtuple("Axis2D", "theta cx cy")
+
+
+@dataclass(frozen=True)
+class _SelfReconstruction:
+    axis: Axis2D
+    half: SkPath
+    reflected_half: SkPath
+    shape: Shape
+    residual: float
+    fit_kind: str
+    side: str
+    corner_radius: float
 
 _ANGLE_EPS = 1e-9
 _AREA_RATIO_TOL = 0.03
@@ -26,7 +48,6 @@ _PAIR_RESIDUAL_TOL = 0.02
 _SELF_RESIDUAL_TOL = 0.04
 _FITTED_RECONSTRUCTION_RESIDUAL_TOL = 0.04
 _SELF_AXIS_OVERLAP = 0.75
-_SELF_MIRROR_Z_OFFSET = 0.1
 _MIN_SKIA_CONTOUR_AREA = 1.0
 _MIN_SKIA_CONTOUR_AREA_FRACTION = 1e-4
 _MAX_AUTO_SYMMETRY_INTERIORS = 8
@@ -338,7 +359,7 @@ def _geometry_to_path_shape(
     return Shape("path", params)
 
 
-def _self_symmetry_branch(
+def _materialized_self_symmetry_region(
     obj: VectorRegion,
     *,
     axis: Axis2D,
@@ -346,8 +367,6 @@ def _self_symmetry_branch(
     reflected_half: SkPath,
     half_shape: Shape,
     residual: float,
-    mirror_id: int,
-    mask_shape: tuple[int, int],
 ) -> VectorRegion:
     matrix = _svg_reflection_matrix(axis)
     half_shape = _pin_half_shape_to_axis(half_shape, axis) or half_shape
@@ -357,87 +376,36 @@ def _self_symmetry_branch(
     fitted_reflected_half = _apply_svg_matrix(fitted_half, matrix)
     if fitted_reflected_half.is_empty:
         fitted_reflected_half = reflected_half
-    source = obj.with_current(
-        half_shape,
-        footprint=fitted_half,
-        raster=rasterize(fitted_half, mask_shape),
-        diagnostics=_self_symmetry_diagnostics(axis, residual),
-    )
-    mirror = VectorRegion(
-        mirror_id,
-        Shape(
-            "use",
-            {
-                "href_obj_id": int(source.id),
-                "transform": matrix,
-            },
-        ),
-        obj.fill,
-        obj.z + _SELF_MIRROR_Z_OFFSET,
-        footprint=fitted_reflected_half,
-        raster=rasterize(fitted_reflected_half, mask_shape),
-        source_label=obj.source_label,
-        color_hex=obj.color_hex,
-        drawing_id=obj.drawing_id,
-        source_regions=obj.source_regions,
-        coverage=obj.coverage,
-        diagnostics={
-            "symmetry": {
-                "accepted": True,
-                "mode": "self_mirror",
-                "matched_source": int(source.id),
-                "axis": {
-                    "theta": float(axis.theta),
-                    "cx": float(axis.cx),
-                    "cy": float(axis.cy),
-                },
-                "residual": float(residual),
-            }
-        },
-    )
-    reconstructed = unary_union([fitted_half, fitted_reflected_half])
-    return VectorRegion.branch(
-        id=obj.id,
-        children=[source, mirror],
-        z=obj.z,
-        raster=obj.raster,
-        footprint=reconstructed,
-        fill=obj.fill,
-        source_label=obj.source_label,
-        color_hex=obj.color_hex,
-        diagnostics=_self_symmetry_diagnostics(axis, residual),
+    return union_self_symmetry(
+        obj, (fitted_half, fitted_reflected_half),
+        diagnostics=_self_symmetry_diagnostics(axis, residual)["symmetry"],
     )
 
 
-def _self_symmetry_diagnostics(axis: Axis2D, residual: float) -> dict[str, object]:
+def _axis_diagnostics(axis: Axis2D) -> dict[str, object]:
+    """Serialize every detected reflection line in the explicit-action format."""
+    return SymmetryAxisInput(
+        point=(float(axis.cx), float(axis.cy)),
+        angle_degrees=math.degrees(float(axis.theta)),
+    ).model_dump(mode="json")
+
+
+def _self_symmetry_diagnostics(axis: Axis2D, residual: float) -> dict[str, dict[str, object]]:
     return {
         "symmetry": {
             "accepted": True,
             "mode": "self",
-            "axis": {
-                "theta": float(axis.theta),
-                "cx": float(axis.cx),
-                "cy": float(axis.cy),
-            },
+            "axis": _axis_diagnostics(axis),
             "residual": float(residual),
         }
     }
 
 
-def _intrinsic_symmetry_diagnostics(axis: Axis2D, residual: float) -> dict[str, object]:
+def _intrinsic_symmetry_diagnostics(axis: Axis2D, residual: float) -> dict[str, dict[str, object]]:
     """Report verified symmetry without replacing an explicit full geometry."""
-    return {
-        "symmetry": {
-            "accepted": True,
-            "mode": "intrinsic",
-            "axis": {
-                "theta": float(axis.theta),
-                "cx": float(axis.cx),
-                "cy": float(axis.cy),
-            },
-            "residual": float(residual),
-        }
-    }
+    diagnostics = _self_symmetry_diagnostics(axis, residual)
+    diagnostics["symmetry"]["mode"] = "intrinsic"
+    return diagnostics
 
 
 def _best_self_axis(flat: SkPath) -> tuple[Axis2D, float] | None:
@@ -511,7 +479,7 @@ def _symmetric_refine_half_shapes(
     max_error: float,
     corner_radius: float,
     cubic: bool,
-) -> tuple[Shape, ...]:
+) -> tuple[tuple[str, Shape], ...]:
     if flat.interiors or len(flat.geoms) != 1:
         return ()
     # A half-ellipse cap is bilaterally symmetric about a vertical line.
@@ -519,24 +487,26 @@ def _symmetric_refine_half_shapes(
         return ()
     side = _vertical_half_side(half, axis)
     contour = np.asarray(flat.exterior.coords, dtype=float)
-    shapes: list[Shape] = []
-    for build in (
-        lambda: half_ellipse_cap_half_fit(contour, float(axis.cx), side=side, max_error=max_error),
-        lambda: symmetric_half_fit(
+    shapes: list[tuple[str, Shape]] = []
+    for fit_kind, build in (
+        ("ellipse_cap", lambda: half_ellipse_cap_half_fit(
+            contour, float(axis.cx), side=side, max_error=max_error
+        )),
+        ("symmetric_half", lambda: symmetric_half_fit(
             contour,
             float(axis.cx),
             side=side,
             corner_radius=corner_radius,
             epsilon=epsilon,
             max_error=max_error,
-        ),
+        )),
     ):
         try:
             shape = build()
         except Exception:
             continue
         if shape is not None:
-            shapes.append(shape)
+            shapes.append((fit_kind, shape))
     return tuple(shapes)
 
 
@@ -548,9 +518,9 @@ def _best_self_reconstruction(
     max_error: float,
     cubic: bool,
     preserve_explicit_geometry: bool = False,
-) -> tuple[Axis2D, SkPath, SkPath, Shape, float] | None:
+) -> _SelfReconstruction | None:
     corner_radius = region_corner_radius(mask)
-    candidates: list[tuple[float, Axis2D, SkPath, SkPath, Shape]] = []
+    candidates: list[_SelfReconstruction] = []
     for axis in _self_axis_candidates(flat):
         reflected = _reflect_flat(flat, axis)
         if _residual(reflected, flat) > _SELF_RESIDUAL_TOL:
@@ -564,7 +534,7 @@ def _best_self_reconstruction(
             continue
         if reconstructed.is_empty or not isinstance(reconstructed, SkPath):
             continue
-        shapes: tuple[Shape, ...] = ()
+        shapes: tuple[tuple[str, Shape], ...] = ()
         if not preserve_explicit_geometry:
             shapes = _symmetric_refine_half_shapes(
                 flat,
@@ -588,37 +558,210 @@ def _best_self_reconstruction(
                 return None
             return fitted_residual, pinned
 
-        accepted = next((result for shape in shapes if (result := accept(shape)) is not None), None)
-        if accepted is None:
-            side = _vertical_half_side(half, axis)
+        selected: tuple[str, tuple[float, Shape]] | None = next(
+            ((fit_kind, result) for fit_kind, shape in shapes if (result := accept(shape)) is not None),
+            None,
+        )
+        side = _vertical_half_side(half, axis)
+        if selected is None:
             contour = np.asarray(flat.exterior.coords, dtype=float)
             generic_shapes = [
-                fit_path_half_fit(
+                ("path_half", fit_path_half_fit(
                     contour,
                     float(axis.cx),
                     side=side,
                     epsilon=epsilon,
                     max_error=max_error,
                     cubic=cubic,
-                ),
-                _fit_geometry_to_path_shape(half, epsilon=epsilon, max_error=max_error, cubic=cubic),
+                )),
+                ("geometry_path", _fit_geometry_to_path_shape(
+                    half, epsilon=epsilon, max_error=max_error, cubic=cubic
+                )),
             ]
-            accepted = next(
-                (result for shape in generic_shapes if shape is not None and (result := accept(shape)) is not None),
+            selected = next(
+                (
+                    (fit_kind, result)
+                    for fit_kind, shape in generic_shapes
+                    if shape is not None and (result := accept(shape)) is not None
+                ),
                 None,
             )
-        if accepted is not None:
-            fitted_residual, pinned = accepted
-            candidates.append((fitted_residual, axis, half, reflected_half, pinned))
+        if selected is not None:
+            fit_kind, (fitted_residual, pinned) = selected
+            candidates.append(_SelfReconstruction(
+                axis,
+                half,
+                reflected_half,
+                pinned,
+                fitted_residual,
+                fit_kind,
+                side,
+                corner_radius,
+            ))
 
     if not candidates:
         return None
 
-    score, axis, half, reflected_half, shape = min(
+    winner = min(
         candidates,
-        key=lambda item: (round(item[0], 12), _axis_key(item[1]), item[4].params["d"]),
+        key=lambda item: (
+            round(item.residual, 12),
+            _axis_key(item.axis),
+            item.shape.params["d"],
+        ),
     )
-    return axis, half, reflected_half, shape, score
+    return winner
+
+
+def _axis_tuple(axis: Axis2D) -> tuple[float, float, float]:
+    return float(axis.theta), float(axis.cx), float(axis.cy)
+
+
+def apply_intrinsic_symmetry(
+    target: VectorRegion, axis: Axis2D, residual: float
+) -> VectorRegion:
+    if target.current is None:
+        raise ValueError("intrinsic symmetry target has no geometry")
+    return target.with_current(
+        target.current,
+        diagnostics=_intrinsic_symmetry_diagnostics(axis, residual),
+    )
+
+
+def apply_mirror_pair(
+    source: VectorRegion,
+    target: VectorRegion,
+    axis: Axis2D,
+    matrix: tuple[float, float, float, float, float, float],
+) -> tuple[VectorRegion, VectorRegion]:
+    if source.current is None:
+        raise ValueError("mirror source has no geometry")
+    reflected = _apply_svg_matrix(source.footprint, matrix)
+    return source, target.with_current(
+        bake_shape_transform(source.current, matrix),
+        footprint=reflected,
+        diagnostics={
+            "symmetry": {
+                "accepted": True,
+                "mode": "pair",
+                "matched_source": int(source.id),
+                "axis": _axis_diagnostics(axis),
+            }
+        },
+    )
+
+
+def _selected_half_shape(
+    flat: SkPath,
+    half: SkPath,
+    axis: Axis2D,
+    *,
+    fit_kind: str,
+    side: str,
+    corner_radius: float,
+    epsilon: float,
+    max_error: float,
+    cubic: bool,
+) -> Shape:
+    contour = np.asarray(flat.exterior.coords, dtype=float)
+    if fit_kind == "ellipse_cap":
+        shape = half_ellipse_cap_half_fit(
+            contour, float(axis.cx), side=side, max_error=max_error
+        )
+    elif fit_kind == "symmetric_half":
+        shape = symmetric_half_fit(
+            contour,
+            float(axis.cx),
+            side=side,
+            corner_radius=corner_radius,
+            epsilon=epsilon,
+            max_error=max_error,
+        )
+    elif fit_kind == "path_half":
+        shape = fit_path_half_fit(
+            contour,
+            float(axis.cx),
+            side=side,
+            epsilon=epsilon,
+            max_error=max_error,
+            cubic=cubic,
+        )
+    elif fit_kind == "geometry_path":
+        shape = _fit_geometry_to_path_shape(
+            half, epsilon=epsilon, max_error=max_error, cubic=cubic
+        )
+    else:
+        raise ValueError(f"unsupported recorded symmetry fit kind: {fit_kind!r}")
+    if shape is None:
+        raise ValueError("recorded symmetry fitter no longer applies to its bound input")
+    pinned = _pin_half_shape_to_axis(shape, axis)
+    if pinned is None:
+        raise ValueError("recorded symmetry result cannot be pinned to its axis")
+    return pinned
+
+
+def apply_self_symmetry_choice(
+    snapshot: list[VectorRegion],
+    target: VectorRegion,
+    dependent_clones: tuple[VectorRegion, ...],
+    *,
+    axis: Axis2D,
+    residual: float,
+    fit_kind: str,
+    side: str,
+    corner_radius: float,
+    epsilon: float,
+    max_error: float,
+    cubic: bool,
+) -> list[VectorRegion]:
+    flat = _polygonal_flat(target.footprint)
+    if flat is None:
+        raise ValueError("recorded self-symmetry target has no polygonal footprint")
+    reconstruction_flat = _geometry_root_footprint(target, flat)
+    half = _canonical_half(reconstruction_flat, axis)
+    if half is None:
+        raise ValueError("recorded self-symmetry axis does not split its bound input")
+    reflected_half = _reflect_flat(half, axis)
+    shape = _selected_half_shape(
+        reconstruction_flat,
+        half,
+        axis,
+        fit_kind=fit_kind,
+        side=side,
+        corner_radius=corner_radius,
+        epsilon=epsilon,
+        max_error=max_error,
+        cubic=cubic,
+    )
+    replacement = _materialized_self_symmetry_region(
+        target,
+        axis=axis,
+        half=half,
+        reflected_half=reflected_half,
+        half_shape=shape,
+        residual=residual,
+    )
+    if not dependent_clones:
+        return [replacement]
+    remaining = [obj for obj in snapshot if int(obj.id) != int(target.id)]
+    candidate = [replacement, *remaining]
+    remapped = remap_symmetry_clones(
+        candidate,
+        {(int(target.id),): (int(target.id),)},
+        before=snapshot,
+    )
+    dependent_ids = {int(obj.id) for obj in dependent_clones}
+    return [replacement, *(obj for obj in remapped[1:] if int(obj.id) in dependent_ids)]
+
+
+def _intrinsic_proposal(obj: VectorRegion, axis: Axis2D, residual: float) -> Proposal:
+    target_ref = draft_input_ref(obj.id)
+    action = DeclareIntrinsicSymmetryOperation(target_ref, _axis_tuple(axis), residual)
+    return Proposal(
+        (obj.id,),
+        [apply_intrinsic_symmetry(obj, axis, residual)],
+        intent=operation_intent(action, (target_ref,), (obj.id,)),
+    )
 
 
 def _pair_proposal(
@@ -640,27 +783,17 @@ def _pair_proposal(
     reflected = _apply_svg_matrix(canonical_flat, matrix)
     if _residual(reflected, target_flat) > _PAIR_RESIDUAL_TOL:
         return None
+    source_ref = draft_input_ref(canonical.id)
+    target_ref = draft_input_ref(target.id)
+    action = MirrorRegionOperation(source_ref, target_ref, _axis_tuple(axis), matrix)
     return Proposal(
         (canonical.id, target.id),
-        [
-            canonical,
-            target.with_current(
-                bake_shape_transform(canonical.current, matrix),
-                footprint=reflected,
-                diagnostics={
-                    "symmetry": {
-                        "accepted": True,
-                        "mode": "pair",
-                        "matched_source": int(canonical.id),
-                        "axis": {
-                            "theta": float(axis.theta),
-                            "cx": float(axis.cx),
-                            "cy": float(axis.cy),
-                        },
-                    }
-                },
-            )
-        ],
+        list(apply_mirror_pair(canonical, target, axis, matrix)),
+        intent=operation_intent(
+            action,
+            (source_ref, target_ref),
+            (canonical.id, target.id),
+        ),
     )
 
 
@@ -690,7 +823,9 @@ def _material_root_self_symmetry_proposal(
     )
     if best is None:
         return None
-    axis, _half, _reflected_half, half_shape, residual = best
+    axis = best.axis
+    half_shape = best.shape
+    residual = best.residual
     fitted_half = to_polygon(half_shape)
     if fitted_half.is_empty:
         return None
@@ -793,7 +928,6 @@ def symmetry_pass(
         usable.append((obj, flat))
 
     paired_ids: set[int] = set()
-    next_id = max((int(obj.id) for obj, _flat in usable), default=-1) + 1
 
     for index, (canonical, canonical_flat) in enumerate(usable):
         if canonical.id in paired_ids:
@@ -832,12 +966,7 @@ def symmetry_pass(
             intrinsic = _best_self_axis(flat)
             if intrinsic is not None:
                 axis, residual = intrinsic
-                proposals.append(
-                    Proposal(
-                        (obj.id,),
-                        [obj.with_current(obj.current, diagnostics=_intrinsic_symmetry_diagnostics(axis, residual))],
-                    )
-                )
+                proposals.append(_intrinsic_proposal(obj, axis, residual))
             continue
         # Native primitives already encode exact geometric symmetry.  Verify
         # and report the relation without replacing their deterministic form.
@@ -845,12 +974,7 @@ def symmetry_pass(
             intrinsic = _best_self_axis(flat)
             if intrinsic is not None:
                 axis, residual = intrinsic
-                proposals.append(
-                    Proposal(
-                        (obj.id,),
-                        [obj.with_current(obj.current, diagnostics=_intrinsic_symmetry_diagnostics(axis, residual))],
-                    )
-                )
+                proposals.append(_intrinsic_proposal(obj, axis, residual))
             continue
         geometry = obj.diagnostics.get("geometry") if isinstance(obj.diagnostics, dict) else None
         explicit_kind = geometry.get("explicit") if isinstance(geometry, dict) else None
@@ -858,12 +982,7 @@ def symmetry_pass(
             intrinsic = _best_self_axis(flat)
             if intrinsic is not None:
                 axis, residual = intrinsic
-                proposals.append(
-                    Proposal(
-                        (obj.id,),
-                        [obj.with_current(obj.current, diagnostics=_intrinsic_symmetry_diagnostics(axis, residual))],
-                    )
-                )
+                proposals.append(_intrinsic_proposal(obj, axis, residual))
             continue
         if obj.current.kind != "path":
             continue
@@ -878,25 +997,84 @@ def symmetry_pass(
             preserve_explicit_geometry=preserve_explicit_geometry,
         )
         if best is None:
+            # Detection is useful even when fitting a replacement would damage
+            # an already symmetric path. Only report an unchanged freeform path
+            # as intrinsic when its reflected residual is effectively zero;
+            # a merely approximate axis still needs an accepted reconstruction.
+            intrinsic = _best_self_axis(flat)
+            if intrinsic is not None and intrinsic[1] <= 1e-9:
+                axis, residual = intrinsic
+                proposals.append(_intrinsic_proposal(obj, axis, residual))
             continue
-        axis, half, reflected_half, shape, residual = best
+        axis = best.axis
+        half = best.half
+        reflected_half = best.reflected_half
+        shape = best.shape
+        residual = best.residual
+        target_ref = draft_input_ref(obj.id)
+        action = ReconstructSelfSymmetryOperation(
+            target_ref,
+            (),
+            _axis_tuple(axis),
+            residual,
+            best.fit_kind,
+            best.side,
+            best.corner_radius,
+            epsilon,
+            max_error,
+            cubic,
+        )
         proposals.append(
             Proposal(
                 (obj.id,),
                 [
-                    _self_symmetry_branch(
+                    _materialized_self_symmetry_region(
                         obj,
                         axis=axis,
                         half=half,
                         reflected_half=reflected_half,
                         half_shape=shape,
                         residual=residual,
-                        mirror_id=next_id,
-                        mask_shape=masks[obj.id].shape,
                     )
                 ],
+                intent=operation_intent(action, (target_ref,), (obj.id,)),
             )
         )
-        next_id += 1
 
+    # A source reconstruction also changes every symbolic instance. Include
+    # affected clones in the proposal so the existing gate assesses the scene
+    # that will actually be retained and emitted.
+    for index, proposal in enumerate(proposals):
+        sources = {
+            (replacement.id,): (replacement.id,) for replacement in proposal.new_objects
+            if replacement.diagnostics.get("symmetry", {}).get("materialized")
+        }
+        if not sources:
+            continue
+        remaining = [obj for obj in objects if obj.id not in proposal.obj_ids]
+        candidate = [*proposal.new_objects, *remaining]
+        remapped = remap_symmetry_clones(candidate, sources, before=objects)
+        changed = [after for before, after in zip(remaining, remapped[len(proposal.new_objects):]) if before is not after]
+        if changed:
+            proposals[index] = Proposal(
+                (*proposal.obj_ids, *(obj.id for obj in changed)),
+                [*proposal.new_objects, *changed],
+                geometry_policy=proposal.geometry_policy,
+                intent=(
+                    operation_intent(
+                        replace(
+                            proposal.intent.action,
+                            dependent_clones=tuple(draft_input_ref(obj.id) for obj in changed),
+                        ),
+                        (
+                            *proposal.intent.inputs,
+                            *(draft_input_ref(obj.id) for obj in changed),
+                        ),
+                        (*proposal.obj_ids, *(obj.id for obj in changed)),
+                    )
+                    if proposal.intent is not None
+                    and isinstance(proposal.intent.action, ReconstructSelfSymmetryOperation)
+                    else proposal.intent
+                ),
+            )
     return proposals

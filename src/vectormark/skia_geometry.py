@@ -29,11 +29,15 @@ Public names that must match the Shapely interface consumed by vectormark:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import math
 import re
 
 import numpy as np
 import skia
+
+from ._boundary_distance import boundary_distance
 
 # ---------------------------------------------------------------------------
 # SVG path ↔ skia.Path conversion
@@ -399,54 +403,6 @@ def _ring_perimeter(pts: list[tuple[float, float]]) -> float:
     return total
 
 
-def _point_segment_distance(
-    point: tuple[float, float],
-    start: tuple[float, float],
-    end: tuple[float, float],
-) -> float:
-    dx, dy = end[0] - start[0], end[1] - start[1]
-    length_sq = dx * dx + dy * dy
-    if length_sq == 0.0:
-        return math.hypot(point[0] - start[0], point[1] - start[1])
-    t = max(0.0, min(1.0, ((point[0] - start[0]) * dx + (point[1] - start[1]) * dy) / length_sq))
-    return math.hypot(point[0] - (start[0] + t * dx), point[1] - (start[1] + t * dy))
-
-
-def _orientation(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float]) -> float:
-    return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-
-
-def _segments_intersect(
-    a0: tuple[float, float], a1: tuple[float, float], b0: tuple[float, float], b1: tuple[float, float]
-) -> bool:
-    def on_segment(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> bool:
-        return min(p[0], r[0]) <= q[0] <= max(p[0], r[0]) and min(p[1], r[1]) <= q[1] <= max(p[1], r[1])
-
-    o1, o2 = _orientation(a0, a1, b0), _orientation(a0, a1, b1)
-    o3, o4 = _orientation(b0, b1, a0), _orientation(b0, b1, a1)
-    if (o1 > 0) != (o2 > 0) and (o3 > 0) != (o4 > 0):
-        return True
-    return (
-        (o1 == 0 and on_segment(a0, b0, a1))
-        or (o2 == 0 and on_segment(a0, b1, a1))
-        or (o3 == 0 and on_segment(b0, a0, b1))
-        or (o4 == 0 and on_segment(b0, a1, b1))
-    )
-
-
-def _segment_distance(
-    a0: tuple[float, float], a1: tuple[float, float], b0: tuple[float, float], b1: tuple[float, float]
-) -> float:
-    if _segments_intersect(a0, a1, b0, b1):
-        return 0.0
-    return min(
-        _point_segment_distance(a0, b0, b1),
-        _point_segment_distance(a1, b0, b1),
-        _point_segment_distance(b0, a0, a1),
-        _point_segment_distance(b1, a0, a1),
-    )
-
-
 def _point_in_ring(point: tuple[float, float], ring: list[tuple[float, float]]) -> bool:
     """Ray-casting point-in-polygon test."""
     x, y = point
@@ -798,6 +754,62 @@ class SkPath:
             return SkPath.from_skia(result) if result is not None else SkPath()
         return self
 
+    def outset(self, distance: float) -> "SkPath":
+        """Return the path plus a round-joined exterior stroke of ``distance``.
+
+        This is intentionally distinct from the Shapely-compatible ``buffer``
+        shim above. Optimizer construction passes use it to create a temporary
+        overlap before a Skia boolean operation; callers should not treat it as
+        a general-purpose offset-curve implementation.
+        """
+        if distance < 0:
+            raise ValueError("SkPath.outset distance must be non-negative")
+        if distance == 0 or self.is_empty:
+            return self.buffer(0)
+        paint = skia.Paint(
+            Style=skia.Paint.kStroke_Style,
+            StrokeWidth=float(distance) * 2.0,
+            StrokeJoin=skia.Paint.kRound_Join,
+            StrokeCap=skia.Paint.kRound_Cap,
+        )
+        stroke = skia.Path()
+        if not paint.getFillPath(self._path, stroke):
+            return SkPath()
+        source = skia.Simplify(self._path)
+        normalized_stroke = skia.Simplify(stroke)
+        builder = skia.OpBuilder()
+        try:
+            builder.add(source if source is not None else self._path, skia.kUnion_PathOp)
+            builder.add(normalized_stroke if normalized_stroke is not None else stroke, skia.kUnion_PathOp)
+            result = builder.resolve()
+        except RuntimeError:
+            return SkPath()
+        if result is None:
+            return SkPath()
+        simplified = skia.Simplify(result)
+        return SkPath.from_skia(simplified if simplified is not None else result)
+
+    def filled_small_holes(self, max_area: float) -> "SkPath":
+        """Return a copy with interior rings up to ``max_area`` filled."""
+        if max_area < 0:
+            raise ValueError("maximum hole area must be non-negative")
+        holes: list[SkPath] = []
+        for ring in self.interiors:
+            hole = SkPath(shell=list(ring.coords))
+            if hole.area <= max_area:
+                holes.append(hole)
+        if not holes:
+            return self
+        builder = skia.OpBuilder()
+        try:
+            builder.add(self._path, skia.kUnion_PathOp)
+            for hole in holes:
+                builder.add(hole._path, skia.kUnion_PathOp)
+            result = builder.resolve()
+        except RuntimeError:
+            return self
+        return SkPath.from_skia(result) if result is not None else self
+
     def intersection(self, other: "SkPath") -> "SkPath":
         result = skia.Op(self._path, other._path, skia.kIntersect_PathOp)
         return SkPath.from_skia(result) if result is not None else SkPath()
@@ -857,19 +869,7 @@ class SkPath:
         """
         self._ensure_subpaths()
         other._ensure_subpaths()
-        if not self._subpaths or not other._subpaths:
-            return 0.0
-        min_d = float("inf")
-        for a_ring in self._subpaths:
-            for b_ring in other._subpaths:
-                for a_index, a0 in enumerate(a_ring):
-                    a1 = a_ring[(a_index + 1) % len(a_ring)]
-                    for b_index, b0 in enumerate(b_ring):
-                        b1 = b_ring[(b_index + 1) % len(b_ring)]
-                        min_d = min(min_d, _segment_distance(a0, a1, b0, b1))
-                        if min_d == 0.0:
-                            return 0.0
-        return min_d
+        return boundary_distance(self._subpaths, other._subpaths)
 
     # ------------------------------------------------------------------
     # Dunder helpers
@@ -897,11 +897,16 @@ class SkPath:
 # Module-level functions matching shapely.ops / shapely.affinity
 # ---------------------------------------------------------------------------
 
-def unary_union(paths: list[SkPath]) -> SkPath:
+def unary_union(paths: Iterable[SkPath]) -> SkPath:
     """Union all *paths* into one :class:`SkPath`."""
     non_empty = [p for p in paths if not p.is_empty]
     if not non_empty:
         return SkPath()
+    if len(non_empty) == 1:
+        # A union of one operand is an exact copy. Re-running OpBuilder on
+        # its own even-odd result can drop counters on successive unions.
+        # Keep detached ownership without changing the path or its fill type.
+        return SkPath.from_skia(skia.Path(non_empty[0]._path))
     builder = skia.OpBuilder()
     for p in non_empty:
         builder.add(p._path, skia.kUnion_PathOp)

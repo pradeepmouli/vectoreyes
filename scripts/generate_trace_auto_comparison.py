@@ -55,7 +55,6 @@ def _trace_summary(path: Path) -> dict[str, Any]:
         "geometry": dict(sorted(geometry.items())),
         "symmetry": sum("symmetry" in item for item in diagnostics),
         "clones": sum("clones" in item or "clone" in item for item in diagnostics),
-        "straightened": sum("straighten" in item for item in diagnostics),
         "stitched": sum("stitch" in item for item in diagnostics),
     }
 
@@ -116,7 +115,7 @@ def _html(rows: list[dict[str, Any]]) -> str:
         flags = "<br>".join(html.escape(flag) for flag in row["flags"]) or "—"
         cards.append(
             '<article id="%s"><h2>%s</h2><div class="renders">%s</div>'
-            '<p><b>trace-auto:</b> %s targets; %s; symmetry=%s; clones=%s; straightened=%s; stitched=%s.<br>'
+            '<p><b>trace-auto:</b> %s targets; %s; symmetry=%s; clones=%s; stitched=%s.<br>'
             '<b>review:</b> %s</p></article>'
             % (
                 name,
@@ -126,7 +125,6 @@ def _html(rows: list[dict[str, Any]]) -> str:
                 html.escape(str(trace["geometry"])),
                 trace["symmetry"],
                 trace["clones"],
-                trace["straightened"],
                 trace["stitched"],
                 flags,
             )

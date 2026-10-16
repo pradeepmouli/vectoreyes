@@ -34,6 +34,7 @@ from vectormark.drawing_refine import (
     root_regions,
     stitch_regions,
 )
+from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
 from vectormark.pipeline import _flatten_on_white
 
@@ -46,12 +47,12 @@ DEFAULT_CORPUS_OUTPUT = Path("corpus")
 DEFAULT_CORPUS_MANIFEST = REPO_ROOT / "corpus" / "sources.json"
 DEFAULT_CORPUS_CACHE = REPO_ROOT / "corpus" / "cache"
 TRACE_CACHE_VERSION = 3
-DRAWING_TRACE_CACHE_VERSION = 27
+DRAWING_TRACE_CACHE_VERSION = 36
 TRACE_OPTION_FIELDS = (
     "epsilon",
     "max_error",
     "aa_contours",
-    "max_colors",
+    "max_sampling_colors",
     "min_region_fraction",
     "working_max_dim",
 )
@@ -419,20 +420,25 @@ def _entry_source_bytes(entry: CorpusEntry, image: np.ndarray) -> bytes:
 def _drawing_trace_options(
     options: Options,
     *,
-    max_colors: int | Literal["auto"],
+    max_sampling_colors: int | Literal["auto"],
     fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"],
     trace_level: Literal["pixel", "subpixel"] | None = None,
+    gradient_pretrace: bool = False,
+    support_weighted_corners: bool = False,
 ) -> TraceDrawingOptions:
     return TraceDrawingOptions(
         refine="auto",
-        max_colors=max_colors,
+        max_sampling_colors=max_sampling_colors,
         min_region_size=options.min_region_size,
         min_region_fraction=options.min_region_fraction,
         trace_level=trace_level or ("subpixel" if options.aa_contours else "pixel"),
         simplify_tolerance=options.epsilon,
         curve_tolerance=options.max_error,
         fit_strategy=fit_strategy,
-        preprocess={"max_size_px": options.working_max_dim or 1024},
+        gradient_pretrace=gradient_pretrace,
+        support_weighted_corners=support_weighted_corners,
+        corner_normalize=options.corner_normalize,
+        preprocess={"max_size_px": options.working_max_dim or DEFAULT_MAX_SIZE_PX},
     )
 
 
@@ -444,7 +450,12 @@ def _drawing_trace_cache_path(
 ) -> Path:
     digest = hashlib.sha256()
     digest.update(source)
-    digest.update(json.dumps(options.model_dump(mode="json"), sort_keys=True).encode("utf-8"))
+    trace_inputs = options.model_dump(mode="json")
+    # These controls create descendants from retained v0; neither changes the
+    # trace artifact or its stitched roots.
+    trace_inputs.pop("refine", None)
+    trace_inputs.pop("corner_normalize", None)
+    digest.update(json.dumps(trace_inputs, sort_keys=True).encode("utf-8"))
     safe_name = entry.name.replace("/", "_")
     return cache_dir / f"drawing-trace-{safe_name}-{digest.hexdigest()[:20]}.pkl"
 
@@ -455,16 +466,20 @@ def _trace_drawing_auto_with_cache(
     entry: CorpusEntry,
     options: Options,
     cache_dir: Path,
-    max_colors: int | Literal["auto"],
+    max_sampling_colors: int | Literal["auto"],
     fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"],
     trace_level: Literal["pixel", "subpixel"] | None = None,
+    gradient_pretrace: bool = False,
+    support_weighted_corners: bool = False,
     debug_dir: Path | None = None,
 ) -> tuple[str, dict[str, Any], dict[str, Any]]:
     trace_options = _drawing_trace_options(
         options,
-        max_colors=max_colors,
+        max_sampling_colors=max_sampling_colors,
         fit_strategy=fit_strategy,
         trace_level=trace_level,
+        gradient_pretrace=gradient_pretrace,
+        support_weighted_corners=support_weighted_corners,
     )
     cache_path = _drawing_trace_cache_path(cache_dir, entry, source, trace_options)
     if cache_path.exists():
@@ -483,10 +498,9 @@ def _trace_drawing_auto_with_cache(
             ImageRef(data_uri="data:image/png;base64," + base64.b64encode(source).decode("ascii")),
             trace_options,
         )
-        roots = stitch_regions(
-            trace,
-            root_regions(trace, rgb, min_region_fraction=trace_options.min_region_fraction),
-        )
+        rooted = root_regions(trace, rgb, min_region_fraction=trace_options.min_region_fraction)
+        trace = rooted.trace
+        roots = stitch_regions(trace, rooted.regions)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
         tmp.write_bytes(pickle.dumps({
@@ -509,7 +523,13 @@ def _trace_drawing_auto_with_cache(
             rendered_pass = render_drawing(trace, regions)
             pass_snapshots.append((name, rendered_pass.svg, dict(rendered_pass.report)))
 
-    regions = auto_refine(trace, roots, rgb=rgb, on_pass=capture_auto_pass if debug_dir is not None else None)
+    regions = auto_refine(
+        trace,
+        roots,
+        rgb=rgb,
+        corner_normalize=trace_options.corner_normalize,
+        on_pass=capture_auto_pass if debug_dir is not None else None,
+    )
     rendered = render_drawing(trace, regions)
     svg = rendered.svg
     if debug_dir is not None:
@@ -522,7 +542,7 @@ def _trace_drawing_auto_with_cache(
     }
     public_options = {
         **trace_options.model_dump(mode="json"),
-        "effective_max_colors": trace.options.max_colors,
+        "effective_max_sampling_colors": trace.options.max_sampling_colors,
     }
     if debug_dir is not None:
         _write_trace_auto_debug_report(
@@ -572,6 +592,16 @@ def _write_trace_auto_debug_report(
             stale.unlink()
 
     entries: list[tuple[str, str, str, dict[str, Any] | None]] = []
+    if trace.material_pretrace is not None:
+        for name, raster in (
+            ("pretrace-high-color-quantized", trace.material_pretrace.high_color_quantized),
+            ("pretrace-shape-merged", trace.material_pretrace.shape_merged),
+            ("pretrace-color-field-merged", trace.material_pretrace.color_field_merged),
+            ("pretrace-material-proxy", trace.material_pretrace.material_proxy),
+        ):
+            filename = f"{name}.png"
+            Image.fromarray(np.asarray(raster, dtype=np.uint8), "RGB").save(debug_dir / filename)
+            entries.append((name.replace("-", " "), filename, "png", None))
     for index, (name, svg, pass_report) in enumerate(pass_snapshots):
         filename = f"{index:02d}-{name.removesuffix('_pass')}.svg"
         (debug_dir / filename).write_text(svg)
@@ -598,7 +628,7 @@ def _write_trace_auto_debug_report(
 <p><a href="{html.escape(filename)}">{html.escape(filename)}</a></p></article>'''
             if kind == "svg" else
             f'''<article><h2>{html.escape(label)}</h2>
-<img src="{html.escape(filename)}" alt="{html.escape(label)}"></article>'''
+<a class="artifact" href="{html.escape(filename)}"><img src="{html.escape(filename)}" alt="{html.escape(label)}"></a></article>'''
         )
         for label, filename, kind, _pass_report in entries
     )
@@ -934,9 +964,11 @@ def generate_corpus_html(
     only: Iterable[str] | None = None,
     rebuild_index: bool = False,
     workflow: str = "oneshot",
-    trace_max_colors: int | Literal["auto"] = 16,
+    trace_max_sampling_colors: int | Literal["auto"] = 16,
     trace_fit_strategy: Literal["quadratic", "progressive", "progressive_allow_lines"] = "quadratic",
     trace_level: Literal["pixel", "subpixel"] | None = None,
+    trace_gradient_pretrace: bool = False,
+    trace_support_weighted_corners: bool = False,
     debug_reports: bool = False,
 ) -> Path:
     output = Path(output)
@@ -983,9 +1015,11 @@ def generate_corpus_html(
                 entry=entry,
                 options=options,
                 cache_dir=trace_cache_dir,
-                max_colors=trace_max_colors,
+                max_sampling_colors=trace_max_sampling_colors,
                 fit_strategy=trace_fit_strategy,
                 trace_level=trace_level,
+                gradient_pretrace=trace_gradient_pretrace,
+                support_weighted_corners=trace_support_weighted_corners,
                 debug_dir=debug_dir / f"{_entry_id(entry)}-passes" if debug_reports else None,
             )
         elif options.optimizer:
@@ -1171,7 +1205,7 @@ def main() -> None:
         help="trace-auto uses the MCP trace_drawing(refine='auto') workflow; oneshot preserves the legacy current/optimizer gallery.",
     )
     parser.add_argument(
-        "--trace-max-colors",
+        "--trace-max-sampling-colors",
         default="16",
         help="Trace-auto palette ceiling: an integer >=2 or auto. Defaults to 16.",
     )
@@ -1186,6 +1220,16 @@ def main() -> None:
         choices=("pixel", "subpixel"),
         default=None,
         help="Trace-auto boundary level. Defaults to each entry's legacy aa_contours setting.",
+    )
+    parser.add_argument(
+        "--trace-gradient-pretrace",
+        action="store_true",
+        help="Trace a gradient-neutral material proxy while retaining the original raster for geometry and fills.",
+    )
+    parser.add_argument(
+        "--trace-support-weighted-corners",
+        action="store_true",
+        help="Preserve shallow corners whose long supporting runs make flattening visibly inaccurate.",
     )
     parser.add_argument(
         "--debug-reports",
@@ -1203,17 +1247,17 @@ def main() -> None:
         entries = corpus_entries(args.input_dir)
     else:
         entries = None
-    trace_max_colors: int | Literal["auto"]
-    if args.trace_max_colors == "auto":
-        trace_max_colors = "auto"
+    trace_max_sampling_colors: int | Literal["auto"]
+    if args.trace_max_sampling_colors == "auto":
+        trace_max_sampling_colors = "auto"
     else:
         try:
-            trace_max_colors = int(args.trace_max_colors)
+            trace_max_sampling_colors = int(args.trace_max_sampling_colors)
         except ValueError as error:
-            parser.error("--trace-max-colors must be auto or an integer >= 2")
+            parser.error("--trace-max-sampling-colors must be auto or an integer >= 2")
             raise AssertionError("parser.error exits") from error
-        if trace_max_colors < 2:
-            parser.error("--trace-max-colors must be auto or an integer >= 2")
+        if trace_max_sampling_colors < 2:
+            parser.error("--trace-max-sampling-colors must be auto or an integer >= 2")
     index = generate_corpus_html(
         args.output,
         entries,
@@ -1224,9 +1268,11 @@ def main() -> None:
         only=args.only,
         rebuild_index=args.rebuild_index,
         workflow=args.workflow.replace("-", "_"),
-        trace_max_colors=trace_max_colors,
+        trace_max_sampling_colors=trace_max_sampling_colors,
         trace_fit_strategy=args.trace_fit_strategy,
         trace_level=args.trace_level,
+        trace_gradient_pretrace=args.trace_gradient_pretrace,
+        trace_support_weighted_corners=args.trace_support_weighted_corners,
         debug_reports=args.debug_reports,
     )
     print(index)

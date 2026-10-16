@@ -94,6 +94,7 @@ def test_trace_auto_cache_reuses_trace_roots_but_reruns_auto_refinement(tmp_path
     entry = CorpusEntry("tiny_disk", "current", _tiny_disk, Options())
     trace_calls = 0
     refine_calls = 0
+    retained_evidence = []
     original_trace = corpus_html._trace_result
     original_refine = corpus_html.auto_refine
 
@@ -105,6 +106,7 @@ def test_trace_auto_cache_reuses_trace_roots_but_reruns_auto_refinement(tmp_path
     def refine_each_run(*args, **kwargs):
         nonlocal refine_calls
         refine_calls += 1
+        retained_evidence.append(args[0].root_path_evidence)
         return original_refine(*args, **kwargs)
 
     monkeypatch.setattr(corpus_html, "_trace_result", trace_once)
@@ -115,6 +117,9 @@ def test_trace_auto_cache_reuses_trace_roots_but_reruns_auto_refinement(tmp_path
 
     assert trace_calls == 1
     assert refine_calls == 2
+    assert retained_evidence[0]
+    assert retained_evidence[1] == retained_evidence[0]
+    assert retained_evidence[1][0] is not retained_evidence[0][0]
 
 
 def test_generate_corpus_html_can_override_corpus_tolerances(tmp_path):
