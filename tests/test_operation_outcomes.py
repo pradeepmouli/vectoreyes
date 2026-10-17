@@ -32,6 +32,36 @@ def fixture():
     return evidence, paint, EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, settings)
 
 
+@pytest.mark.parametrize('kind', ['rect', 'rounded_rect', 'ellipse', 'circle', 'polygon'])
+def test_primitive_action_fits_retained_raster_not_current_outline(kind):
+    evidence, paint, base = fixture()
+    # The retained raster is 8x8, while the displayed rectangle is only 4x4.
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0',
+        ops=[dict(op='fit_primitive', target='r1', type=kind)]))
+    selected = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    result = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=selected)
+    from vectormark.path_geometry import (
+        CirclePrimitive, EllipsePrimitive, PolygonPrimitive,
+        RectanglePrimitive, RoundedRectanglePrimitive,
+    )
+    primitive = result.drawing.regions[0].geometry.primitive
+    if kind == 'circle':
+        assert primitive == CirclePrimitive((4., 4.), 4.)
+    elif kind == 'ellipse':
+        assert primitive == EllipsePrimitive((4., 4.), 4., 4.)
+    elif kind == 'rounded_rect':
+        assert primitive == RoundedRectanglePrimitive((0., 0.), 8., 8., 0., 0.)
+    elif kind == 'rect':
+        assert primitive == RectanglePrimitive((0., 0.), 8., 8.)
+    else:
+        assert isinstance(primitive, PolygonPrimitive)
+        assert len(primitive.vertices) == 4
+    assert result.drawing.regions[0].diagnostics['geometry']['explicit'] == kind
+
+
 def test_purpose_and_execution_are_independent_and_resolved():
     evidence, _, _ = fixture()
     plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0',
@@ -229,8 +259,9 @@ def test_selected_fit_is_reused_when_extending_recipe_without_calling_fitter(mon
     calls = []
     def varying_fit(*args, **kwargs):
         calls.append(len(calls) + 1)
-        return Shape('rect', dict(x=1., y=1., w=float(2 + calls[-1]), h=4.))
-    monkeypatch.setattr(refine_module, '_primitive_shape', varying_fit)
+        from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+        return PrimitiveGeometry(RectanglePrimitive((1., 1.), float(2 + calls[-1]), 4.))
+    monkeypatch.setattr(refine_module, 'fit_primitive_geometry', varying_fit)
     def plan(ops):
         return DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
             drawing_id='drw_test', base_version='v0', ops=ops))
@@ -265,7 +296,7 @@ def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkey
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
     operation = recipe.operations[0]
-    monkeypatch.setattr(refine_module, '_primitive_shape',
+    monkeypatch.setattr(refine_module, 'fit_primitive_geometry',
         lambda *args, **kwargs: pytest.fail('selected fit was regenerated'))
     changed = replace(operation, settings=operation.settings.model_copy(update={'max_error': 2.}))
     changed_recipe = replace(recipe, steps=tuple(changed if step is operation else step for step in recipe.steps))

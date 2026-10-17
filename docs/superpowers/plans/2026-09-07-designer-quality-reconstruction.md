@@ -538,6 +538,23 @@ closing-line aliases. Fresh review's forced-corner defect and the semantic-cut
 handoff clarification both have RED-to-GREEN regressions. Final full source
 suite: **950 passed, 951 warnings** in 127.57s. No deferred review minors.
 
+#### Canonical primitive fitting kernel — 2026-10-17
+
+The public primitive action now delegates to `fit_primitive_geometry`, a numeric
+kernel consuming retained raster evidence and returning typed `PrimitiveGeometry`.
+It no longer takes a `VectorRegion` or returns an untyped `Shape`. The five public
+primitive kinds retain their existing fitting rules; unsupported private cap and
+trapezoid branches are removed rather than preserved as unreleased compatibility.
+
+The action executor still projects this result into its temporary region forest;
+this checkpoint does not remove that scene adapter or migrate the remaining
+operations. `DrawingEngine` remains the public operation entry point. Remaining
+work includes canonical path-action execution and removal of the replay adapters.
+
+Verification: **116 focused tests** and **964 full-suite tests** pass. The full
+suite reports 951 warnings in 219.15s. Fresh scoped review found no actionable
+defects; no native rebuild, deployment or visual-quality acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

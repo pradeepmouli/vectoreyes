@@ -17,7 +17,7 @@ from scipy import ndimage
 from ._fitcurve import fit_cubic_once, fit_quadratic_once
 from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
 from .components import decompose_components
-from .contour import outer_contour, region_contours, region_corner_radius
+from .contour import region_contours
 from .drawing_actions import ActionSettings
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan, _expand_merge_regions
 from .drawing_adapter import drawing_from_vector_regions
@@ -27,7 +27,7 @@ from .path_geometry import CompoundPathGeometry, CornerAnchor, PathGeometry, Pat
 from .path_topology import component_paths, replace_component_paths
 from .emit import apply_affine_point, render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
 from .fill_fit import fit_fill
-from .fit import Shape, _curved_run_d, _fmt, fit_path, fit_path_stages, recognize_polygon
+from .fit import Shape, _curved_run_d, _fmt, fit_path, fit_path_stages
 from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath, to_polygon
 from .optimizer.corners import path_corner_diagnostics, rebind_prefit_corner_diagnostics
 from .optimizer.gate import rasterize
@@ -35,6 +35,7 @@ from .optimizer.automatic_replay import (
     AutomaticActionOutcome,
     ReplayBatch,
     optimize_with_intent,
+    shape_from_primitive_geometry,
 )
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
 from .optimizer.shape_transform import bake_shape_transform
@@ -49,7 +50,7 @@ from .quality import polyline_boundary_distance
 from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
-from .refine import half_ellipse_cap_fit, rounded_trapezoid_fit
+from .primitive_fitting import fit_primitive_geometry
 
 
 DrawingRegions = tuple[VectorRegion, ...]
@@ -1023,11 +1024,13 @@ def refine(
             targets = _targets(regions)
             target = targets[op["target"]]
             try:
-                shape = _primitive_shape(
-                    target,
-                    op["type"],
-                    epsilon=epsilon,
-                    max_error=max_error,
+                shape = shape_from_primitive_geometry(
+                    fit_primitive_geometry(
+                        target.region.raster,
+                        op["type"],
+                        epsilon=epsilon,
+                        target_id=target.id,
+                    )
                 )
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
@@ -2199,48 +2202,6 @@ def _align(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> Drawing
             diagnostics={"align": {"reference": reference.id, "axes": tuple(sorted(axes))}},
         ),
     )
-
-
-def _primitive_shape(target: _Target, kind: str, *, epsilon: float, max_error: float) -> Shape:
-    """Fit one public primitive from the target's retained root mask."""
-    mask = target.region.raster
-    ys, xs = np.nonzero(mask)
-    if len(xs) == 0:
-        raise ValueError(f"cannot fit {kind!r} to an empty drawing region")
-    x, y, w, h = int(xs.min()), int(ys.min()), int(xs.max() - xs.min() + 1), int(ys.max() - ys.min() + 1)
-    if kind == "rect":
-        return Shape("rect", {"x": x, "y": y, "w": w, "h": h})
-    if kind == "rounded_rect":
-        radius = region_corner_radius(mask)
-        return Shape("rect", {"x": x, "y": y, "w": w, "h": h, "rx": radius, "ry": radius})
-    if kind == "ellipse":
-        return Shape("ellipse", {"cx": x + w / 2, "cy": y + h / 2, "rx": w / 2, "ry": h / 2})
-    if kind == "circle":
-        return Shape("circle", {"cx": x + w / 2, "cy": y + h / 2, "r": min(w, h) / 2})
-    contour = outer_contour(mask)
-    if len(contour) < 3:
-        raise ValueError(f"cannot fit {kind!r} without an outer contour")
-    axis_x = float((contour[:, 0].min() + contour[:, 0].max()) / 2.0)
-    if kind in {"trapezoid", "rounded_trapezoid"}:
-        radius = 0.0 if kind == "trapezoid" else region_corner_radius(mask)
-        fitted = rounded_trapezoid_fit(contour, axis_x, radius=radius, max_error=max_error)
-        if fitted is not None:
-            return fitted
-        raise ValueError(f"target {target.id!r} is not a {kind}")
-    if kind == "cap":
-        fitted = half_ellipse_cap_fit(
-            contour,
-            axis_x,
-            corner_radius=region_corner_radius(mask),
-            max_error=max_error,
-        )
-        if fitted is not None:
-            return fitted
-        raise ValueError(f"target {target.id!r} is not a cap")
-    fitted = recognize_polygon(contour, epsilon=epsilon)
-    if fitted is not None:
-        return fitted
-    raise ValueError(f"target {target.id!r} is not a polygon within epsilon={epsilon}")
 
 
 def _fit_target_path(target: _Target, *, settings: ActionSettings) -> Shape:
