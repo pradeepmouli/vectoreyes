@@ -29,7 +29,6 @@ from .path_geometry import (
     QuadraticCommand,
 )
 from .python_path_fitter import (
-    PythonPathFitter,
     validate_explicit_fit_source,
     validate_path_fit_options,
 )
@@ -489,7 +488,10 @@ class CornerRecipeExecutor:
     """Create, transactionally revise, and replay one effective path recipe."""
 
     def __init__(self, path_fitter: PathFitCapability | None = None) -> None:
-        self._path_fitter = PythonPathFitter() if path_fitter is None else path_fitter
+        if path_fitter is None:
+            from .python_drawing_engine import PythonDrawingEngine
+            path_fitter = PythonDrawingEngine()
+        self._path_fitter = path_fitter
 
     def create(
         self,

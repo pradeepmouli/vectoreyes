@@ -399,7 +399,7 @@ The next bounded checkpoint in this slice is:
   calling it again, while explicit re-proposal can publish a different child.
   Cover sibling isolation, rejected proposals, changed evidence/settings,
   upstream edits, and failure before atomic publication.
-- [ ] Route existing deterministic actions through that same boundary before
+- [x] Route existing deterministic actions through that same boundary before
   adding exploratory solvers. Do not change fitter defaults or add randomness
   merely to demonstrate the contract.
 
@@ -457,6 +457,45 @@ the two review-driven metadata/materialization regressions. Post-fix full-suite
 verification passes: 910 tests, 951 warnings. No fitting defaults or error budgets
 changed. This checkpoint is source-tested; it is not a native rebuild/deployment
 or a visual-quality acceptance.
+
+#### Concrete operation entry point — 2026-10-17
+
+`PythonDrawingEngine` now implements the existing typed engine boundary. It
+owns source tracing, material-proxy/palette resolution, root fitting, initial
+stitching, automatic refinement, and submitted plan/action execution. MCP keeps
+image resolution/preparation, rendering, and atomic version publication. Source
+and geometry-guide tracing use the same engine operations while preserving
+their distinct geometry-input and original-paint policies.
+
+The implementation delegates to the existing trace, fit, stitch and recipe
+executors; it does not add another fitting algorithm, scene store, or action
+vocabulary. Default corner-recipe fitting also enters through the engine.
+Direct path actions require retained evidence and the caller's selected base
+version, so correspondence validation cannot be bypassed by supplying only a
+displayed drawing. Plans validate the existing receipt before execution.
+
+| Entry point | Input | Output |
+| --- | --- | --- |
+| `trace_drawing` | `TraceDrawingRequest`: packed pixels, trace/output settings, initial-stitch control | `TraceDrawingResult`: canonical v0, evidence/recipe/receipt, diagnostics |
+| `fit_path` | `FitPathRequest`: source line path, declarations and fit settings | `FitPathResult`: fitted path, source correspondence, diagnostics |
+| `apply_path_action` | `PathActionRequest`: drawing, evidence, base version, region, path action, settings | `PathActionResult`: updated single path and affected commands |
+| `apply_action` | `DrawingActionRequest`: drawing, evidence, base version, action, settings | `DrawingActionResult`: canonical scene, updated receipts, region changes |
+| `apply_plan` | Drawing, evidence and existing `DrawingPlan` | `PythonPlanResult`: drawing-action result plus resolved submitted corner edits |
+| `refine_automatically` | Drawing, evidence, corner-normalization toggle and selectable passes | `DrawingActionResult`: canonical scene and retained automatic recipe/receipt |
+
+This is an ownership/consolidation checkpoint, not completion of every internal
+adapter migration: temporary `VectorRegion` execution adapters and automatic
+feature discovery remain inside existing kernels. Automatic and explicit fits
+continue sharing the established numeric fitting kernel; this checkpoint does
+not replace automatic feature discovery with a new declaration algorithm or
+change fitter settings/defaults. Native compilation and deployment are separate.
+
+Verification: 19 engine contract tests pass, including exact v0 parity for
+pixel/subpixel tracing, all three fit strategies and stitching on/off. Fresh
+review found two source/guide policy differences; both were reproduced and
+corrected with regression tests. Full source suite after those fixes and the
+full-tree change-reporting correction: **929 passed, 951 warnings** in 117.01s.
+No native rebuild, deployment or visual-quality acceptance is claimed.
 
 Still pending: generic outcome reuse beyond fitted geometry, and the concrete
 shared `DrawingEngine` migration. This checkpoint does not claim to cache every

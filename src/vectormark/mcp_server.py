@@ -39,20 +39,11 @@ from .refinement_settings import RefinementPasses
 from .output_settings import DrawingOutputSettings
 from .background import BackgroundColor
 from .drawing_plan import PlanValidationError, parse_plan
-from .drawing_actions import ActionSettings, DrawingPlan
+from .drawing_actions import DrawingPlan
 from .drawing_engine import RasterImage
-from .drawing_recipe import (
-    EffectiveDrawingRecipe,
-    ResolveOriginalPaintOperation,
-    build_geometry_evidence,
-    build_paint_evidence,
-    recipe_json_value,
-)
-from .drawing_replay import (
-    extend_recipe_with_plan,
-    raster_pixels,
-    propose_effective_recipe,
-)
+from .python_drawing_engine import PythonDrawingEngine, PythonEngineEvidence
+from .drawing_recipe import recipe_json_value
+from .drawing_replay import raster_pixels
 from .drawing_render import (
     drawing_summary as canonical_drawing_summary,
     render_drawing as render_canonical_drawing,
@@ -62,15 +53,12 @@ from .drawing_render import (
 )
 from .drawing_refine import (
     auto_refine,
-    auto_refine_with_intent,
     drawing_summary,
     labeled_drawing_svg,
     refine,
     render_drawing as render_drawing_regions,
-    root_regions,
     refill_all_regions_from_source,
     stitch_regions,
-    stitch_regions_with_intent,
 )
 from .drawing_state import (
     DrawingManifest,
@@ -78,9 +66,7 @@ from .drawing_state import (
     DrawingStore,
     VersionCandidate,
 )
-from .drawing_trace import PythonTraceEngine, TraceOptions
-from .color import infer_max_sampling_colors, white_canvas_mask
-from .material_pretrace import preprocess_material_trace
+from .drawing_trace import TraceOptions
 from .json_value import to_json_value
 
 # Transport is chosen at startup. stdio = local, full-trust (your own machine, your
@@ -99,6 +85,7 @@ _DRAWING_WIDGET_META = {
     "openai/outputTemplate": WIDGET_URI,
 }
 _DRAWINGS = DrawingStore()
+_ENGINE = PythonDrawingEngine()
 _WIDGET_HTML_PATH = Path(__file__).parents[2] / "integrations" / "mcp-app" / "dist" / "mcp-app.html"
 _WIDGET_BUILD_REQUIRED_HTML = """
 <!doctype html>
@@ -1088,14 +1075,6 @@ def _raster_image(rgb: np.ndarray) -> RasterImage:
     return RasterImage(width, height, "rgb8", np.ascontiguousarray(rgb).tobytes())
 
 
-def _resolved_action_settings(trace) -> ActionSettings:
-    return ActionSettings(
-        epsilon=trace.options.simplify_tolerance,
-        max_error=trace.options.curve_tolerance,
-        fit_strategy=trace.options.fit_strategy,
-    )
-
-
 class GeometryGuideOptions(BaseModel):
     """Trace controls for a palette-labelled geometry guide."""
     corner_rounding: bool = Field(True, description="Protect detected rounded corner spans during guide fitting; false retains detected point boundaries without disabling detection.")
@@ -1129,7 +1108,7 @@ def _geometry_guide_trace(
             f"received {guide.width}x{guide.height}"
         )
     rgb = _flatten_on_white(guide)
-    trace = PythonTraceEngine().trace(
+    trace = _ENGINE.trace_polylines(
         rgb,
         TraceOptions(
             max_sampling_colors=options.max_sampling_colors,
@@ -1164,26 +1143,11 @@ def _trace_result(image: ImageRef, options: TraceDrawingOptions):
     # white-composited for material and fill analysis, and every later vector
     # pass is free to refine the fitted geometry; alpha is never retained as a
     # downstream clipping constraint.
-    material_pretrace = (
-        preprocess_material_trace(rgb, min_region_size=options.min_region_size)
-        if options.gradient_pretrace
-        else None
-    )
-    trace_rgb = material_pretrace.material_proxy if material_pretrace is not None else rgb
-    white_canvas = white_canvas_mask(trace_rgb)
-    effective_max_sampling_colors = (
-        material_pretrace.resolved_max_sampling_colors
-        if options.max_sampling_colors == "auto" and material_pretrace is not None
-        else infer_max_sampling_colors(trace_rgb, exclude_mask=white_canvas)
-        if options.max_sampling_colors == "auto"
-        else options.max_sampling_colors
-    )
-    trace = PythonTraceEngine().trace(
-        trace_rgb,
+    trace = _ENGINE.trace_polylines(
+        rgb,
         TraceOptions(
-            max_sampling_colors=effective_max_sampling_colors,
+            max_sampling_colors=16 if options.max_sampling_colors == "auto" else options.max_sampling_colors,
             requested_max_sampling_colors=options.max_sampling_colors,
-            reserve_white_background=options.max_sampling_colors == "auto" and white_canvas is not None,
             min_region_size=options.min_region_size,
             max_hole_area=options.max_hole_area,
             trace_level=options.trace_level,
@@ -1198,10 +1162,9 @@ def _trace_result(image: ImageRef, options: TraceDrawingOptions):
             source_has_alpha=meta.transparent,
         ),
         alpha=alpha,
+        gradient_pretrace=options.gradient_pretrace,
         geometry_rgb=rgb,
     )
-    if material_pretrace is not None:
-        trace = replace(trace, material_pretrace=material_pretrace)
     return trace, rgb
 
 
@@ -1242,94 +1205,42 @@ def trace_drawing(
         trace, rgb = _trace_result(_select_image_ref(image, image_data), options)
     except ImageError as err:
         raise ToolError(f"[{err.error_code}] {err.message}") from err
-    rooted = root_regions(trace, rgb, min_region_fraction=options.min_region_fraction, allow_gradients=options.allow_gradients)
-    trace = rooted.trace
-    source = _raster_image(rgb)
-    background = (
-        BackgroundColor(color=str(trace.background["color"]), tolerance=float(trace.background["tolerance"]))
-        if trace.background.get("applied") and trace.background.get("color")
-        else None
-    )
-    paint = build_paint_evidence(source, background=background, output_settings=DrawingOutputSettings(**{name: getattr(options, name) for name in DrawingOutputSettings.model_fields}))
-    evidence = build_geometry_evidence(
-        kind="source",
-        trace=trace,
-        geometry_source=source,
-        trace_roots=rooted.regions,
-    )
-    settings = _resolved_action_settings(trace)
-    stitched = stitch_regions_with_intent(trace, evidence.trace_roots, enabled=options.initial_stitch)
-    v0_recipe = EffectiveDrawingRecipe(
-        evidence_revision=evidence.revision,
-        engine_revision=evidence.engine_revision,
-        settings=settings,
-        steps=(
-            *stitched.batches,
-            ResolveOriginalPaintOperation(
-                scope="retain",
-                share_root_gradients=trace.material_pretrace is None,
-            ),
-        ),
-    )
-    v0_execution = propose_effective_recipe(
-        drawing_id=drawing_id,
-        evidence=evidence,
-        paint=paint,
-        recipe=v0_recipe,
-    )
+    baseline_result = _ENGINE.fit_trace(drawing_id, trace, _raster_image(rgb),
+        min_region_fraction=options.min_region_fraction, initial_stitch=options.initial_stitch,
+        output_settings=DrawingOutputSettings(**{name: getattr(options, name) for name in DrawingOutputSettings.model_fields}))
+    state = baseline_result.evidence
+    evidence, paint, v0_recipe = state.geometry, state.paint, state.recipe
+    trace = evidence.trace
     candidates = [
         VersionCandidate(
-            drawing=v0_execution.drawing,
+            drawing=baseline_result.drawing,
             evidence=evidence,
             submitted_plan=None,
             submitted_edits=(),
             effective_recipe=v0_recipe,
-            replay=v0_execution.replay,
+            replay=state.replay,
             label="source baseline",
             baseline_candidate_index=0,
         )
     ]
     if options.refine == "auto":
-        automatic = auto_refine_with_intent(
-            trace,
-            v0_execution.regions,
-            rgb=rgb,
-            allow_gradients=options.allow_gradients,
+        automatic = _ENGINE.refine_automatically(
+            baseline_result.drawing, state,
             corner_normalize=options.corner_normalize,
             refinement_passes=options.refinement_passes,
         )
-        v1_recipe = EffectiveDrawingRecipe(
-            evidence_revision=evidence.revision,
-            engine_revision=evidence.engine_revision,
-            settings=settings,
-            steps=(
-                *v0_recipe.steps,
-                *automatic.batches,
-                ResolveOriginalPaintOperation(
-                    scope="all",
-                    share_root_gradients=trace.material_pretrace is None,
-                ),
-            ),
-        )
-        v1_execution = propose_effective_recipe(
-            drawing_id=drawing_id,
-            evidence=evidence,
-            paint=paint,
-            recipe=v1_recipe,
-        )
         candidates.append(
             VersionCandidate(
-                drawing=v1_execution.drawing,
+                drawing=automatic.drawing,
                 evidence=None,
                 submitted_plan=None,
                 submitted_edits=(),
-                effective_recipe=v1_recipe,
-                replay=v1_execution.replay,
+                effective_recipe=automatic.evidence.recipe,
+                replay=automatic.evidence.replay,
                 label="auto",
                 baseline_candidate_index=0,
             )
         )
-        regions = automatic.regions
 
     def prepare(published):
         selected = published[-1]
@@ -1380,7 +1291,7 @@ def trace_drawing(
             "parent_version": selected.parent_id,
             "requested_base_version": None,
             "baseline_version": selected.baseline_version_id,
-            "trace": drawing_summary(trace, stitched.regions),
+            "trace": to_json_value(baseline_result.diagnostics),
             "trace_options": options.model_dump(mode="json"),
             "artifacts": _drawing_artifact_refs(drawing_id, selected.id),
             "report": dict(rendered.report),
@@ -1430,61 +1341,17 @@ def retrace_drawing(
             expected_width=int(paint.canvas.width),
             expected_height=int(paint.canvas.height),
         )
-        rooted = root_regions(guide_trace, guide_rgb, preserve_material_labels=True, allow_gradients=False)
-        guide_trace = rooted.trace
-        guide_evidence = build_geometry_evidence(
-            kind="geometry-guide",
-            trace=guide_trace,
-            geometry_source=_raster_image(guide_rgb),
-            trace_roots=rooted.regions,
-        )
-        settings = _resolved_action_settings(guide_trace)
-        stitched = stitch_regions_with_intent(
-            guide_trace, guide_evidence.trace_roots, enabled=options.initial_stitch
-        )
-        baseline_recipe = EffectiveDrawingRecipe(
-            evidence_revision=guide_evidence.revision,
-            engine_revision=guide_evidence.engine_revision,
-            settings=settings,
-            steps=(
-                *stitched.batches,
-                ResolveOriginalPaintOperation(
-                    scope="all",
-                    share_root_gradients=guide_trace.material_pretrace is None,
-                ),
-            ),
-        )
-        baseline_execution = propose_effective_recipe(
-            drawing_id=drawing_id,
-            evidence=guide_evidence,
-            paint=paint,
-            recipe=baseline_recipe,
-        )
-        automatic = auto_refine_with_intent(
-            guide_trace,
-            baseline_execution.regions,
+        baseline_execution = _ENGINE.fit_trace(drawing_id, guide_trace, _raster_image(guide_rgb),
+            kind="geometry-guide", paint=paint, initial_stitch=options.initial_stitch)
+        state = baseline_execution.evidence
+        guide_evidence, baseline_recipe = state.geometry, state.recipe
+        guide_trace = guide_evidence.trace
+        optimized_execution = _ENGINE.refine_automatically(
+            baseline_execution.drawing, state,
             corner_normalize=options.corner_normalize,
             refinement_passes=options.refinement_passes,
         )
-        optimized_recipe = EffectiveDrawingRecipe(
-            evidence_revision=guide_evidence.revision,
-            engine_revision=guide_evidence.engine_revision,
-            settings=settings,
-            steps=(
-                *baseline_recipe.steps,
-                *automatic.batches,
-                ResolveOriginalPaintOperation(
-                    scope="all",
-                    share_root_gradients=guide_trace.material_pretrace is None,
-                ),
-            ),
-        )
-        optimized_execution = propose_effective_recipe(
-            drawing_id=drawing_id,
-            evidence=guide_evidence,
-            paint=paint,
-            recipe=optimized_recipe,
-        )
+        optimized_recipe = optimized_execution.evidence.recipe
         candidates = (
             VersionCandidate(
                 drawing=baseline_execution.drawing,
@@ -1492,7 +1359,7 @@ def retrace_drawing(
                 submitted_plan=None,
                 submitted_edits=(),
                 effective_recipe=baseline_recipe,
-                replay=baseline_execution.replay,
+                replay=state.replay,
                 label="geometry guide baseline",
                 baseline_candidate_index=0,
             ),
@@ -1502,7 +1369,7 @@ def retrace_drawing(
                 submitted_plan=None,
                 submitted_edits=(),
                 effective_recipe=optimized_recipe,
-                replay=optimized_execution.replay,
+                replay=optimized_execution.evidence.replay,
                 label=label or "geometry guide auto",
                 baseline_candidate_index=0,
             ),
@@ -1608,19 +1475,9 @@ def refine_drawing(
         version, paint, evidence = _DRAWINGS.load_replay(
             parsed.drawing_id, parsed.base_version
         )
-        extension = extend_recipe_with_plan(
-            evidence=evidence,
-            paint=paint,
-            base_recipe=version.effective_recipe,
-            plan=parsed,
-        )
-        recipe = extension.recipe
-        execution = propose_effective_recipe(
-            drawing_id=parsed.drawing_id,
-            evidence=evidence,
-            paint=paint,
-            recipe=recipe,
-        )
+        execution = _ENGINE.apply_plan(version.drawing,
+            PythonEngineEvidence(evidence, paint, version.effective_recipe, version.replay), parsed)
+        recipe = execution.evidence.recipe
         baseline = _DRAWINGS.get_version(
             parsed.drawing_id, version.baseline_version_id
         )
@@ -1628,9 +1485,9 @@ def refine_drawing(
             drawing=execution.drawing,
             evidence=None,
             submitted_plan=parsed,
-            submitted_edits=extension.submitted_edits,
+            submitted_edits=execution.submitted_edits,
             effective_recipe=recipe,
-            replay=execution.replay,
+            replay=execution.evidence.replay,
             label=parsed.label,
             baseline_version_id=version.baseline_version_id,
         )

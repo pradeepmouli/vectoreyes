@@ -459,13 +459,14 @@ def test_trace_options_name_the_absence_of_automatic_refinement_none():
 
 def test_unrefined_trace_stitches_retained_roots_before_creating_v0(monkeypatch):
     observed: list[int] = []
-    original_stitch = mcp_server_module.stitch_regions_with_intent
+    import vectormark.python_drawing_engine as engine_module
+    original_stitch = engine_module.stitch_regions_with_intent
 
     def observe(trace, regions, *, enabled=True):
         observed.append(len(regions))
         return original_stitch(trace, regions, enabled=enabled)
 
-    monkeypatch.setattr(mcp_server_module, "stitch_regions_with_intent", observe)
+    monkeypatch.setattr(engine_module, "stitch_regions_with_intent", observe)
     ctx = SimpleNamespace(session=object())
 
     result = trace_drawing(ImageRef(data_uri=_png_data_uri()), TraceDrawingOptions(), ctx).structured_content
@@ -807,7 +808,8 @@ def test_trace_auto_threads_trace_controls_into_python_trace_and_auto_refinement
         captured["rgb"] = rgb
         return RecordedRefinement(tuple(regions), (), ())
 
-    monkeypatch.setattr(mcp_server_module, "auto_refine_with_intent", capture)
+    import vectormark.python_drawing_engine as engine_module
+    monkeypatch.setattr(engine_module, "auto_refine_with_intent", capture)
     trace_drawing(
         ImageRef(data_uri=_png_data_uri()),
         TraceDrawingOptions(

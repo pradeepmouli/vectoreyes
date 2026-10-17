@@ -1,9 +1,9 @@
 """Typed engine boundary for tracing and deterministic geometry operations.
 
 The optimizer chooses *which* operation to run over a ``Drawing``.  This
-module defines the engine operations that execute those choices.  The Python
-tracer can implement this protocol today; a native implementation can replace
-it without changing drawing, plan, or MCP contracts.
+module defines the engine operations that execute those choices.
+``PythonDrawingEngine`` is the concrete entry point; a native implementation
+can replace its capabilities without changing drawing, plan, or MCP contracts.
 """
 
 from __future__ import annotations
@@ -14,10 +14,12 @@ from math import isfinite
 from typing import Generic, Literal, Protocol, TypeVar
 
 from .drawing import Drawing
-from .drawing_actions import ActionSettings, DrawingAction, PathAction, PathFitStrategy
+from .drawing_actions import ActionSettings, DrawingAction, DrawingPlan, PathAction, PathFitStrategy
 from .drawing_trace import TraceOptions
 from .immutable_value import freeze_value
 from .path_geometry import PathGeometry
+from .output_settings import DrawingOutputSettings
+from .refinement_settings import RefinementPasses
 from .path_fit_evidence import FitBoundaryCorrespondence, FitPathCorrespondence, FitSpanCorrespondence
 
 
@@ -55,10 +57,16 @@ class TraceDrawingRequest:
     drawing_id: str
     source: RasterImage
     options: TraceOptions
+    min_region_fraction: float = 0.02
+    initial_stitch: bool = True
+    gradient_pretrace: bool = False
+    output_settings: DrawingOutputSettings = field(default_factory=DrawingOutputSettings)
 
     def __post_init__(self) -> None:
         if not self.drawing_id:
             raise ValueError("trace request drawing ID must not be empty")
+        if not isfinite(self.min_region_fraction) or not 0 <= self.min_region_fraction < 1:
+            raise ValueError("minimum region fraction must be at least zero and less than one")
 
 
 @dataclass(frozen=True)
@@ -108,18 +116,23 @@ class FitPathResult:
 
 
 @dataclass(frozen=True)
-class PathActionRequest:
+class PathActionRequest(Generic[EvidenceT]):
     """Apply one command-addressed action to a region's current path.
 
     The complete drawing is supplied so relationship actions can resolve
-    command references owned by other regions. ``region_id`` identifies the
-    path being changed; the engine must reject a branch or non-path target.
+    command references owned by other regions. Evidence validates the current
+    scene and resolves material-polyline correspondence; ``base_version`` is
+    the caller's selected version, not a version allocated by the engine.
+    ``region_id`` identifies the path being changed; the engine must reject a
+    branch or non-path target.
     """
 
     drawing: Drawing
     region_id: str
     action: PathAction
     settings: ActionSettings
+    evidence: EvidenceT
+    base_version: str
 
     def __post_init__(self) -> None:
         if not self.region_id:
@@ -149,6 +162,7 @@ class DrawingActionRequest(Generic[EvidenceT]):
     evidence: EvidenceT
     action: DrawingAction
     settings: ActionSettings
+    base_version: str
 
 
 @dataclass(frozen=True)
@@ -185,8 +199,19 @@ class DrawingEngine(Protocol[EvidenceT]):
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
         """Refit a closed line path using the supplied fitting strategy."""
 
-    def apply_path_action(self, request: PathActionRequest) -> PathActionResult:
+    def apply_path_action(self, request: PathActionRequest[EvidenceT]) -> PathActionResult:
         """Apply one nested path action using the current drawing for references."""
 
     def apply_action(self, request: DrawingActionRequest[EvidenceT]) -> DrawingActionResult[EvidenceT]:
         """Apply one drawing action, delegating nested path actions as needed."""
+
+    def apply_plan(
+        self, drawing: Drawing, evidence: EvidenceT, plan: DrawingPlan,
+    ) -> DrawingActionResult[EvidenceT]:
+        """Apply ordered actions against one retained version and its receipts."""
+
+    def refine_automatically(
+        self, drawing: Drawing, evidence: EvidenceT, *,
+        corner_normalize: bool = False, refinement_passes: RefinementPasses | None = None,
+    ) -> DrawingActionResult[EvidenceT]:
+        """Orchestrate selectable passes through the existing geometry operations."""
