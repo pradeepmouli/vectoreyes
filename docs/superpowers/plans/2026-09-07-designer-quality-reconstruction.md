@@ -584,6 +584,23 @@ Verification: **148 focused tests** pass. Final post-fix full source suite:
 defects; its focal-point observation was fixed with the regressions above. No
 native rebuild, deployment or visual-quality acceptance is claimed.
 
+#### Canonical drawing ordering — 2026-10-17
+
+`set_drawing_z_order` accepts the canonical `Drawing` and existing
+`SetZOrderAction`. It uses shared target expansion, requires complete leaf
+coverage, and preserves each selected group's relative paint order with stable
+tree-order ties. It returns a replacement drawing without changing geometry,
+paint, annotations, lineage or tree structure. The temporary executor projects
+only resulting leaf z values; its duplicate ordering algorithm is removed.
+
+Whole-region path fitting remains on its existing implementation until its
+result contract explicitly represents component splits and cutouts. The migration
+must not silently restrict it to one fitted leaf or change topology behavior.
+
+Verification: **125 focused tests** pass. Full source suite: **982 passed,
+951 warnings** in 121.35s. Independent scoped review found no actionable defects
+and passed 30 checks. No native rebuild, deployment or visual sign-off.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

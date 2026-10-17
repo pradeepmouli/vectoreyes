@@ -10,8 +10,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from .drawing import DrawingRegion
-from .drawing_actions import ActionSettings, FitPrimitiveAction, SetFillAction
+from .drawing import Drawing, DrawingRegion
+from .drawing_actions import ActionSettings, FitPrimitiveAction, SetFillAction, SetZOrderAction
+from .drawing_plan import PlanValidationError, _expand_merge_regions
 from .drawing_fill import deserialize_fill
 from .primitive_fitting import fit_primitive_geometry
 
@@ -48,3 +49,26 @@ def set_region_fill(region: DrawingRegion, action: SetFillAction) -> DrawingRegi
     """Assign canonical paint without modifying geometry or its annotations."""
     _require_leaf_target(region, action.target)
     return replace(region, fill=deserialize_fill(action.fill.model_dump()))
+
+
+def set_drawing_z_order(drawing: Drawing, action: SetZOrderAction) -> Drawing:
+    """Assign a complete leaf paint order without modifying the region tree."""
+    leaves = tuple(leaf for root in drawing.regions for leaf in root.leaves())
+    by_id = {leaf.id: leaf for leaf in leaves}
+    expanded = _expand_merge_regions(action.targets, set(by_id), "/ops")
+    if set(expanded) != set(by_id):
+        raise PlanValidationError("/ops", "z order must include every retained leaf exactly once")
+    positions = {leaf.id: index for index, leaf in enumerate(leaves)}
+    ordered = tuple(
+        member for selected in action.targets
+        for member in sorted(
+            (key for key in expanded if key == selected or key.startswith(f"{selected}-")),
+            key=lambda key: (by_id[key].z, positions[key]),
+        )
+    )
+    z_by_id = {region_id: z for z, region_id in enumerate(ordered)}
+    def visit(region: DrawingRegion) -> DrawingRegion:
+        if region.is_leaf:
+            return replace(region, z=z_by_id[region.id])
+        return replace(region, children=tuple(visit(child) for child in region.children))
+    return replace(drawing, regions=tuple(visit(root) for root in drawing.regions))

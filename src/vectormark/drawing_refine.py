@@ -18,8 +18,8 @@ from ._fitcurve import fit_cubic_once, fit_quadratic_once
 from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
 from .components import decompose_components
 from .contour import region_contours
-from .drawing_actions import ActionSettings
-from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan, _expand_merge_regions
+from .drawing_actions import ActionSettings, SetZOrderAction
+from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
 from .drawing_adapter import drawing_from_vector_regions
 from .drawing_fill import serialize_fill
 from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
@@ -968,7 +968,7 @@ def refine(
         plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
     )
     validate_plan(plan, drawing)
-    z_order: tuple[str, ...] | None = None
+    z_order: SetZOrderAction | None = None
 
     for index, action in enumerate(plan.ops):
         before = regions
@@ -1091,7 +1091,7 @@ def refine(
             fill = _fill(serialize_fill(updated.fill))
             regions = _replace_leaf(regions, target_id, lambda region: _with_fill(region, fill))
         elif name == "set_z_order":
-            z_order = tuple(op["targets"])
+            z_order = action
 
         # Geometry is authoritative.  A changed leaf must not retain a fill
         # fitted to its earlier mask; clear it, then run the one shared fill
@@ -1103,20 +1103,13 @@ def refine(
         regions = normalize_retained_topology(regions)
 
     if z_order is not None:
-        targets = _targets(regions)
-        expanded = _expand_merge_regions(z_order, set(targets), "/ops")
-        if set(expanded) != set(targets):
-            raise PlanValidationError("/ops", "z order must include every retained leaf exactly once")
-        # Expand each declared group in its existing retained paint order.
-        expanded_order = tuple(
-            member for selected in z_order
-            for member in sorted(
-                (key for key in expanded if key == selected or key.startswith(f"{selected}-")),
-                key=lambda key: (targets[key].region.z, tuple(targets).index(key)),
-            )
+        drawing = drawing_from_vector_regions(
+            plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
         )
-        for z, target_id in enumerate(expanded_order):
-            regions = _replace_leaf(regions, target_id, lambda region, z=z: _with_z(region, z))
+        ordered = drawing_region_actions.set_drawing_z_order(drawing, z_order)
+        for root in ordered.regions:
+            for leaf in root.leaves():
+                regions = _replace_leaf(regions, leaf.id, lambda region, z=leaf.z: _with_z(region, z))
     return normalize_retained_topology(_normalize_drawing_addresses(regions))
 
 

@@ -32,6 +32,24 @@ def fixture():
     return evidence, paint, EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, settings)
 
 
+def test_order_plan_delegates_to_canonical_drawing_action(monkeypatch):
+    import vectormark.drawing_region_actions as actions
+    from vectormark.drawing import Drawing
+    evidence, paint, base = fixture()
+    calls = []
+    execute = actions.set_drawing_z_order
+    def record(drawing, action):
+        calls.append(drawing)
+        return execute(drawing, action)
+    monkeypatch.setattr(actions, 'set_drawing_z_order', record)
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0', ops=[dict(op='set_z_order', targets=['r1'])]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    replay_module.propose_effective_recipe(drawing_id='drw_test', evidence=evidence, paint=paint, recipe=recipe)
+    assert calls and all(isinstance(drawing, Drawing) for drawing in calls)
+
+
 def test_radial_fill_plan_preserves_noncentral_focal_point_through_replay():
     evidence, paint, base = fixture()
     plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
