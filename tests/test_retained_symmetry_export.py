@@ -70,8 +70,10 @@ def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(mon
     def forbidden(*args, **kwargs):
         raise AssertionError("renderer reconstructed geometry")
     import vectormark.fit as fit_module
+    import vectormark.path_fitting as fitting
     monkeypatch.setattr(fit_module, "atomic_flatten_path_d", forbidden)
-    for name in ("unary_union", "_surface_shape", "fit_path", "rasterize"):
+    monkeypatch.setattr(fitting, "fit_raster_paths", forbidden)
+    for name in ("unary_union", "_surface_shape", "rasterize"):
         monkeypatch.setattr(drawing_refine, name, forbidden)
     trace = SimpleNamespace(width=48, height=24)
     first = drawing_refine.render_drawing(trace, regions)

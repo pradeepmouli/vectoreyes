@@ -28,7 +28,7 @@ from .path_geometry import CompoundPathGeometry, CornerAnchor, PathGeometry, Pat
 from .path_topology import component_paths, replace_component_paths
 from .emit import apply_affine_point, render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
 from .fill_fit import fit_fill
-from .fit import Shape, _curved_run_d, _fmt, fit_path, fit_path_stages
+from .fit import Shape, _curved_run_d, _fmt, fit_path_stages
 from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath, to_polygon
 from .optimizer.corners import path_corner_diagnostics, rebind_prefit_corner_diagnostics
 from .optimizer.gate import rasterize
@@ -51,7 +51,7 @@ from .quality import polyline_boundary_distance
 from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
-from . import drawing_region_actions
+from . import drawing_region_actions, path_fitting
 
 
 DrawingRegions = tuple[VectorRegion, ...]
@@ -2200,25 +2200,14 @@ def _align(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> Drawing
 
 
 def _fit_target_path(target: _Target, *, settings: ActionSettings) -> Shape:
-    """Fit every retained contour of one region with the resolved action settings."""
-    contours = [contour for contour in region_contours(target.region.raster) if len(contour) >= 3]
-    if not contours:
-        raise ValueError(f"cannot fit an empty drawing region {target.id!r}")
-    paths = [
-        str(
-            fit_path(
-                contour,
-                epsilon=settings.epsilon,
-                max_error=settings.max_error,
-                cubic=False,
-                progressive=settings.fit_strategy != "quadratic",
-                progressive_allow_lines=settings.fit_strategy == "progressive_allow_lines",
-                prefer_simple_curves=False,
-            ).params["d"]
-        )
-        for contour in contours
-    ]
-    params: dict[str, object] = {"d": " ".join(paths)}
+    """Project typed numeric fits into the temporary working-region scene."""
+    paths = path_fitting.fit_raster_paths(
+        target.region.raster, region_id=target.id, settings=settings,
+    )
+    params: dict[str, object] = {
+        "d": " ".join(path.to_svg_d() for path in paths),
+        "path_ids": tuple(path.path.id for path in paths),
+    }
     if len(paths) > 1:
         params["fill_rule"] = "evenodd"
     return Shape("path", params)

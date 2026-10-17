@@ -276,7 +276,8 @@ def test_empty_plan_with_rgb_preserves_shared_gradient_without_refilling(monkeyp
     def forbidden(*args, **kwargs):
         raise AssertionError("pure topology normalization refitted paint or geometry")
     monkeypatch.setattr(drawing_refine, "fit_fill", forbidden)
-    monkeypatch.setattr(drawing_refine, "fit_path", forbidden)
+    import vectormark.path_fitting as fitting
+    monkeypatch.setattr(fitting, "fit_raster_paths", forbidden)
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing", "base_version": "v0", "ops": []})
     result = drawing_refine.refine(_trace(), (source,), plan, rgb=np.zeros((24, 48, 3), np.uint8))
     assert all(child.fill is fill for child in result[0].children)

@@ -174,6 +174,30 @@ def test_fill_plan_executes_canonical_region_action_without_geometry_solver(monk
     assert result.drawing.regions[0].fill.color == '#aa2200'
 
 
+def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
+    import vectormark.path_fitting as fitting
+    evidence, paint, base = fixture()
+    calls = []
+    execute = fitting.fit_raster_paths
+    def record(raster, **kwargs):
+        calls.append((raster.copy(), kwargs))
+        return execute(raster, **kwargs)
+    monkeypatch.setattr(fitting, 'fit_raster_paths', record)
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0',
+        ops=[dict(op='fit_path', target='r1', settings=dict(max_error=2.0,
+            fit_strategy='progressive'))]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert len(calls) == 1
+    np.testing.assert_array_equal(calls[0][0], evidence.trace_roots[0].raster)
+    assert calls[0][1]['region_id'] == 'r1'
+    assert calls[0][1]['settings'].max_error == 2.0
+    assert calls[0][1]['settings'].fit_strategy == 'progressive'
+
+
 def test_primitive_plan_executes_the_canonical_region_action(monkeypatch):
     import vectormark.drawing_region_actions as actions
     from vectormark.drawing import DrawingRegion

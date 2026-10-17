@@ -627,6 +627,30 @@ Final source verification: **987 passed, 951 warnings** in 116.92s. No native
 rebuild, deployment or visual sign-off; render-ΔE scoring remains unavailable
 in this test environment because the optional renderer is not installed.
 
+#### Typed whole-region path fitting kernel — 2026-10-17
+
+`fit_raster_paths` accepts retained two-dimensional raster evidence, a region
+address and resolved `ActionSettings`, returning source-ordered typed
+`PathGeometry` values. It shares the existing numeric fitter unchanged across
+quadratic, progressive and progressive-with-lines strategies. It does not infer
+component ownership, resolve paint, mutate the raster or publish region IDs.
+The existing shared topology transaction remains responsible for component
+splits, cutouts and clone expansion.
+
+Whole-region plan fitting now delegates to this kernel; `_fit_target_path` is
+only the temporary typed-to-working-scene projection. Numeric fitting no longer
+depends on `_Target` or `VectorRegion`. This is the numeric extraction needed by
+the canonical region action, not completion of that action's scene adapter
+removal. Tests compare exact typed fits with the previous numeric implementation
+for all strategies, disconnected components and holes; plan routing verifies one
+fit with resolved overrides and selected replay without regeneration.
+
+Verification: **128 focused checks** pass. Full source suite: **998 passed,
+951 warnings** in 217.86s. Two no-refit tests now guard the extracted kernel
+instead of the removed import; no unused compatibility alias was retained.
+No native rebuild, deployment or visual acceptance is claimed. The optional
+render-ΔE scoring dependency is still absent from this environment.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
