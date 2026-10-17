@@ -86,6 +86,20 @@ class _AutomaticPathFit:
     evidence: AutomaticFitEvidence
 
 
+@dataclass(frozen=True)
+class _DetectedPathFeatures:
+    """Pre-fit source boundaries, detached from mutable tracing buffers.
+
+    Fitting cuts include protected lines and non-semantic closure boundaries;
+    only point indices and rounded ranges declare corners.
+    """
+
+    ring: tuple[tuple[float, float], ...]
+    cut_indices: tuple[int, ...]
+    point_indices: tuple[int, ...]
+    corner_ranges: tuple[tuple[int, int], ...]
+
+
 def _max_residual(model, pts: np.ndarray) -> float:
     return float(np.abs(model.residuals(pts)).max())
 
@@ -1366,19 +1380,18 @@ def _curved_run_d(
     return _append_cubic_run("", seg, max_error, line_epsilon=line_epsilon, endpoints=endpoints)
 
 
-def _fit_path_d_with_evidence(
+def _detect_path_features(
     contour: np.ndarray,
     *,
     epsilon: float,
-    max_error: float,
-    cubic: bool = False,
     progressive: bool = False,
-    progressive_allow_lines: bool = True,
     support_weighted_corners: bool = False,
     corner_rounding: bool = True,
     canvas_extent: float = FIT_REFERENCE_CANVAS_EXTENT,
     forced_corners: np.ndarray | None = None,
-) -> _AutomaticPathFit:
+    forced_corner_indices: tuple[int, ...] = (),
+) -> _DetectedPathFeatures:
+    """Discover source corners and fitting boundaries without fitting curves."""
     pts = np.asarray(contour, dtype=float)
     closed = np.allclose(pts[0], pts[-1])
     ring = pts[:-1] if closed else pts
@@ -1620,14 +1633,16 @@ def _fit_path_d_with_evidence(
                 if not _inside_closed_span(index, start, end)
             }
             cut_idx.update((start, end))
-    forced_cut_idx: set[int] = set()
+    forced_cut_idx: set[int] = set(forced_corner_indices)
+    if any(index < 0 or index >= len(ring) for index in forced_cut_idx):
+        raise ValueError("forced corner indices must belong to the source ring")
     if forced_corners is not None and len(forced_corners):
-        forced_cut_idx = {
+        forced_cut_idx.update({
             int(np.argmin(np.hypot(*(ring - point).T)))
             for point in np.asarray(forced_corners, dtype=float)
-        }
-        cut_idx.update(forced_cut_idx)
-        point_corner_idx.update(forced_cut_idx)
+        })
+    cut_idx.update(forced_cut_idx)
+    point_corner_idx.update(forced_cut_idx)
     corner_ranges = (
         _protected_corner_ranges(
             ring,
@@ -1737,6 +1752,7 @@ def _fit_path_d_with_evidence(
         - established_cut_idx
         - recovered_span_cut_idx
         - recovered_rounded_corner_cut_idx
+        - forced_cut_idx
     )
     cut_idx.difference_update(recovery_only_cut_idx)
     point_corner_idx.difference_update(recovery_only_cut_idx)
@@ -1750,11 +1766,39 @@ def _fit_path_d_with_evidence(
             if index not in {start, end} and not _inside_closed_span(index, start, end)
         }
         cut_idx.update((start, end))
-    cut_idx = sorted(cut_idx)
+    return _DetectedPathFeatures(
+        tuple((float(point[0]), float(point[1])) for point in ring),
+        tuple(sorted(cut_idx)),
+        tuple(sorted(point_corner_idx)),
+        tuple(corner_ranges),
+    )
+
+
+def _fit_path_d_with_evidence(
+    contour: np.ndarray,
+    *,
+    epsilon: float,
+    max_error: float,
+    cubic: bool = False,
+    progressive: bool = False,
+    progressive_allow_lines: bool = True,
+    support_weighted_corners: bool = False,
+    corner_rounding: bool = True,
+    canvas_extent: float = FIT_REFERENCE_CANVAS_EXTENT,
+    forced_corners: np.ndarray | None = None,
+) -> _AutomaticPathFit:
+    """Orchestrate feature discovery, shared numerical fitting and evidence binding."""
+    features = _detect_path_features(
+        contour, epsilon=epsilon, progressive=progressive,
+        support_weighted_corners=support_weighted_corners,
+        corner_rounding=corner_rounding, canvas_extent=canvas_extent,
+        forced_corners=forced_corners,
+    )
+    ring = np.asarray(features.ring, dtype=float)
     command_end_indices: list[int | None] = []
     d, runs = _fit_path_d_from_cuts(
         ring,
-        cut_idx,
+        list(features.cut_indices),
         epsilon=epsilon,
         max_error=max_error,
         cubic=cubic,
@@ -1764,7 +1808,7 @@ def _fit_path_d_with_evidence(
     )
 
     corner_spans: list[tuple[tuple[float, float], tuple[float, float]]] = []
-    for start, end in corner_ranges:
+    for start, end in features.corner_ranges:
         corner_spans.append((
             (float(ring[start][0]), float(ring[start][1])),
             (float(ring[end][0]), float(ring[end][1])),
@@ -1773,10 +1817,10 @@ def _fit_path_d_with_evidence(
     # may be a whole note head, side, or beam, not a detected rounded corner.
     return _AutomaticPathFit(
         d,
-        tuple((float(ring[index][0]), float(ring[index][1])) for index in sorted(point_corner_idx)),
+        tuple(features.ring[index] for index in features.point_indices),
         tuple(corner_spans),
             automatic_fit_evidence(
-            ring, tuple(sorted(point_corner_idx)), tuple(corner_ranges), runs, d,
+            ring, features.point_indices, features.corner_ranges, runs, d,
             settings=(epsilon, max_error, cubic, progressive, progressive_allow_lines,
                         support_weighted_corners, corner_rounding, canvas_extent,
                         None if forced_corners is None else np.asarray(forced_corners).tolist()),

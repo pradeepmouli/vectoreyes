@@ -20,7 +20,7 @@ from .immutable_value import freeze_value
 from .path_geometry import PathGeometry
 from .output_settings import DrawingOutputSettings
 from .refinement_settings import RefinementPasses
-from .path_fit_evidence import FitBoundaryCorrespondence, FitPathCorrespondence, FitSpanCorrespondence
+from .path_fit_evidence import FeatureBindingDiagnostic, FitBoundaryCorrespondence, FitPathCorrespondence, FitSpanCorrespondence
 
 
 PixelFormat = Literal["rgb8", "rgba8"]
@@ -96,11 +96,22 @@ class PathFitOptions:
 
 @dataclass(frozen=True)
 class FitPathRequest:
-    """Refit one line-path while preserving its region-owned provenance."""
+    """Refit one line-path while preserving its region-owned provenance.
+
+    ``None`` discovers ordinary protected-line cuts as before. A supplied
+    tuple carries authoritative pre-fit cuts, distinct from corner anchors;
+    an empty tuple intentionally supplies no additional cuts.
+    """
 
     source: PathGeometry
     options: PathFitOptions
     excluded_command_ids: tuple[str, ...] = ()
+    fit_boundary_command_ids: tuple[str, ...] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "excluded_command_ids", tuple(self.excluded_command_ids))
+        if self.fit_boundary_command_ids is not None:
+            object.__setattr__(self, "fit_boundary_command_ids", tuple(self.fit_boundary_command_ids))
 
 
 @dataclass(frozen=True)
@@ -113,6 +124,39 @@ class FitPathResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "diagnostics", freeze_value(self.diagnostics))
+
+
+@dataclass(frozen=True)
+class DetectPathFeaturesRequest:
+    """Discover features on an undecorated source polyline, without fitting it.
+
+    The existing trace options supply detector settings; fitting error and
+    palette settings are irrelevant here. Canvas extent is the whole drawing's
+    longer side, not the target region's bounds.
+    """
+
+    source: PathGeometry
+    options: TraceOptions
+    canvas_extent: float
+    forced_corner_command_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isfinite(self.canvas_extent) or self.canvas_extent <= 0:
+            raise ValueError("feature canvas extent must be finite and positive")
+        object.__setattr__(self, "forced_corner_command_ids", tuple(self.forced_corner_command_ids))
+
+
+@dataclass(frozen=True)
+class DetectPathFeaturesResult:
+    """Original polyline with typed corners and separate non-semantic fit cuts."""
+
+    geometry: PathGeometry
+    fit_boundary_command_ids: tuple[str, ...]
+    binding_diagnostics: tuple[FeatureBindingDiagnostic, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fit_boundary_command_ids", tuple(self.fit_boundary_command_ids))
+        object.__setattr__(self, "binding_diagnostics", tuple(self.binding_diagnostics))
 
 
 @dataclass(frozen=True)
@@ -198,6 +242,9 @@ class DrawingEngine(Protocol[EvidenceT]):
 
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
         """Refit a closed line path using the supplied fitting strategy."""
+
+    def detect_path_features(self, request: DetectPathFeaturesRequest) -> DetectPathFeaturesResult:
+        """Annotate source polyline features without fitting or changing geometry."""
 
     def apply_path_action(self, request: PathActionRequest[EvidenceT]) -> PathActionResult:
         """Apply one nested path action using the current drawing for references."""

@@ -18,6 +18,7 @@ from .drawing_actions import (
     ActionSettings, ActionSettingsOverride, DrawingPlan, UpdateGeometryAction,
 )
 from .drawing_engine import (
+    DetectPathFeaturesRequest, DetectPathFeaturesResult,
     DrawingActionRequest, DrawingActionResult, FitPathRequest, FitPathResult,
     PathActionRequest, PathActionResult, RasterImage, TraceDrawingRequest, TraceDrawingResult,
 )
@@ -34,7 +35,9 @@ from .drawing_trace import PythonTraceEngine, TraceOptions, TraceResult
 from .material_pretrace import preprocess_material_trace
 from .output_settings import DrawingOutputSettings
 from .path_geometry import PathGeometry
-from .python_path_fitter import PythonPathFitter
+from .python_path_fitter import PythonPathFitter, validate_explicit_fit_source
+from .fit import _detect_path_features
+from .path_fit_evidence import bind_source_path_features, source_node_command_id
 from .refinement_settings import RefinementPasses
 
 
@@ -74,6 +77,33 @@ class PythonDrawingEngine:
 
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
         return PythonPathFitter().fit_path(request)
+
+    def detect_path_features(self, request: DetectPathFeaturesRequest) -> DetectPathFeaturesResult:
+        validate_explicit_fit_source(request.source)
+        if request.source.anchors:
+            raise ValueError("automatic detection cannot replace existing declarations; use explicit fitting")
+        command_indices = {command.id: index for index, command in enumerate(request.source.path.commands[:-1])}
+        command_indices[request.source.path.commands[-1].id] = 0
+        if not set(request.forced_corner_command_ids).issubset(command_indices):
+            raise ValueError("forced corner commands must belong to the source path")
+        features = _detect_path_features(
+            np.asarray([command.end for command in request.source.path.commands], dtype=float),
+            epsilon=request.options.simplify_tolerance,
+            progressive=request.options.fit_strategy != "quadratic",
+            support_weighted_corners=request.options.support_weighted_corners,
+            corner_rounding=request.options.corner_rounding,
+            canvas_extent=request.canvas_extent,
+            forced_corner_indices=tuple(command_indices[key] for key in request.forced_corner_command_ids),
+        )
+        binding = bind_source_path_features(request.source.path, features.point_indices, features.corner_ranges)
+        semantic_boundaries = {
+            command_id for anchor in binding.geometry.anchors
+            for command_id in (anchor.entry_command_id, anchor.exit_command_id)
+        }
+        return DetectPathFeaturesResult(binding.geometry,
+            tuple(command_id for index in features.cut_indices
+                if (command_id := source_node_command_id(request.source.path, index)) not in semantic_boundaries),
+            binding.diagnostics)
 
     def trace_polylines(
         self, rgb: np.ndarray, options: TraceOptions, *,

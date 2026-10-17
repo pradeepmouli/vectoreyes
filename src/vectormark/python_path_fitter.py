@@ -106,7 +106,16 @@ class PythonPathFitter:
             node_by_command[command_id] for command_id in request.excluded_command_ids
         )
 
-        cuts: set[int] = set()
+        supplied_boundaries = request.fit_boundary_command_ids
+        if supplied_boundaries is not None and not set(supplied_boundaries).issubset(node_by_command):
+            raise ValueError("fitting boundaries must belong to the retained source")
+        boundary_indices = {
+            node_by_command[command_id] for command_id in supplied_boundaries or ()
+        }
+        if boundary_indices & excluded_indices:
+            raise ValueError("fitting boundaries cannot be excluded from the source")
+
+        cuts: set[int] = set(boundary_indices)
         rounded_ranges: list[tuple[int, int]] = []
         rounded_by_range: dict[tuple[int, int], CornerAnchor] = {}
         for anchor in source.anchors:
@@ -118,7 +127,7 @@ class PythonPathFitter:
                 rounded_by_range[(start, end)] = anchor
 
         progressive = strategy != "quadratic"
-        if progressive:
+        if progressive and supplied_boundaries is None:
             for start, end in _protected_line_spans(ring):
                 cuts.update(index for index in (start, end) if index not in excluded_indices)
         for start, end in rounded_ranges:

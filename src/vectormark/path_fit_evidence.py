@@ -110,6 +110,55 @@ class AutomaticFitEvidence:
         return self.output_digest == sha256(d.encode()).hexdigest()
 
 
+@dataclass(frozen=True)
+class SourceFeatureBinding:
+    geometry: PathGeometry
+    rounded: tuple[tuple[tuple[int, int], CornerAnchor], ...]
+    diagnostics: tuple[FeatureBindingDiagnostic, ...]
+
+
+def source_node_command_id(path: ClosedPath, index: int) -> str:
+    """A source ring's node zero is its addressable closing line, not M."""
+    return path.commands[index or -1].id
+
+
+def bind_source_path_features(
+    path: ClosedPath,
+    point_indices: tuple[int, ...],
+    corner_ranges: tuple[tuple[int, int], ...],
+) -> SourceFeatureBinding:
+    """Bind detected declarations once, preserving explicit ambiguity diagnostics."""
+    command_ids = tuple(command.id for command in path.commands)
+
+    def source_boundary(index: int) -> str:
+        return source_node_command_id(path, index)
+
+    declarations = [
+        CornerAnchor(f"{path.id}.corner{index}", source_boundary(node), source_boundary(node))
+        for index, node in enumerate(point_indices)
+    ]
+    rounded = {}
+    for start, end in corner_ranges:
+        entry, exit = source_boundary(start), source_boundary(end)
+        anchor = CornerAnchor(
+            f"{path.id}.corner{len(declarations)}", entry, exit,
+            directed_corner_ownership(command_ids, entry, exit, explicit_closing_drawable=True),
+        )
+        declarations.append(anchor)
+        rounded[(start, end)] = anchor
+
+    anchors = []
+    diagnostics = []
+    for anchor in declarations:
+        try:
+            PathGeometry(path, (*anchors, anchor))
+        except ValueError as error:
+            diagnostics.append(FeatureBindingDiagnostic(anchor, f"ambiguous_source_declaration: {error}"))
+        else:
+            anchors.append(anchor)
+    return SourceFeatureBinding(PathGeometry(path, tuple(anchors)), tuple(rounded.items()), tuple(diagnostics))
+
+
 def automatic_fit_evidence(
     ring: Sequence[Point],
     point_indices: tuple[int, ...],
@@ -140,31 +189,12 @@ def automatic_fit_evidence(
     command_ids = tuple(command.id for command in commands)
 
     def source_boundary(index: int) -> str:
-        return commands[index or len(points)].id
+        return source_node_command_id(path, index)
 
-    declarations = [
-        CornerAnchor(f"{source_id}.corner{index}", source_boundary(node), source_boundary(node))
-        for index, node in enumerate(point_indices)
-    ]
-    rounded = {}
-    for start, end in corner_ranges:
-        entry, exit = source_boundary(start), source_boundary(end)
-        anchor = CornerAnchor(
-            f"{source_id}.corner{len(declarations)}", entry, exit,
-            directed_corner_ownership(command_ids, entry, exit, explicit_closing_drawable=True),
-        )
-        declarations.append(anchor)
-        rounded[(start, end)] = anchor
-
-    anchors = []
-    diagnostics = []
-    for anchor in declarations:
-        try:
-            PathGeometry(path, (*anchors, anchor))
-        except ValueError as error:
-            diagnostics.append(FeatureBindingDiagnostic(anchor, f"ambiguous_source_declaration: {error}"))
-        else:
-            anchors.append(anchor)
+    binding = bind_source_path_features(path, point_indices, corner_ranges)
+    anchors = binding.geometry.anchors
+    rounded = dict(binding.rounded)
+    diagnostics = list(binding.diagnostics)
 
     cursor = 1
     spans = []
@@ -208,6 +238,6 @@ def automatic_fit_evidence(
                 continue
             boundaries.append(FitBoundaryCorrespondence(anchor.id, role, source_command, output_ids[0]))
     return AutomaticFitEvidence(
-        revision, PathGeometry(path, tuple(anchors)), output_id, sha256(d.encode()).hexdigest(),
+        revision, binding.geometry, output_id, sha256(d.encode()).hexdigest(),
         FitPathCorrespondence(tuple(boundaries), tuple(spans), endpoints), tuple(diagnostics),
     )

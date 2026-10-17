@@ -478,6 +478,7 @@ displayed drawing. Plans validate the existing receipt before execution.
 | --- | --- | --- |
 | `trace_drawing` | `TraceDrawingRequest`: packed pixels, trace/output settings, initial-stitch control | `TraceDrawingResult`: canonical v0, evidence/recipe/receipt, diagnostics |
 | `fit_path` | `FitPathRequest`: source line path, declarations and fit settings | `FitPathResult`: fitted path, source correspondence, diagnostics |
+| `detect_path_features` | `DetectPathFeaturesRequest`: undecorated line path, existing trace options, whole-canvas extent, optional forced source command IDs | `DetectPathFeaturesResult`: unchanged commands with typed corners, supplementary fitting boundaries, explicit binding diagnostics |
 | `apply_path_action` | `PathActionRequest`: drawing, evidence, base version, region, path action, settings | `PathActionResult`: updated single path and affected commands |
 | `apply_action` | `DrawingActionRequest`: drawing, evidence, base version, action, settings | `DrawingActionResult`: canonical scene, updated receipts, region changes |
 | `apply_plan` | Drawing, evidence and existing `DrawingPlan` | `PythonPlanResult`: drawing-action result plus resolved submitted corner edits |
@@ -497,9 +498,45 @@ corrected with regression tests. Full source suite after those fixes and the
 full-tree change-reporting correction: **929 passed, 951 warnings** in 117.01s.
 No native rebuild, deployment or visual-quality acceptance is claimed.
 
-Still pending: generic outcome reuse beyond fitted geometry, and the concrete
-shared `DrawingEngine` migration. This checkpoint does not claim to cache every
-corner, automatic or relationship operation result.
+Still pending: generic outcome reuse beyond fitted geometry, and removal of
+temporary `VectorRegion` execution adapters inside the shared engine. These
+checkpoints do not cache every corner, automatic or relationship result.
+
+#### Independent pre-fit discovery — 2026-10-17
+
+Automatic fitting now explicitly orchestrates discovery, the shared numeric
+fitter, and evidence binding. Discovery returns an immutable source-ring and
+boundary value and does not fit commands. The same detector is available through
+`DrawingEngine.detect_path_features`; its canonical input/output retain the
+original line commands and addresses. Existing source binding is shared with
+automatic evidence rather than duplicated. Existing declarations are rejected
+at detection ingress; explicit fitting remains the authoritative consumer of
+declarations, including an intentionally empty declaration set.
+
+`FitPathRequest.fit_boundary_command_ids` completes that handoff. `None` retains
+existing protected-line discovery; a supplied tuple carries the selected
+supplementary boundaries and disables fresh line discovery. An empty tuple is
+authoritative. Valid corner boundaries are derived from the current anchors,
+not duplicated in supplementary cuts, so deleting an anchor does not silently
+leave its semantic partition protected. Unknown source IDs and excluded-boundary
+conflicts fail explicitly, including the coincident move/closing-line alias.
+
+Ordinary automatic outputs and receipt identities remain covered by ten exact
+pre-refactor golden cases across quadratic/cubic/progressive fitting, rounded
+and stepped source contours, and canvas scaling. No detector thresholds or
+fitter defaults changed. One narrow correctness fix is intentional: recovery
+cleanup can no longer delete an explicitly forced corner. Command-addressed
+forcing also uses exact source indices instead of coordinate-based retargeting.
+
+This exposes an engine capability, not another MCP plan vocabulary. Remaining
+canonical execution-adapter migration is still open; native rebuild/deployment
+and visual-quality acceptance are not part of this source checkpoint.
+
+Verification: 85 focused checks pass, including ordinary-output golden receipts,
+discovery without fitting, declaration removal, exact forced addresses and
+closing-line aliases. Fresh review's forced-corner defect and the semantic-cut
+handoff clarification both have RED-to-GREEN regressions. Final full source
+suite: **950 passed, 951 warnings** in 127.57s. No deferred review minors.
 
 Use the existing contract direction:
 
