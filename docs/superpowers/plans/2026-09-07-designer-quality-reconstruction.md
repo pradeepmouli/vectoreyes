@@ -555,6 +555,35 @@ Verification: **116 focused tests** and **964 full-suite tests** pass. The full
 suite reports 951 warnings in 219.15s. Fresh scoped review found no actionable
 defects; no native rebuild, deployment or visual-quality acceptance is claimed.
 
+#### Canonical region-local actions — 2026-10-17
+
+`fit_region_primitive` now accepts a canonical `DrawingRegion`, the existing
+`FitPrimitiveAction`, retained raster evidence and resolved `ActionSettings`.
+It calls the shared numeric kernel and returns a replacement region, preserving
+identity, paint, z-order and source lineage. `set_region_fill` similarly accepts
+the existing `SetFillAction` and changes only canonical paint, reusing the shared
+fill deserializer. Both reject branch targets and mismatched region addresses.
+
+Plans reach these implementations through the existing `DrawingEngine` entry
+point. The working-region bridge remains temporarily responsible for projection;
+it does not duplicate action semantics. Its first action reuses the validated
+canonical view, while subsequent actions see the updated working scene. Shared
+topology preparation, paint resolution and selected-outcome retention remain in
+place. Explicit paint adopts canonical lowercase hex serialization; colors and
+numeric fitting rules are unchanged. Remaining actions migrate incrementally to
+this same separation; this checkpoint does not complete scene-adapter removal.
+
+Review also exposed an existing radial-paint bridge gap: noncentral focal points
+were accepted by the public action but dropped before output. The assignment and
+working-to-canonical conversion now retain them, and the working SVG renderer
+emits `fx`/`fy` as the canonical renderer already does. Two regressions were
+verified RED-to-GREEN; gradients with no focal point retain their existing output.
+
+Verification: **148 focused tests** pass. Final post-fix full source suite:
+**976 passed, 951 warnings** in 116.30s. Scoped review found no newly introduced
+defects; its focal-point observation was fixed with the regressions above. No
+native rebuild, deployment or visual-quality acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

@@ -82,7 +82,7 @@ def test_refine_forces_circle_and_flat_fill_without_mutating_trace():
     rendered = render_drawing(trace, regions)
 
     assert '<circle id="r1"' in rendered.svg
-    assert 'fill="#FF6600"' in rendered.svg
+    assert 'fill="#ff6600"' in rendered.svg
     assert trace.regions[0].trace_path.d == original
 
 
@@ -828,7 +828,7 @@ def test_branch_children_are_addressable_with_the_existing_hyphenated_convention
     rendered = render_drawing(trace, regions)
 
     assert 'id="r1-1"' in rendered.svg
-    assert 'id="r1-2" fill="#FF6600"' in rendered.svg
+    assert 'id="r1-2" fill="#ff6600"' in rendered.svg
 
 
 def test_detect_symmetry_publishes_one_joined_target_for_polish_and_versions():

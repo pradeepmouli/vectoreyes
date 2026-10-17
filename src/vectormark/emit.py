@@ -248,10 +248,12 @@ def linear_gradient_def(elem_id: str, x1: float, y1: float, x2: float, y2: float
 
 
 def radial_gradient_def(elem_id: str, cx: float, cy: float, r: float,
-                        stops: list[tuple[float, str]]) -> str:
+                        stops: list[tuple[float, str]], *,
+                        focal_point: tuple[float, float] | None = None) -> str:
     """A <radialGradient> in userSpaceOnUse coords."""
+    focal = "" if focal_point is None else f' fx="{_fmt(focal_point[0])}" fy="{_fmt(focal_point[1])}"'
     return (f'<radialGradient id="{elem_id}" gradientUnits="userSpaceOnUse" '
-            f'cx="{_fmt(cx)}" cy="{_fmt(cy)}" r="{_fmt(r)}">'
+            f'cx="{_fmt(cx)}" cy="{_fmt(cy)}" r="{_fmt(r)}"{focal}>'
             f'{_gradient_stops(stops)}</radialGradient>')
 
 
@@ -296,7 +298,11 @@ def resolve_fill(fill, defs: list[str], *, geometry: dict | None = None,
     elif isinstance(fill, LinearGradientFill):
         defs.append(linear_gradient_def(gid, g["x1"], g["y1"], g["x2"], g["y2"], fill.stops))
     else:
-        defs.append(radial_gradient_def(gid, g["cx"], g["cy"], g["r"], fill.stops))
+        focal = (
+            (g.get("fx", g["cx"]), g.get("fy", g["cy"]))
+            if "fx" in g or "fy" in g else None
+        )
+        defs.append(radial_gradient_def(gid, g["cx"], g["cy"], g["r"], fill.stops, focal_point=focal))
     return f"url(#{gid})"
 
 

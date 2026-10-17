@@ -21,6 +21,7 @@ from .contour import region_contours
 from .drawing_actions import ActionSettings
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan, _expand_merge_regions
 from .drawing_adapter import drawing_from_vector_regions
+from .drawing_fill import serialize_fill
 from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
 from .path_fit_evidence import AutomaticFitEvidence
 from .path_geometry import CompoundPathGeometry, CornerAnchor, PathGeometry, PathGeometryWithCutouts, parse_svg_paths
@@ -50,7 +51,7 @@ from .quality import polyline_boundary_distance
 from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
-from .primitive_fitting import fit_primitive_geometry
+from . import drawing_region_actions
 
 
 DrawingRegions = tuple[VectorRegion, ...]
@@ -963,15 +964,10 @@ def refine(
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
     regions = normalize_retained_topology(materialize_self_symmetry(base))
-    validate_plan(
-        plan,
-        drawing_from_vector_regions(
-            plan.drawing_id,
-            width=trace.width,
-            height=trace.height,
-            regions=regions,
-        ),
+    drawing = drawing_from_vector_regions(
+        plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
     )
+    validate_plan(plan, drawing)
     z_order: tuple[str, ...] | None = None
 
     for index, action in enumerate(plan.ops):
@@ -980,6 +976,12 @@ def refine(
         name = action.op
         settings = _action_settings(trace, plan, op)
         epsilon, max_error = settings.epsilon, settings.max_error
+        if index and name in {"fit_primitive", "set_fill"}:
+            # Temporary adapter: later actions must see earlier plan edits,
+            # while the first action reuses the already validated projection.
+            drawing = drawing_from_vector_regions(
+                plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
+            )
         if name == "merge":
             regions = _group_regions(regions, op)
         elif name == "split":
@@ -1024,14 +1026,11 @@ def refine(
             targets = _targets(regions)
             target = targets[op["target"]]
             try:
-                shape = shape_from_primitive_geometry(
-                    fit_primitive_geometry(
-                        target.region.raster,
-                        op["type"],
-                        epsilon=epsilon,
-                        target_id=target.id,
-                    )
+                updated = drawing_region_actions.fit_region_primitive(
+                    drawing.region(target.id), action,
+                    raster=target.region.raster, settings=settings,
                 )
+                shape = shape_from_primitive_geometry(updated.geometry)
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
             regions = _replace_leaf(
@@ -1040,7 +1039,7 @@ def refine(
                 lambda region: region.with_current(
                     shape,
                     footprint=to_polygon(shape),
-                    diagnostics={"geometry": {"explicit": op["type"]}},
+                    diagnostics={"geometry": updated.diagnostics["geometry"]},
                 ),
             )
         elif name == "update_geometry":
@@ -1086,7 +1085,10 @@ def refine(
                 )
         elif name == "set_fill":
             target_id = op["target"]
-            fill = _fill(op["fill"])
+            updated = drawing_region_actions.set_region_fill(drawing.region(target_id), action)
+            # Public fill assignments have no affine overrides.
+            # This conversion remains only until working-region paint migrates.
+            fill = _fill(serialize_fill(updated.fill))
             regions = _replace_leaf(regions, target_id, lambda region: _with_fill(region, fill))
         elif name == "set_z_order":
             z_order = tuple(op["targets"])
@@ -2736,6 +2738,7 @@ def resolved_action_settings(
 
 
 def _fill(spec: Mapping[str, object]) -> Fill:
+    """Project an assigned canonical paint payload into temporary working paint."""
     kind = spec["type"]
     if kind == "flat":
         return FlatFill(spec["color"])
@@ -2747,8 +2750,12 @@ def _fill(spec: Mapping[str, object]) -> Fill:
         )
     if kind == "radial_gradient":
         center = spec["center"]
+        geometry = {"cx": center[0], "cy": center[1], "r": spec["radius"]}
+        focal = spec.get("focal_point")
+        if focal is not None:
+            geometry.update(fx=focal[0], fy=focal[1])
         return RadialGradientFill(
-            {"cx": center[0], "cy": center[1], "r": spec["radius"]},
+            geometry,
             [(stop["offset"], stop["color"]) for stop in spec["stops"]],
         )
     origin = spec["origin"]

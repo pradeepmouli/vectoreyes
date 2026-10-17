@@ -32,6 +32,76 @@ def fixture():
     return evidence, paint, EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, settings)
 
 
+def test_radial_fill_plan_preserves_noncentral_focal_point_through_replay():
+    evidence, paint, base = fixture()
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0', ops=[dict(op='set_fill', target='r1',
+            fill=dict(type='radial_gradient', center=[4, 4], radius=4, focal_point=[2, 3],
+                stops=[dict(offset=0, color='#FFFFFF'), dict(offset=1, color='#000000')]))]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    result = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert result.drawing.regions[0].fill.focal_point == (2., 3.)
+    svg = render_drawing(result.drawing).svg
+    assert 'fx="2"' in svg and 'fy="3"' in svg
+
+
+def test_working_radial_fill_renderer_preserves_focal_point():
+    from vectormark.candidate import RadialGradientFill
+    from vectormark.emit import resolve_fill
+    definitions = []
+    resolve_fill(RadialGradientFill({'cx': 4, 'cy': 4, 'r': 4, 'fx': 2, 'fy': 3},
+        [(0., '#FFFFFF'), (1., '#000000')]), definitions)
+    assert 'fx="2"' in definitions[0] and 'fy="3"' in definitions[0]
+
+
+def test_fill_plan_executes_canonical_region_action_without_geometry_solver(monkeypatch):
+    import vectormark.drawing_region_actions as actions
+    from vectormark.drawing import DrawingRegion
+    evidence, paint, base = fixture()
+    calls = []
+    execute = actions.set_region_fill
+    def record(region, action):
+        calls.append(region)
+        return execute(region, action)
+    monkeypatch.setattr(actions, 'set_region_fill', record)
+    monkeypatch.setattr(actions, 'fit_primitive_geometry',
+        lambda *args, **kwargs: pytest.fail('paint assignment invoked geometry fitter'))
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0',
+        ops=[dict(op='set_fill', target='r1', fill=dict(type='flat', color='#AA2200'))]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    result = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert calls and all(isinstance(region, DrawingRegion) for region in calls)
+    assert result.drawing.regions[0].fill.color == '#aa2200'
+
+
+def test_primitive_plan_executes_the_canonical_region_action(monkeypatch):
+    import vectormark.drawing_region_actions as actions
+    from vectormark.drawing import DrawingRegion
+    evidence, paint, base = fixture()
+    calls = []
+    execute = actions.fit_region_primitive
+    def record(region, action, **kwargs):
+        calls.append((region, kwargs['settings']))
+        return execute(region, action, **kwargs)
+    monkeypatch.setattr(actions, 'fit_region_primitive', record)
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0',
+        ops=[dict(op='fit_primitive', target='r1', type='rect',
+            settings=dict(epsilon=0.25))]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert len(calls) == 1
+    assert isinstance(calls[0][0], DrawingRegion)
+    assert calls[0][1].epsilon == 0.25
+
+
 @pytest.mark.parametrize('kind', ['rect', 'rounded_rect', 'ellipse', 'circle', 'polygon'])
 def test_primitive_action_fits_retained_raster_not_current_outline(kind):
     evidence, paint, base = fixture()
@@ -254,7 +324,7 @@ def test_public_corner_action_resolves_plan_and_action_settings():
 
 
 def test_selected_fit_is_reused_when_extending_recipe_without_calling_fitter(monkeypatch):
-    import vectormark.drawing_refine as refine_module
+    import vectormark.drawing_region_actions as refine_module
     evidence, paint, base = fixture()
     calls = []
     def varying_fit(*args, **kwargs):
@@ -288,7 +358,7 @@ def test_selected_fit_is_reused_when_extending_recipe_without_calling_fitter(mon
 
 
 def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkeypatch):
-    import vectormark.drawing_refine as refine_module
+    import vectormark.drawing_region_actions as refine_module
     evidence, paint, base = fixture()
     plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
         drawing_id='drw_test', base_version='v0',

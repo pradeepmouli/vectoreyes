@@ -290,6 +290,10 @@ def _fill(fill: object):
             (geometry["cx"], geometry["cy"]),
             geometry["r"],
             tuple(GradientStop(offset, color) for offset, color in fill.stops),
+            focal_point=(
+                (geometry.get("fx", geometry["cx"]), geometry.get("fy", geometry["cy"]))
+                if "fx" in geometry or "fy" in geometry else None
+            ),
         )
     if isinstance(fill, LegacyRasterFill):
         geometry = fill.geometry
