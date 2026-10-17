@@ -50,11 +50,14 @@ def _component_corners(evidence: object, d: str, output_d: str, indices: tuple[i
 def normalize_retained_topology(
     regions: Sequence[VectorRegion], *, allow_external: bool = False,
     defer_overlaps: bool = False,
+    component_path_orders: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[VectorRegion, ...]:
     """Publish real component children, exact references and identity correspondence.
 
     All decisions use the original scoped forest before any replacement, so
     failure is atomic and new child IDs cannot capture an unrelated clone.
+    Retained replay may supply original source-path slots after redundant paths
+    have been retired, preserving component IDs without recreating that geometry.
     """
     prior = index_region_paths(regions)
     built: dict[tuple[int, ...], VectorRegion] = {}
@@ -86,6 +89,10 @@ def normalize_retained_topology(
             d = str(shape.params["d"])
             address = region.drawing_id or "-".join(str(part) for part in path)
             parsed = parse_svg_paths(d, region_id=address, path_ids=shape.params.get("path_ids"))
+            identities = tuple(item.path.id for item in parsed)
+            source_order = tuple((component_path_orders or {}).get(address, identities))
+            if len(set(source_order)) != len(source_order) or not set(identities).issubset(source_order):
+                raise ValueError("component path order must uniquely include every retained path")
             from ..path_geometry import CompoundPathGeometry
 
             topology = classify_filled_paths(parsed, fill_rule=shape.params.get("fill_rule", "nonzero"),
@@ -112,7 +119,6 @@ def normalize_retained_topology(
                 # Source text is preserved verbatim per subpath, keeping fit
                 # digest bindings valid even when serialization style differs.
                 raw = tuple(part.strip() for part in re.findall(r"M[^M]*", d))
-                identities = tuple(item.path.id for item in parsed)
                 children = []
                 ownership = []
                 for component in topology.components:
@@ -121,7 +127,7 @@ def normalize_retained_topology(
                     output_d = " ".join(raw[i] for i in indices)
                     output_ids = tuple(identities[i] for i in indices)
                     outer = component_paths(component)[0].path.id
-                    local_id = identities.index(outer) + 1
+                    local_id = source_order.index(outer) + 1
                     child_address = f"{address}-{local_id}" if len(topology.components) > 1 else address
                     output_shape = Shape("path", {**shape.params, "d": output_d, "path_ids": output_ids,
                                                    "fill_rule": "evenodd" if len(indices) > 1 else "nonzero"})

@@ -601,6 +601,32 @@ Verification: **125 focused tests** pass. Full source suite: **982 passed,
 951 warnings** in 121.35s. Independent scoped review found no actionable defects
 and passed 30 checks. No native rebuild, deployment or visual sign-off.
 
+#### Topology-aware selected path-fit outcomes — 2026-10-17
+
+A selected fit now retains its canonical `DrawingRegion` subtree rather than
+assuming one leaf geometry. This fixes recipe proposal/replay when a raster
+refit produces multiple components; each leaf retains canonical geometry,
+diagnostics and non-geometric shape metadata. The operation's dependency binding
+still covers the complete input scene, evidence, settings, paint and upstream
+recipe. No working raster or `VectorRegion` is added to the retained outcome.
+
+Branch application passes through the existing topology-normalization transaction
+so clones referencing the former leaf expand consistently, then restores exact
+selected canonical leaf geometry and annotations. Regression coverage includes
+separate components with/without cutouts and dependent clones, repeated replay
+without refitting, and subsequent paint edits addressed to the created children.
+Retired source-path slots remain authoritative for component addresses, so a
+removed redundant path does not renumber later children or their clone targets.
+The selected root's topology receipt is retained exactly. A scoped review found
+this retired-slot case; its failing regression now passes alongside the split,
+cutout and clone cases (64 focused checks).
+Numerical fitting is unchanged; migration of the fitter's execution wrapper is
+still separate from this outcome-contract correction.
+
+Final source verification: **987 passed, 951 warnings** in 116.92s. No native
+rebuild, deployment or visual sign-off; render-ΔE scoring remains unavailable
+in this test environment because the optional renderer is not installed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

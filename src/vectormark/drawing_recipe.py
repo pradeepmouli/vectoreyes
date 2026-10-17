@@ -19,7 +19,7 @@ from .candidate import (
     RasterFill as LegacyRasterFill,
 )
 from .corner_recipe import CornerRecipe, CornerRecipeEdit
-from .drawing import Canvas, Drawing
+from .drawing import Canvas, Drawing, DrawingRegion
 from .background import BackgroundColor
 from .types import CoverageField
 from .output_settings import DrawingOutputSettings
@@ -434,19 +434,19 @@ RecipeTargetBinding: TypeAlias = EvidenceTargetBinding | NamedOutputBinding
 
 @dataclass(frozen=True)
 class SelectedGeometryOutcome:
-    """One chosen geometry value, not a second drawing or execution scene."""
+    """One chosen canonical region subtree, never a working execution scene."""
 
     dependency_revision: str
-    target_region_id: str
-    geometry: PrimitiveGeometry | PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry
-    shape_metadata: Mapping[str, object] = field(default_factory=dict)
-    diagnostics: Mapping[str, object] = field(default_factory=dict)
+    region: DrawingRegion
+    shape_metadata: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if not self.dependency_revision or not self.target_region_id:
+        if not self.dependency_revision:
             raise ValueError("selected geometry bindings must not be empty")
+        if any(not isinstance(leaf.geometry, (PrimitiveGeometry, PathGeometry,
+                PathGeometryWithCutouts, CompoundPathGeometry)) for leaf in self.region.leaves()):
+            raise ValueError("selected fit requires concrete primitive or path geometry")
         object.__setattr__(self, "shape_metadata", freeze_value(self.shape_metadata))
-        object.__setattr__(self, "diagnostics", freeze_value(self.diagnostics))
 
 
 @dataclass(frozen=True)

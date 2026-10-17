@@ -32,6 +32,83 @@ def fixture():
     return evidence, paint, EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, settings)
 
 
+def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
+    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.drawing_recipe import SelectedGeometryOutcome
+    from vectormark.optimizer.topology import normalize_retained_topology
+    d = ('M0 0 L4 0 L4 4 L0 4 Z '
+         'M1 1 L2 1 L2 2 L1 2 Z '
+         'M5 5 L7 5 L7 7 L5 7 Z')
+    root = VectorRegion.from_shape(id=1, shape=Shape('path', {'d': d}),
+        fill=FlatFill('#112233'), z=0, raster=np.ones((8, 8), dtype=bool),
+        drawing_id='r1', source_regions=('r1',))
+    clone = replace(root, id=2, drawing_id='r2', source_regions=('r2',),
+        current=Shape('use', {'href_obj_id': 1, 'transform': (1, 0, 0, 1, 0, 0)}))
+    # Reuse begins from the concrete pre-fit region, not an already split tree.
+    before = (replace(root, current=Shape('rect', dict(x=0, y=0, w=7, h=7))), clone)
+    after = normalize_retained_topology((root, clone))
+    selected = drawing_from_vector_regions('drw_test', width=8, height=8, regions=after).region('r1')
+    assert [leaf.id for leaf in selected.leaves()] == ['r1-1', 'r1-3']
+    result = replay_module._apply_selected_geometry(SelectedGeometryOutcome('dep', selected), before)
+    drawing = drawing_from_vector_regions('drw_test', width=8, height=8, regions=result)
+    assert [leaf.id for leaf in drawing.region('r1').leaves()] == ['r1-1', 'r1-3']
+    assert [leaf.id for leaf in drawing.region('r2').leaves()] == ['r2-1', 'r2-3']
+    assert drawing.region('r1').diagnostics['topology'] == selected.diagnostics['topology']
+
+
+@pytest.mark.parametrize('with_cutout', [False, True])
+@pytest.mark.parametrize('with_clone', [False, True])
+def test_selected_path_fit_retains_split_components_without_refitting(monkeypatch, with_cutout, with_clone):
+    import vectormark.drawing_refine as refine_module
+    evidence, paint, _ = fixture()
+    raster = np.zeros((8, 8), dtype=bool)
+    raster[0:4, 0:4] = True
+    raster[5:7, 5:7] = True
+    if with_cutout:
+        raster[1:3, 1:3] = False
+    root = replace(evidence.trace_roots[0], raster=raster)
+    roots = (root,)
+    if with_clone:
+        clone = replace(root, id=2, drawing_id='r2', source_regions=('r2',),
+            current=Shape('use', {'href_obj_id': 1, 'transform': (1, 0, 0, 1, 0, 0)}))
+        roots = (root, clone)
+    evidence = build_geometry_evidence(kind='source', trace=evidence.trace,
+        geometry_source=evidence.geometry_source, trace_roots=roots)
+    base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
+        ActionSettings(epsilon=0.1, max_error=0.1, fit_strategy='quadratic'))
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1', drawing_id='drw_test',
+        base_version='v0', ops=[dict(op='fit_path', target='r1')]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    monkeypatch.setattr(refine_module, '_fit_target_path',
+        lambda *args, **kwargs: pytest.fail('selected component fit was regenerated'))
+    first = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert first.drawing.region('r1').is_branch
+    assert len(first.drawing.region('r1').leaves()) == 2
+    if with_cutout:
+        from vectormark.path_geometry import PathGeometryWithCutouts
+        assert any(isinstance(leaf.geometry, PathGeometryWithCutouts)
+                   for leaf in first.drawing.region('r1').leaves())
+    if with_clone:
+        from vectormark.path_geometry import CloneGeometry
+        assert len(first.drawing.region('r2').leaves()) == 2
+        assert all(isinstance(leaf.geometry, CloneGeometry)
+                   for leaf in first.drawing.region('r2').leaves())
+    second = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert render_drawing(first.drawing).svg == render_drawing(second.drawing).svg
+    target = first.drawing.region('r1').leaves()[0].id
+    child_plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1', drawing_id='drw_test',
+        base_version='v1', ops=[dict(op='set_fill', target=target,
+            fill=dict(type='flat', color='#ff0000'))]))
+    child_recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=recipe, plan=child_plan).recipe
+    child = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=child_recipe)
+    assert child.drawing.region(target).fill.color == '#ff0000'
+
+
 def test_order_plan_delegates_to_canonical_drawing_action(monkeypatch):
     import vectormark.drawing_region_actions as actions
     from vectormark.drawing import Drawing
