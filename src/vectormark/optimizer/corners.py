@@ -7,9 +7,9 @@ import re
 
 import numpy as np
 
-from .._fitcurve import fit_quadratic_once
+from .. import corner_fitting
 from ..corner_ownership import directed_corner_ownership
-from ..fit import Shape, _fmt, _quadratic_max_residual
+from ..fit import Shape
 from .vector_region import _parse_subpaths, _sample_subpath
 
 _CURVE_COMMANDS = {"Q", "C"}
@@ -339,15 +339,14 @@ def normalize_corners_path_d(
             samples = np.asarray(_sample_subpath(source, 16), dtype=float)
             if len(samples) < 3:
                 continue
-            quadratic, _error, _split = fit_quadratic_once(samples, max_error)
-            # Validate the serialized candidate, including the actual preserved
-            # endpoints. The fit must not move either boundary to improve error.
-            control = np.asarray([float(_fmt(v)) for v in quadratic[1]])
-            quadratic = np.asarray([start, control, end])
-            if _quadratic_max_residual(samples, quadratic) > max_error:
+            quadratic = corner_fitting.fit_corner_span(
+                samples, start=tuple(start), end=tuple(end),
+                command_id=f"p{subpath}.c{indices[-1]}", max_error=max_error,
+            )
+            if quadratic is None:
                 skipped.append({"corner_id": span["corner_id"], "reason": "fit_residual"})
                 continue
-            replacements[indices[0]] = (indices, ("Q", [*control, *end]))
+            replacements[indices[0]] = (indices, ("Q", [*quadratic.control, *quadratic.end]))
             normalized.append(str(span["corner_id"]))
         if not replacements:
             output.append(tokens)

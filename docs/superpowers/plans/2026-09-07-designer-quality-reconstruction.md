@@ -708,6 +708,27 @@ corner/relationship execution, generic outcome reuse, full adapter removal and
 the parent final whole-branch review are still open. No native build, deployment
 or visual acceptance is implied by this source checkpoint.
 
+#### Typed corner-span fitting kernel — 2026-10-18
+
+`corner_fitting.fit_corner_span` consumes ordered samples, fixed entry/exit
+coordinates, an output command ID and the resolved error budget. It returns one
+typed `QuadraticCommand`, or no candidate when the existing residual gate fails.
+It preserves endpoint precision and the current two-decimal fitted-control
+policy. Corner detection, ownership, sampling, topology, paint and publication
+remain outside this numeric operation.
+
+The existing normalization helper delegates its fitting arithmetic to this
+kernel, so automatic proposals and their recorded replay share one implementation.
+This is a prerequisite extraction, not completion of canonical corner-path
+execution: the legacy helper still owns span ordering, SVG projection and
+provenance rebinding. No corner thresholds, fitting defaults or new inference
+fallbacks are introduced. The remaining corner/relationship migration and final
+whole-branch review remain open.
+
+Verification: **54 focused tests** and **1,043 full-suite tests** pass
+(951 full-suite dependency warnings; 175.24s). No native rebuild, deployment,
+push or visual-quality acceptance is part of this checkpoint.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
