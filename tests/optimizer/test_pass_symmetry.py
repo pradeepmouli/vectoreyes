@@ -11,7 +11,7 @@ from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 from vectormark.optimizer.passes.symmetry import symmetry_pass
 from vectormark.fit import Shape
 from vectormark.drawing_actions import SetSymmetryAction
-from vectormark.optimizer.passes.symmetry import (
+from vectormark.drawing_symmetry import (
     Axis2D,
     _intrinsic_symmetry_diagnostics,
     _self_symmetry_diagnostics,

@@ -929,6 +929,31 @@ suite** pass (953 warnings, 180.08s). Standalone imports and diff check pass.
 Optional render-DeltaE scoring remains unavailable without resvg-py. No native
 build, deployment, performance improvement or visual acceptance is claimed.
 
+#### Retained self-symmetry and seam execution — 2026-10-18
+
+`drawing_symmetry` owns application of a recorded self-symmetry fitter/axis,
+intrinsic declaration metadata, half-path reconstruction and shared numeric
+helpers. `drawing_seams` owns recorded axis/endpoint/cluster/underlap execution,
+exact command correspondence and the shared boundary mutations. Both optimizer
+passes now import those implementations for proposal construction; replay calls
+the engine modules directly rather than importing execution from a pass. The
+old implementations were moved, not retained behind compatibility aliases.
+
+Self-symmetry still materializes through the retained topology/clone transaction;
+seams still validate path identities, preserve paint/owner evidence and clip
+underlap to the retained outer boundary. Candidate discovery/ranking remains in
+optimizer passes. No detector, tolerance, fitter-default or acceptance changes.
+
+This completes both execution extractions together, not the entire working-region
+adapter migration: these modules still consume the existing `VectorRegion` and
+retained automatic-action boundaries. Simplification, occlusion, global paint and
+source-evidence orchestration remain open. Final validation is recorded below.
+
+Verification: **213 focused tests** and the fresh full **1,147-test suite** pass
+(953 warnings, 141.09s). Unused-import/undefined-name lint, standalone imports
+and diff check pass. Optional render-DeltaE scoring remains unavailable without
+resvg-py. No native rebuild, deployment, speedup or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

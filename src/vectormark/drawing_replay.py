@@ -89,8 +89,8 @@ from .optimizer.automatic_replay import (
 from .optimizer.topology import normalize_retained_topology
 from .optimizer.symmetry_materialize import materialize_self_symmetry
 from .optimizer.vector_region import VectorRegion, _parse_subpaths
-from .optimizer.passes.seams import _command_id as seam_command_id
-from .optimizer.passes.seams import _path_id as seam_path_id
+from .drawing_seams import _command_id as seam_command_id
+from .drawing_seams import _path_id as seam_path_id
 from .path_geometry import AffineTransform
 from .path_geometry import (
     CloneGeometry,

@@ -803,7 +803,7 @@ def test_stitch_replays_axis_cluster_and_pathops_constraints_without_discovery(m
 def test_seam_correspondence_retains_unaffected_commands_but_not_replaced_cubic():
     from vectormark.fit import Shape
     from vectormark.optimizer.automatic_replay import PassInputRegionRef
-    from vectormark.optimizer.passes.seams import (
+    from vectormark.drawing_seams import (
         _cleanup_inflecting_cubics,
         _path_correspondence,
     )

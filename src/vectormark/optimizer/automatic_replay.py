@@ -886,7 +886,7 @@ def _execute_action(
             diagnostics={"corners": diagnostics},
         )]
     if isinstance(action, DeclareIntrinsicSymmetryOperation):
-        from .passes.symmetry import Axis2D, apply_intrinsic_symmetry
+        from ..drawing_symmetry import Axis2D, apply_intrinsic_symmetry
 
         target = resolver.resolve(action.target)
         return [apply_intrinsic_symmetry(target, Axis2D(*action.axis), action.residual)]
@@ -899,7 +899,7 @@ def _execute_action(
             axis=SymmetryAxisInput(point=(float(action.axis[1]), float(action.axis[2])),
                 angle_degrees=math.degrees(float(action.axis[0]))), matrix=action.transform))
     if isinstance(action, ReconstructSelfSymmetryOperation):
-        from .passes.symmetry import Axis2D, apply_self_symmetry_choice
+        from ..drawing_symmetry import Axis2D, apply_self_symmetry_choice
 
         target = resolver.resolve(action.target)
         dependent = tuple(resolver.resolve(ref) for ref in action.dependent_clones)
@@ -1038,7 +1038,7 @@ def _execute_action(
             },
         )]
     if isinstance(action, ApplySeamConstraintsOperation):
-        from .passes.seams import apply_seam_constraints
+        from ..drawing_seams import apply_seam_constraints
 
         return apply_seam_constraints(action, resolver)
     if isinstance(action, RefreshDependentClonesOperation):

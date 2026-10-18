@@ -11,7 +11,7 @@ from ..automatic_replay import (
     operation_intent,
 )
 from ...path_geometry import parse_svg_paths
-from .seams import seam_path_revision
+from ...drawing_seams import seam_path_revision
 from ..symmetry_materialize import index_region_paths
 from ..topology import normalize_retained_topology
 from ..vector_region import VectorRegion

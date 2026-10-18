@@ -159,7 +159,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization(monk
         operation_intent,
     )
     from vectormark.optimizer.framework import Proposal
-    from vectormark.optimizer.passes.symmetry import Axis2D, apply_intrinsic_symmetry
+    from vectormark.drawing_symmetry import Axis2D, apply_intrinsic_symmetry
     from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
     branch, _ = _forest()
     joined = materialize_self_symmetry((branch,))[0]
