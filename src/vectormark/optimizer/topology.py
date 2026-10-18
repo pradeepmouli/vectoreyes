@@ -10,7 +10,6 @@ from ..path_geometry import parse_svg_paths
 from ..path_topology import component_paths
 from .gate import rasterize
 from .corners import source_ordered_corner_diagnostics, recount_corner_diagnostics
-from .shape_transform import bake_shape_transform
 from .symmetry_materialize import index_region_paths, relative_source_path, resolve_source_path
 from .vector_region import VectorRegion, to_polygon
 
@@ -61,6 +60,7 @@ def normalize_retained_topology(
     Retained replay may supply original source-path slots after redundant paths
     have been retired, preserving component IDs without recreating that geometry.
     """
+    from ..drawing_adapter import transform_working_shape
     prior = index_region_paths(regions)
     built: dict[tuple[int, ...], VectorRegion] = {}
     active: set[tuple[int, ...]] = set()
@@ -171,7 +171,7 @@ def normalize_retained_topology(
                     source_child_path = (*source_path, child.id)
                     params = {**region.current.params, "href_obj_id": child.id,
                               "href_region_path": relative_source_path(child_path, source_child_path)}
-                    footprint = to_polygon(bake_shape_transform(child.current, tuple(params["transform"])))
+                    footprint = to_polygon(transform_working_shape(child.current, tuple(params["transform"])))
                     children.append(VectorRegion(
                         child.id, Shape("use", params), region.fill, region.z, footprint,
                         raster=rasterize(footprint, region.raster.shape) if region.raster.size else region.raster,

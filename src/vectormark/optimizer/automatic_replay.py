@@ -10,7 +10,7 @@ from typing import Literal, TYPE_CHECKING
 import numpy as np
 
 from ..fit import Shape
-from ..drawing_actions import ActionSettings, OperationOrigin
+from ..drawing_actions import ActionSettings, OperationOrigin, SymmetryAxisInput
 from ..immutable_value import freeze_value
 from ..path_geometry import PrimitiveGeometry
 from ..quality import GeometryAssessment
@@ -817,11 +817,11 @@ def _execute_action(
         affected = set(action.affected_ids)
         return [obj for obj in normalized if int(obj.id) in affected]
     if isinstance(action, AssignCloneOperation):
-        from .passes.clones import apply_clone_assignment
+        from ..drawing_adapter import publish_clone_assignment
 
         source = resolver.resolve(action.source)
         target = resolver.resolve(action.target)
-        return [apply_clone_assignment(
+        return [publish_clone_assignment(
             source,
             target,
             matrix=action.transform,
@@ -891,11 +891,13 @@ def _execute_action(
         target = resolver.resolve(action.target)
         return [apply_intrinsic_symmetry(target, Axis2D(*action.axis), action.residual)]
     if isinstance(action, MirrorRegionOperation):
-        from .passes.symmetry import Axis2D, apply_mirror_pair
+        from ..drawing_adapter import publish_mirror_pair
 
         source = resolver.resolve(action.source)
         target = resolver.resolve(action.target)
-        return list(apply_mirror_pair(source, target, Axis2D(*action.axis), action.transform))
+        return list(publish_mirror_pair(source, target,
+            axis=SymmetryAxisInput(point=(float(action.axis[1]), float(action.axis[2])),
+                angle_degrees=math.degrees(float(action.axis[0]))), matrix=action.transform))
     if isinstance(action, ReconstructSelfSymmetryOperation):
         from .passes.symmetry import Axis2D, apply_self_symmetry_choice
 
@@ -1040,7 +1042,7 @@ def _execute_action(
 
         return apply_seam_constraints(action, resolver)
     if isinstance(action, RefreshDependentClonesOperation):
-        from .shape_transform import bake_shape_transform
+        from ..drawing_adapter import transform_working_shape
         from .symmetry_materialize import relative_source_path
 
         replacements_by_path: dict[tuple[int, ...], VectorRegion] = {}
@@ -1070,7 +1072,7 @@ def _execute_action(
             matrix = tuple(clone.current.params["transform"])
             replacements_by_path[clone_path] = clone.with_current(
                 Shape("use", params),
-                footprint=to_polygon(bake_shape_transform(source.current, matrix)),
+                footprint=to_polygon(transform_working_shape(source.current, matrix)),
                 diagnostics=clone_diagnostics,
             )
 

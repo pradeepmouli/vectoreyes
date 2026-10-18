@@ -106,14 +106,14 @@ def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
 @pytest.mark.parametrize("stale_clone", [False, True])
 def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, monkeypatch):
     from vectormark.optimizer import framework
-    from vectormark.optimizer.shape_transform import bake_shape_transform
+    from vectormark.drawing_adapter import transform_working_shape
     from vectormark.optimizer.symmetry_materialize import union_self_symmetry
     branch, old_clone = _forest()
     source = VectorRegion(11, Shape("path", {"d": branch.footprint.to_svg_d(), "fill_rule": "evenodd", "tag": "before"}),
                           branch.fill or branch.children[0].fill, footprint=branch.footprint,
                           raster=branch.raster, drawing_id="r1-1", source_regions=("r1",))
     root = VectorRegion.branch(id=1, children=(source,), drawing_id="r1", raster=branch.raster)
-    clone_footprint = to_polygon(bake_shape_transform(source.current, (1, 0, 0, 1, 22, 0)))
+    clone_footprint = to_polygon(transform_working_shape(source.current, (1, 0, 0, 1, 22, 0)))
     clone = old_clone.with_current(old_clone.current, footprint=old_clone.footprint if stale_clone else clone_footprint)
     inputs = [root, clone]
     def reconstruct(objects, masks):
@@ -308,13 +308,13 @@ def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
     import importlib
     symmetry = importlib.import_module("vectormark.optimizer.passes.symmetry")
     from vectormark.optimizer.framework import optimize
-    from vectormark.optimizer.shape_transform import bake_shape_transform
+    from vectormark.drawing_adapter import transform_working_shape
     mask = np.zeros((32, 48), dtype=bool)
     shape = Shape("path", {"d": "M2 2 L18 2 L18 18 L2 18 Z"})
     source = VectorRegion(1, shape, FlatFill("#123456"), raster=mask, drawing_id="r1", source_regions=("r1",))
     matrix = (1, 0, 0, 1, 22, 0)
     clone = VectorRegion(2, Shape("use", {"href_obj_id": 1, "transform": matrix}), FlatFill("#654321"),
-                         footprint=to_polygon(bake_shape_transform(shape, matrix)), raster=mask,
+                           footprint=to_polygon(transform_working_shape(shape, matrix)), raster=mask,
                          drawing_id="r2", source_regions=("r2",), diagnostics={"clones": {"matched_source": 1}})
     half_shape = Shape("path", {"d": "M2 2 L10 2 L10 18 L2 18 Z"})
     half = to_polygon(half_shape)

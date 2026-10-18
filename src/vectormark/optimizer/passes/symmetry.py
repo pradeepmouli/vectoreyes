@@ -6,9 +6,10 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from ...skia_geometry import SkPath, unary_union, affinity
+from ...skia_geometry import SkPath, unary_union
 from ...candidate import FlatFill
 from ...drawing_actions import SymmetryAxisInput
+from ...drawing_adapter import publish_mirror_pair
 from ...contour import region_corner_radius
 from ...fit import Shape, _fmt, fit_path
 from ...refine import fit_path_half_fit, half_ellipse_cap_half_fit, symmetric_half_fit
@@ -21,7 +22,6 @@ from ..automatic_replay import (
 )
 from ..framework import Proposal
 from ..gate import rasterize
-from ..shape_transform import bake_shape_transform
 from ..symmetry_materialize import remap_symmetry_clones, union_self_symmetry
 from ..vector_region import VectorRegion, _parse_subpaths, to_polygon
 
@@ -148,16 +148,8 @@ def _svg_reflection_matrix(axis: Axis2D) -> tuple[float, float, float, float, fl
     return tuple(0.0 if abs(v) < 1e-12 else float(v) for v in vals)
 
 
-def _apply_svg_matrix(
-    flat: SkPath,
-    matrix: tuple[float, float, float, float, float, float],
-) -> SkPath:
-    a, b, c, d, e, f = matrix
-    return affinity.affine_transform(flat, [a, c, b, d, e, f])
-
-
 def _reflect_flat(flat: SkPath, axis: Axis2D) -> SkPath:
-    return _apply_svg_matrix(flat, _svg_reflection_matrix(axis))
+    return flat.affine_transform(_svg_reflection_matrix(axis))
 
 
 def _project_to_axis(point: tuple[float, float], axis: Axis2D) -> tuple[float, float]:
@@ -373,7 +365,7 @@ def _materialized_self_symmetry_region(
     fitted_half = to_polygon(half_shape)
     if fitted_half.is_empty:
         fitted_half = half
-    fitted_reflected_half = _apply_svg_matrix(fitted_half, matrix)
+    fitted_reflected_half = fitted_half.affine_transform(matrix)
     if fitted_reflected_half.is_empty:
         fitted_reflected_half = reflected_half
     return union_self_symmetry(
@@ -628,29 +620,6 @@ def apply_intrinsic_symmetry(
     )
 
 
-def apply_mirror_pair(
-    source: VectorRegion,
-    target: VectorRegion,
-    axis: Axis2D,
-    matrix: tuple[float, float, float, float, float, float],
-) -> tuple[VectorRegion, VectorRegion]:
-    if source.current is None:
-        raise ValueError("mirror source has no geometry")
-    reflected = _apply_svg_matrix(source.footprint, matrix)
-    return source, target.with_current(
-        bake_shape_transform(source.current, matrix),
-        footprint=reflected,
-        diagnostics={
-            "symmetry": {
-                "accepted": True,
-                "mode": "pair",
-                "matched_source": int(source.id),
-                "axis": _axis_diagnostics(axis),
-            }
-        },
-    )
-
-
 def _selected_half_shape(
     flat: SkPath,
     half: SkPath,
@@ -780,7 +749,7 @@ def _pair_proposal(
     if axis is None:
         return None
     matrix = _svg_reflection_matrix(axis)
-    reflected = _apply_svg_matrix(canonical_flat, matrix)
+    reflected = canonical_flat.affine_transform(matrix)
     if _residual(reflected, target_flat) > _PAIR_RESIDUAL_TOL:
         return None
     source_ref = draft_input_ref(canonical.id)
@@ -788,7 +757,8 @@ def _pair_proposal(
     action = MirrorRegionOperation(source_ref, target_ref, _axis_tuple(axis), matrix)
     return Proposal(
         (canonical.id, target.id),
-        list(apply_mirror_pair(canonical, target, axis, matrix)),
+        list(publish_mirror_pair(canonical, target,
+            axis=SymmetryAxisInput.model_validate(_axis_diagnostics(axis)), matrix=matrix)),
         intent=operation_intent(
             action,
             (source_ref, target_ref),

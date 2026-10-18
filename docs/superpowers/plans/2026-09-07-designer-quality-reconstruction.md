@@ -896,6 +896,39 @@ tests**, and the fresh full **1,131-test suite** pass (953 warnings, 115.82s).
 Standalone imports and diff check pass. Optional render-DeltaE scoring is still
 unavailable without resvg-py. No native build, deployment or visual acceptance.
 
+#### Shared retained relationship transforms — 2026-10-18
+
+`geometry_transforms` now owns typed endpoint/control and arc-axis/sweep
+transformation. Canonical path alignment and the existing SVG projection share
+this numeric kernel. Typed geometry retains full precision and command/anchor
+IDs; the working SVG boundary retains its previous rounding policy. Arc behavior
+is unchanged: this does not add ellipse scaling/shear support to baked arcs.
+
+Clone and mirror-pair publication moved from optimizer pass implementations to
+the shared drawing adapter. Proposal generation and replay now call those same
+publication functions with the selected source, transform and axis. Target paint,
+source evidence, family diagnostics and same-batch snapshot reads are preserved.
+Duplicate native matrix-convention wrappers and the optimizer's separate shape
+transform module are removed. Dependent-clone refresh, topology expansion and
+seam source materialization also use the shared transformation boundary.
+
+The migration exposed and fixes stale canonical caches in baked copies: changing
+the SVG path previously left `canonical_path_geometry` at the source location.
+The adapter now transfers exact-topology annotations onto the transformed numeric
+output, retaining sparse command IDs and cutouts. It cannot silently transfer
+features across changed command topology. SVG spelling is normalized when a
+canonical cache is present, without changing its prior rounded coordinates.
+
+This completes the shared numeric/publication slice, not removal of every
+working-region automatic operation. Self-symmetry reconstruction/clone ownership,
+seam decisions, simplification, occlusion and global paint/source orchestration
+still require migration. No detector thresholds or fitter defaults changed.
+Verification: **320 expanded checks** before the cache correction, **62 targeted
+checks** after it, **13 transform/cutout checks**, and the final full **1,144-test
+suite** pass (953 warnings, 180.08s). Standalone imports and diff check pass.
+Optional render-DeltaE scoring remains unavailable without resvg-py. No native
+build, deployment, performance improvement or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

@@ -21,7 +21,7 @@ from ..automatic_replay import (
     operation_intent,
 )
 from ..framework import Proposal
-from ..shape_transform import bake_shape_transform
+from ...drawing_adapter import transform_working_shape
 from ..symmetry_materialize import index_region_paths
 from ..vector_region import VectorRegion, _parse_subpaths, to_polygon
 from .simplify import _simplified_path_shape
@@ -1030,7 +1030,7 @@ def _apply_leaf_pair(
             return None
         source_key = (int(ref.owner.id), source_id)
         source_shape = updates_by_leaf[source_key].shape if source_key in updates_by_leaf else source.current
-        return bake_shape_transform(source_shape, leaf.current.params["transform"])
+        return transform_working_shape(source_shape, leaf.current.params["transform"])
 
     a_current = current_shape(a_ref)
     b_current = current_shape(b_ref)
@@ -1371,7 +1371,7 @@ def apply_seam_constraints(
         source_matches = [leaf for leaf in owner.leaves() if int(leaf.id) == source_id]
         if len(source_matches) != 1 or source_matches[0].current is None:
             raise ValueError("seam replay clone source is absent or ambiguous")
-        shape = bake_shape_transform(source_matches[0].current, region.current.params["transform"])
+        shape = transform_working_shape(source_matches[0].current, region.current.params["transform"])
         shapes[key] = shape
         input_shapes[key] = shape
         return shape

@@ -8,6 +8,8 @@ import re
 from .candidate import FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
 from .fit import Shape, _fmt
 from .types import Axis
+from . import geometry_transforms
+from .path_geometry import AffineTransform, command_from_token, command_token
 
 _KAPPA = 0.5522847498  # cubic-bézier circle constant
 _PATH_TOKEN = re.compile(r"[MLCQZ]|-?\d*\.?\d+")
@@ -182,8 +184,7 @@ def reflect_path_d(d: str, axis_x: float) -> str:
 def apply_affine_point(bake: tuple[float, float, float, float, float, float],
                        x: float, y: float) -> tuple[float, float]:
     """Apply an SVG affine (a, b, c, d, e, f) to a point: (a*x + c*y + e, b*x + d*y + f)."""
-    a, b, c, d, e, f = bake
-    return (a * x + c * y + e, b * x + d * y + f)
+    return geometry_transforms.transform_point((x, y), AffineTransform(*bake))
 
 
 def transform_path_d(d: str, m: tuple[float, float, float, float, float, float]) -> str:
@@ -192,12 +193,7 @@ def transform_path_d(d: str, m: tuple[float, float, float, float, float, float])
     wrapping `<g transform>`. Handles M/L/C/Q/Z exactly; for an elliptical-arc `A`
     only the endpoint moves and the x-axis-rotation advances by the affine's
     rotation. Reflections reverse arc orientation, so they also flip the sweep flag."""
-    a, b, c, dd, e, f = m
-    flips_orientation = (a * dd - b * c) < 0.0
-
-    def pt(x: float, y: float) -> tuple[float, float]:
-        return apply_affine_point(m, x, y)
-
+    transform = AffineTransform(*m)
     toks = _AFFINE_TOKEN.findall(d)
     out: list[str] = []
     i = 0
@@ -207,25 +203,18 @@ def transform_path_d(d: str, m: tuple[float, float, float, float, float, float])
         i += 1
         if cmd == "Z":
             continue
-        if cmd == "A":
-            arc_tokens = list(toks[i:i + 7])
-            rx, ry, xrot, large, sweep, x, y = arc_tokens
-            i += 7
-            nx, ny = pt(float(x), float(y))
-            theta = math.radians(float(xrot))
-            axis_x = a * math.cos(theta) + c * math.sin(theta)
-            axis_y = b * math.cos(theta) + dd * math.sin(theta)
-            transformed_xrot = (math.degrees(math.atan2(axis_y, axis_x)) + 360.0) % 360.0
-            if flips_orientation:
-                sweep = "0" if int(float(sweep)) else "1"
-            out += [rx, ry, _fmt(transformed_xrot), large, sweep, _fmt(nx), _fmt(ny)]
-            continue
-        n = _COORD_COUNT[cmd]
-        nums = [float(t) for t in toks[i:i + n]]
+        n = 7 if cmd == "A" else _COORD_COUNT[cmd]
+        raw = toks[i:i + n]
+        original = command_from_token(cmd, [float(t) for t in raw], command_id=f'transform.c{i}')
         i += n
-        for k in range(0, n, 2):
-            nx, ny = pt(nums[k], nums[k + 1])
-            out += [_fmt(nx), _fmt(ny)]
+        updated = geometry_transforms.transform_command(original, transform)
+        _, values = command_token(updated)
+        if cmd == "A":
+            # Preserve existing non-coordinate token spelling at this boundary.
+            sweep = str(int(values[4])) if bool(values[4]) != bool(float(raw[4])) else raw[4]
+            out += [raw[0], raw[1], _fmt(values[2]), raw[3], sweep, _fmt(values[5]), _fmt(values[6])]
+        else:
+            out += [_fmt(value) for value in values]
     return " ".join(out)
 
 

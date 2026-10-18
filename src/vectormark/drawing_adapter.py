@@ -18,6 +18,7 @@ from .candidate import (
     RasterFill as LegacyRasterFill,
 )
 from .drawing import Canvas, Drawing, DrawingRegion
+from .drawing_actions import SymmetryAxisInput
 from .fit import Shape
 from .drawing_fill import compose_affine
 from .path_geometry import (
@@ -40,6 +41,7 @@ from . import corner_provenance
 from .paint_fitting import canonical_fill as _fill
 from .optimizer.vector_region import VectorRegion
 from .types import CoverageField
+from .skia_geometry import SkPath
 from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
 
 
@@ -126,6 +128,69 @@ def publish_primitive_geometry(
     from .optimizer.vector_region import to_polygon
     shape = shape_from_primitive_geometry(geometry)
     return target.with_current(shape, footprint=to_polygon(shape), diagnostics=diagnostics)
+
+
+def publish_clone_assignment(
+    source: VectorRegion, target: VectorRegion, *,
+    matrix: tuple[float, float, float, float, float, float], symbolic: bool,
+    family_size: int | None = None, transformed: SkPath | None = None,
+) -> VectorRegion:
+    """Publish a retained clone choice; selection and detection stay outside."""
+    if source.current is None:
+        raise ValueError("clone source has no geometry")
+    diagnostics: dict[str, object] = {"accepted": True, "matched_source": int(source.id),
+        "fill_preserved": type(target.fill).__name__, "transform": matrix}
+    if family_size is not None:
+        diagnostics["family_size"] = family_size
+    shape = (Shape("use", {"href_obj_id": source.id, "transform": matrix}) if symbolic
+             else transform_working_shape(source.current, matrix))
+    return target.with_current(shape,
+        footprint=transformed if transformed is not None else source.footprint.affine_transform(matrix),
+        diagnostics={"clones": diagnostics})
+
+
+def publish_mirror_pair(
+    source: VectorRegion, target: VectorRegion, *, axis: SymmetryAxisInput,
+    matrix: tuple[float, float, float, float, float, float],
+) -> tuple[VectorRegion, VectorRegion]:
+    """Publish a selected mirror without reinterpreting its axis or paint."""
+    if source.current is None:
+        raise ValueError("mirror source has no geometry")
+    return source, target.with_current(transform_working_shape(source.current, matrix),
+        footprint=source.footprint.affine_transform(matrix), diagnostics={"symmetry": {
+            "accepted": True, "mode": "pair", "matched_source": int(source.id),
+            "axis": axis.model_dump(mode="json"),
+        }})
+
+
+def transform_working_shape(
+    shape: Shape, matrix: tuple[float, float, float, float, float, float],
+) -> Shape:
+    """Project the shared numeric transform and keep retained path annotations current."""
+    from .emit import apply_affine_point, shape_to_path_d, transform_path_d
+    from .drawing_corner_actions import rebind_corner_annotations
+    from .path_topology import component_paths, replace_component_paths
+    if shape.kind == "circle":
+        cx, cy = apply_affine_point(matrix, float(shape.params["cx"]), float(shape.params["cy"]))
+        return Shape("circle", {"cx": cx, "cy": cy, "r": float(shape.params["r"])})
+    if shape.kind != "path":
+        return Shape("path", {"d": transform_path_d(shape_to_path_d(shape), matrix)})
+    params = dict(shape.params)
+    params["d"] = transform_path_d(str(shape.params.get("d", "")), matrix)
+    canonical = params.get("canonical_path_geometry")
+    if canonical is not None:
+        originals = component_paths(canonical)
+        parsed = parse_svg_paths(params["d"], region_id="transformed",
+            path_ids=tuple(path.path.id for path in originals))
+        # Projection retains the existing numeric rounding policy, but IDs and
+        # anchors belong to the original typed commands, including sparse IDs.
+        aligned = tuple(replace(path, path=replace(path.path, commands=tuple(
+            replace(command, id=previous.id)
+            for command, previous in zip(path.path.commands, original.path.commands, strict=True))))
+            for path, original in zip(parsed, originals, strict=True))
+        updated = rebind_corner_annotations(replace_component_paths(canonical, aligned), canonical)
+        params.update(canonical_path_geometry=updated, d=updated.to_svg_d())
+    return Shape("path", params)
 
 
 def restore_corner_annotations(

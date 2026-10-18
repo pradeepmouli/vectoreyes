@@ -4,7 +4,6 @@ from collections.abc import Mapping, Sequence
 
 from ..fit import Shape
 from ..skia_geometry import SkPath, unary_union
-from .shape_transform import bake_shape_transform
 from .vector_region import VectorRegion, to_polygon
 
 
@@ -118,6 +117,7 @@ def remap_symmetry_clones(
     *, before: Sequence[VectorRegion],
 ) -> tuple[VectorRegion, ...]:
     """Remap exact before-forest bindings, never an unrelated same-numbered ID."""
+    from ..drawing_adapter import transform_working_shape
     prior = index_region_paths(before)
     current = index_region_paths(regions)
     def visit(region: VectorRegion, path: RegionPath) -> VectorRegion:
@@ -144,7 +144,7 @@ def remap_symmetry_clones(
         if old_path not in sources and params == shape.params:
             return region
         matrix = tuple(shape.params["transform"])
-        footprint = (to_polygon(bake_shape_transform(source.current, matrix))
+        footprint = (to_polygon(transform_working_shape(source.current, matrix))
                      if old_path in sources else region.footprint)
         diagnostics = {"clone_reference_remap": {
             "previous_source_region_id": original.current.params["href_obj_id"], "source_region_id": source.id,

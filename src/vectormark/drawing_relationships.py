@@ -7,11 +7,12 @@ from math import cos, radians, sin
 from .drawing import Drawing, DrawingRegion
 from .drawing_actions import AlignAction, AssignCloneAction, SetSymmetryAction
 from .drawing_fill import compose_affine
+from .geometry_transforms import transform_path_geometry
 from .geometry_native import affine_tuple, reflection, region_path, split_path_by_line
 from .path_geometry import (
     AffineTransform, CirclePrimitive, CloneGeometry, CompoundPathGeometry, Geometry,
-    CubicCommand, EllipsePrimitive, PathGeometry, PathGeometryWithCutouts, PathGeometryWithSymmetry,
-    PolygonPrimitive, PrimitiveGeometry, QuadraticCommand, RectanglePrimitive, RoundedRectanglePrimitive,
+    EllipsePrimitive, PathGeometry, PathGeometryWithCutouts, PathGeometryWithSymmetry,
+    PolygonPrimitive, PrimitiveGeometry, RectanglePrimitive, RoundedRectanglePrimitive,
     parse_svg_paths,
 )
 from .drawing_topology import publish_region_paths
@@ -65,15 +66,7 @@ def _translated_geometry(geometry: Geometry, dx: float, dy: float) -> Geometry:
     def point(value: tuple[float, float]) -> tuple[float, float]:
         return (value[0] + dx, value[1] + dy)
     if isinstance(geometry, PathGeometry):
-        commands = []
-        for command in geometry.path.commands:
-            changes = {'end': point(command.end)}
-            if isinstance(command, QuadraticCommand):
-                changes['control'] = point(command.control)
-            elif isinstance(command, CubicCommand):
-                changes.update(control_1=point(command.control_1), control_2=point(command.control_2))
-            commands.append(replace(command, **changes))
-        return replace(geometry, path=replace(geometry.path, commands=tuple(commands)))
+        return transform_path_geometry(geometry, AffineTransform(tx=dx, ty=dy))
     if isinstance(geometry, PathGeometryWithCutouts):
         return replace(geometry, outer=_translated_geometry(geometry.outer, dx, dy),
             cutouts=tuple(_translated_geometry(item, dx, dy) for item in geometry.cutouts))

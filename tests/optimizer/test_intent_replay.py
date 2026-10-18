@@ -230,8 +230,8 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
     from vectormark.fit import Shape
     from vectormark.optimizer.framework import Proposal
     from vectormark.optimizer.gate import rasterize
-    from vectormark.optimizer.passes.clones import apply_clone_assignment
-    from vectormark.optimizer.shape_transform import bake_shape_transform
+    from vectormark.drawing_adapter import publish_clone_assignment
+    from vectormark.drawing_adapter import transform_working_shape
     from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 
     points = [
@@ -248,7 +248,7 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
         1, source_shape, FlatFill("#112233"), 0, footprint=to_polygon(source_shape)
     )
     matrix = (1.0, 0.0, 0.0, 1.0, 40.0, 0.0)
-    target_shape = bake_shape_transform(source_shape, matrix)
+    target_shape = transform_working_shape(source_shape, matrix)
     target = VectorRegion(
         2, target_shape, FlatFill("#abcdef"), 1, footprint=to_polygon(target_shape)
     )
@@ -267,7 +267,7 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
             ),
             Proposal(
                 (2,),
-                [apply_clone_assignment(by_id[1], by_id[2], matrix=matrix, symbolic=True)],
+                [publish_clone_assignment(by_id[1], by_id[2], matrix=matrix, symbolic=True)],
                 intent=operation_intent(clone_action, (source_ref, target_ref), (2,)),
             ),
         ]
@@ -281,7 +281,7 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
     ]
     replayed = replay_batches(objects, result.batches, masks=masks)
     _assert_semantic_regions_equal(replayed, result.objects)
-    wrong_current_read = bake_shape_transform(result.objects[0].current, matrix)
+    wrong_current_read = transform_working_shape(result.objects[0].current, matrix)
     assert to_polygon(wrong_current_read).symmetric_difference(result.objects[1].footprint).area > 0.1
 
 
@@ -1039,7 +1039,7 @@ def test_recursive_intent_commits_or_rolls_back_as_one_outer_clone_transaction(
     from vectormark.fit import Shape
     from vectormark.optimizer.gate import rasterize
     from vectormark.optimizer.passes.symmetry import symmetry_pass
-    from vectormark.optimizer.shape_transform import bake_shape_transform
+    from vectormark.drawing_adapter import transform_working_shape
     from vectormark.optimizer.vector_region import VectorRegion, to_polygon
     from vectormark.skia_geometry import SkPath
 
@@ -1068,7 +1068,7 @@ def test_recursive_intent_commits_or_rolls_back_as_one_outer_clone_transaction(
     branch_mask = source.raster | native.raster
     branch = VectorRegion.branch(id=10, children=[source, native], z=0, raster=branch_mask)
     matrix = (1.0, 0.0, 0.0, 1.0, 80.0, 0.0)
-    clone_footprint = to_polygon(bake_shape_transform(source_shape, matrix))
+    clone_footprint = to_polygon(transform_working_shape(source_shape, matrix))
     if reject_outer:
         clone_footprint = SkPath(shell=[(130, 0), (132, 0), (132, 2), (130, 2)])
     clone = VectorRegion(

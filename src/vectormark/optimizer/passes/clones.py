@@ -4,11 +4,10 @@ import math
 
 import numpy as np
 
-from ...skia_geometry import SkPath, affinity
-from ...fit import Shape
+from ...skia_geometry import SkPath
+from ...drawing_adapter import publish_clone_assignment
 from ..automatic_replay import AssignCloneOperation, draft_input_ref, operation_intent
 from ..framework import Proposal
-from ..shape_transform import bake_shape_transform
 from ..vector_region import VectorRegion
 
 _ANGLE_EPS = 1e-9
@@ -95,14 +94,6 @@ def _matrix_for_rotation_and_centroids(
     return tuple(0.0 if abs(v) < 1e-12 else float(v) for v in vals)
 
 
-def _apply_svg_matrix(
-    flat: SkPath,
-    matrix: tuple[float, float, float, float, float, float],
-) -> SkPath:
-    a, b, c, d, e, f = matrix
-    return affinity.affine_transform(flat, [a, c, b, d, e, f])
-
-
 def _best_transform(
     canonical: SkPath,
     target: SkPath,
@@ -120,7 +111,7 @@ def _best_transform(
         for target_angle in target_angles:
             theta = _normalize_angle(target_angle - canon_angle)
             matrix = _matrix_for_rotation_and_centroids(canonical_centroid, target_centroid, theta)
-            transformed = _apply_svg_matrix(canonical, matrix)
+            transformed = canonical.affine_transform(matrix)
             scale = max(float(target.area), float(transformed.area), 1.0)
             residual = float(transformed.symmetric_difference(target).area / scale)
             candidates.append((residual, 0, matrix, transformed))
@@ -139,7 +130,7 @@ def _best_transform(
         e = mx - (a * mx + c * my)
         f = my - (b * mx + d * my)
         matrix = tuple(0.0 if abs(value) < 1e-12 else float(value) for value in (a, b, c, d, e, f))
-        transformed = _apply_svg_matrix(canonical, matrix)
+        transformed = canonical.affine_transform(matrix)
         scale = max(float(target.area), float(transformed.area), 1.0)
         candidates.append((float(transformed.symmetric_difference(target).area / scale), 1, matrix, transformed))
 
@@ -171,7 +162,7 @@ def _clone_proposal(
     symbolic: bool,
     family_size: int | None = None,
 ) -> Proposal:
-    replacement = apply_clone_assignment(
+    replacement = publish_clone_assignment(
         canonical,
         target,
         matrix=matrix,
@@ -186,38 +177,6 @@ def _clone_proposal(
         (target.id,),
         [replacement],
         intent=operation_intent(action, (source_ref, target_ref), (target.id,)),
-    )
-
-
-def apply_clone_assignment(
-    canonical: VectorRegion,
-    target: VectorRegion,
-    *,
-    matrix: tuple[float, float, float, float, float, float],
-    symbolic: bool,
-    family_size: int | None = None,
-    transformed: SkPath | None = None,
-) -> VectorRegion:
-    """Materialize an already selected clone relation without detecting it."""
-    diagnostics: dict[str, object] = {
-        "accepted": True,
-        "matched_source": int(canonical.id),
-        "fill_preserved": type(target.fill).__name__,
-        "transform": matrix,
-    }
-    if family_size is not None:
-        diagnostics["family_size"] = family_size
-    if canonical.current is None:
-        raise ValueError("clone source has no geometry")
-    geometry = (
-        Shape("use", {"href_obj_id": canonical.id, "transform": matrix})
-        if symbolic
-        else bake_shape_transform(canonical.current, matrix)
-    )
-    return target.with_current(
-        geometry,
-        footprint=transformed if transformed is not None else _apply_svg_matrix(canonical.footprint, matrix),
-        diagnostics={"clones": diagnostics},
     )
 
 
