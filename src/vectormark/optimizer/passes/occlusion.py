@@ -4,6 +4,9 @@ import numpy as np
 
 from ...candidate import FlatFill
 from ...drawing_adapter import primitive_geometry_from_shape
+from ...drawing_occlusion import (
+    _shape_from_scene_primitive, materialize_occlusion_child, materialize_occlusion_branch,
+)
 from ...fit import Shape
 from ...occlusion import ScenePrimitive, reconstruct_scene, region_adjacency
 from ...symmetry import detect_axis
@@ -19,8 +22,7 @@ from ..automatic_replay import (
     draft_input_ref,
 )
 from ..framework import Proposal
-from ..gate import rasterize
-from ..vector_region import VectorRegion, to_polygon
+from ..vector_region import VectorRegion
 
 
 def _flat_hex(region: VectorRegion) -> str | None:
@@ -38,42 +40,6 @@ def _as_trace_region(region: VectorRegion) -> Region | None:
         mask=np.asarray(region.raster, dtype=bool).copy(),
         color_hex=color_hex,
         coverage=region.coverage,
-    )
-
-
-def _shape_from_scene_primitive(primitive: ScenePrimitive) -> Shape:
-    return Shape(primitive.kind, dict(primitive.params))
-
-
-def _child_from_scene_item(
-    item: ScenePrimitive | Shape,
-    *,
-    id: int,
-    shape_hw: tuple[int, int],
-    z_offset: float = 0.0,
-) -> VectorRegion:
-    if isinstance(item, ScenePrimitive):
-        shape = _shape_from_scene_primitive(item)
-        fill = FlatFill(item.color_hex)
-        z = z_offset + float(item.z)
-        raster = rasterize(to_polygon(shape), shape_hw)
-        color_hex = item.color_hex
-    else:
-        shape = item
-        color_hex = str(item.params["color_hex"])
-        fill = FlatFill(color_hex)
-        z = z_offset + float(item.params.get("z", 0))
-        raster = rasterize(to_polygon(shape), shape_hw)
-
-    return VectorRegion(
-        id=id,
-        current=shape,
-        fill=fill,
-        z=z,
-        raster=raster,
-        footprint=to_polygon(shape),
-        color_hex=color_hex,
-        diagnostics={"occlusion": {"reconstructed_child": True}},
     )
 
 
@@ -145,21 +111,12 @@ def occlusion_pass(
             else:
                 child_id = next_id
                 next_id += 1
-            children.append(_child_from_scene_item(item, id=child_id, shape_hw=shape_hw, z_offset=base_z))
+            children.append(materialize_occlusion_child(item, id=child_id, shape_hw=shape_hw, z_offset=base_z))
             child_records.append((item, child_id, f"child_{item_index}"))
 
-        branch = VectorRegion.branch(
-            id=consumed_ids[0],
-            children=children,
-            z=base_z,
-            raster=np.logical_or.reduce([region_by_id[obj_id].mask for obj_id in consumed_ids]),
-            diagnostics={
-                "occlusion": {
-                    "accepted": True,
-                    "consumed_ids": [int(obj_id) for obj_id in consumed_ids],
-                    "children": len(children),
-                }
-            },
+        branch = materialize_occlusion_branch(
+            [obj for obj in leaves if int(obj.id) in consumed_ids], children,
+            branch_id=consumed_ids[0], base_z=base_z, shape_hw=shape_hw,
         )
         refs_by_id = {obj_id: draft_input_ref(obj_id) for obj_id in consumed_ids}
         primitive_output_by_source: dict[int, str] = {}

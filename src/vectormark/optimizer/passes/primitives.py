@@ -58,7 +58,7 @@ def _recognize_rounded_rect(points: np.ndarray, flat: SkPath, *, epsilon: float)
     """Recognize an axis-aligned rounded rectangle independently of its fill."""
     # Keep the radius estimator shared with path simplification so native
     # primitive fitting and path fallback make the same geometric judgment.
-    from .simplify import _rounded_rect_radius
+    from ...drawing_simplification import _rounded_rect_radius
 
     fit = _rounded_rect_radius(points, flat, epsilon)
     if fit is None:

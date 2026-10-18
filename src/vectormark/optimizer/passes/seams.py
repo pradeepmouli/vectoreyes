@@ -19,7 +19,7 @@ from ..framework import Proposal
 from ...drawing_adapter import transform_working_shape
 from ..symmetry_materialize import index_region_paths
 from ..vector_region import VectorRegion, _parse_subpaths
-from .simplify import _simplified_path_shape
+from ...drawing_simplification import _simplified_path_shape
 from ...drawing_seams import (
     _SEAM_TOL, _JUNCTION_TOL, _SeamCandidate, _LeafRef, _LeafUpdate,
     _CoordinateRef, _EndpointMatch, _path_endpoints_within, _leaf_key,

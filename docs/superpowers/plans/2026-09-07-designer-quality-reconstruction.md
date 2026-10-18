@@ -954,6 +954,32 @@ Verification: **213 focused tests** and the fresh full **1,147-test suite** pass
 and diff check pass. Optional render-DeltaE scoring remains unavailable without
 resvg-py. No native rebuild, deployment, speedup or visual acceptance is claimed.
 
+#### Shared simplification and occlusion execution — 2026-10-18
+
+`drawing_simplification` now owns path resampling, candidate fitting, subpath
+topology/boundary checks and retained simplification application. The optimizer
+keeps target/coverage discovery and imports the shared implementation. Seam
+cleanup and rounded-rectangle recognition use the same engine helpers rather
+than reaching into another pass. Existing sampling, fitting and acceptance
+budgets are unchanged; cutout boundaries retain their independent checks.
+
+`drawing_occlusion` now validates and applies recorded primitive/source/lens
+children. Missing, forward and cyclic dependencies retain their existing errors;
+replay does not rerun scene discovery. Proposals and replay share child and branch
+publication, including source-raster union, paint order and consumed-region
+diagnostics. The old replay body and pass-owned implementations are removed.
+
+Both operations still consume the existing working-region/evidence adapters.
+This is execution consolidation, not completed canonical-adapter removal.
+Smoothing, remaining topology/clone-refresh orchestration, global paint/source
+bookkeeping and the parent final review remain open. No thresholds/defaults,
+corpus references or cached visual reports changed. Final validation follows.
+
+Verification: **199 focused tests** and the fresh full **1,151-test suite** pass
+(953 warnings, 119.21s). Unused-import/undefined-name lint, standalone imports
+and diff check pass. Optional render-DeltaE scoring remains unavailable without
+resvg-py. No native rebuild, deployment, speedup or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

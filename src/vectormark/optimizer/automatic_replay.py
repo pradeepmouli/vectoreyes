@@ -829,29 +829,9 @@ def _execute_action(
             family_size=action.family_size,
         )]
     if isinstance(action, SimplifyLineletOperation):
-        from .passes.simplify import _simplified_path_shape
+        from ..drawing_simplification import apply_simplification
 
-        target = resolver.resolve(action.target)
-        if target.current is None:
-            raise ValueError("simplify replay target has no geometry")
-        shape = _simplified_path_shape(
-            target.current,
-            epsilon=action.epsilon,
-            max_error=action.max_error,
-            samples=action.samples,
-            preserve_subpaths=action.preserve_subpaths,
-            cubic=action.cubic,
-            original=target.original,
-            check_geometry=action.check_geometry,
-            linelet_only=action.linelet_only,
-            max_boundary_error=action.max_boundary_error,
-        )
-        if shape is None:
-            raise ValueError("recorded simplify operation no longer applies to its bound input")
-        return [
-            target.with_current(shape),
-            *(resolver.resolve(ref) for ref in action.covering),
-        ]
+        return apply_simplification(action, resolver)
     if isinstance(action, SmoothPathOperation):
         from .passes.smooth import _smoothed_shape
 
@@ -917,126 +897,9 @@ def _execute_action(
             cubic=action.cubic,
         )
     if isinstance(action, ReconstructOcclusionOperation):
-        from ..drawing_adapter import shape_from_primitive_geometry
-        from ..candidate import FlatFill
-        from ..occlusion import ScenePrimitive, _retained_region_shape, intersection_lens_d
-        from ..types import Region
-        from .passes.occlusion import _child_from_scene_item
+        from ..drawing_occlusion import apply_occlusion_reconstruction
 
-        output_positions: dict[str, int] = {}
-        for index, child in enumerate(action.children):
-            if child.output_name in output_positions:
-                raise ValueError(f"duplicate occlusion child output: {child.output_name!r}")
-            output_positions[child.output_name] = index
-        dependencies = {
-            child.output_name: (child.left_output, child.right_output)
-            for child in action.children
-            if isinstance(child, IntersectionLens)
-        }
-        for output_name, inputs in dependencies.items():
-            for dependency in inputs:
-                if dependency not in output_positions:
-                    raise ValueError(
-                        f"occlusion child {output_name!r} has absent dependency {dependency!r}"
-                    )
-        visiting: set[str] = set()
-        visited: set[str] = set()
-
-        def visit(output_name: str) -> None:
-            if output_name in visiting:
-                raise ValueError("occlusion child dependency cycle")
-            if output_name in visited:
-                return
-            visiting.add(output_name)
-            for dependency in dependencies.get(output_name, ()):
-                visit(dependency)
-            visiting.remove(output_name)
-            visited.add(output_name)
-
-        for output_name in dependencies:
-            visit(output_name)
-        for output_name, inputs in dependencies.items():
-            if any(output_positions[dependency] >= output_positions[output_name] for dependency in inputs):
-                raise ValueError(f"occlusion child {output_name!r} has forward dependency")
-
-        children: list[VectorRegion] = []
-        by_name: dict[str, VectorRegion] = {}
-        source_id_by_name: dict[str, int] = {}
-        for child in action.children:
-            source = resolver.resolve(child.source)
-            color_hex = source.fill.hex if isinstance(source.fill, FlatFill) else source.color_hex
-            if color_hex is None:
-                raise ValueError("occlusion replay source has no flat paint")
-            if isinstance(child, CompletedOcclusionPrimitive):
-                if isinstance(child.primitive, AnnulusPrimitive):
-                    shape = Shape("annulus", {
-                        "cx": child.primitive.center[0],
-                        "cy": child.primitive.center[1],
-                        "r_outer": child.primitive.outer_radius,
-                        "r_inner": child.primitive.inner_radius,
-                    })
-                else:
-                    shape = shape_from_primitive_geometry(child.primitive)
-                item = ScenePrimitive(shape.kind, dict(shape.params), color_hex, child.z, int(source.id))
-            elif isinstance(child, RetainedOcclusionSource):
-                if source.raster.size == 0:
-                    raise ValueError("retained occlusion replay source has no raster evidence")
-                item = _retained_region_shape(Region(
-                    label=int(source.id),
-                    mask=np.asarray(source.raster, dtype=bool).copy(),
-                    color_hex=color_hex,
-                    coverage=source.coverage,
-                ))
-                item.params["z"] = child.z
-            else:
-                if child.left_output not in by_name or child.right_output not in by_name:
-                    raise ValueError("occlusion lens has an absent or forward child dependency")
-                left = by_name[child.left_output].current
-                right = by_name[child.right_output].current
-                if left is None or right is None or left.kind != "circle" or right.kind != "circle":
-                    raise ValueError("occlusion lens operands must be completed circles")
-                d = intersection_lens_d(left.params, right.params)
-                if d is None:
-                    raise ValueError("recorded occlusion lens operands no longer intersect")
-                item = Shape("path", {
-                    "d": d,
-                    "color_hex": color_hex,
-                    "z": child.z,
-                    "source_label": int(source.id),
-                    "lens_of_labels": (
-                        source_id_by_name[child.left_output],
-                        source_id_by_name[child.right_output],
-                    ),
-                })
-            materialized = _child_from_scene_item(
-                item,
-                id=child.output_id,
-                shape_hw=action.shape_hw,
-                z_offset=action.base_z,
-            )
-            children.append(materialized)
-            by_name[child.output_name] = materialized
-            source_id_by_name[child.output_name] = int(source.id)
-        sources = [resolver.resolve(ref) for ref in action.component]
-        rasters = [np.asarray(source.raster, dtype=bool) for source in sources if source.raster.size]
-        branch_raster = (
-            np.logical_or.reduce(rasters)
-            if rasters
-            else np.zeros(action.shape_hw, dtype=bool)
-        )
-        return [VectorRegion.branch(
-            id=action.branch_id,
-            children=children,
-            z=action.base_z,
-            raster=branch_raster,
-            diagnostics={
-                "occlusion": {
-                    "accepted": True,
-                    "consumed_ids": [int(source.id) for source in sources],
-                    "children": len(children),
-                }
-            },
-        )]
+        return apply_occlusion_reconstruction(action, resolver)
     if isinstance(action, ApplySeamConstraintsOperation):
         from ..drawing_seams import apply_seam_constraints
 

@@ -10,7 +10,7 @@ from vectormark.optimizer.vector_region import VectorRegion
 from vectormark.optimizer.vector_region import _parse_subpaths
 from vectormark.optimizer.passes.simplify import simplify_pass
 from vectormark.pipeline import Options, _optimizer_passes
-import vectormark.optimizer.passes.simplify as simplify_module
+import vectormark.drawing_simplification as simplify_module
 
 
 def _command_count(d: str) -> int:

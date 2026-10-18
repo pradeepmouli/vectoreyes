@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from vectormark.fit import Shape
-from vectormark.optimizer.passes import simplify as simplify_module
+from vectormark import drawing_simplification as simplify_module
 
 
 def _path(d):
