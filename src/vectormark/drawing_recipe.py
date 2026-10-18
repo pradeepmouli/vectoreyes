@@ -433,20 +433,26 @@ RecipeTargetBinding: TypeAlias = EvidenceTargetBinding | NamedOutputBinding
 
 
 @dataclass(frozen=True)
-class SelectedGeometryOutcome:
-    """One chosen canonical region subtree, never a working execution scene."""
+class SelectedOperationOutcome:
+    """Chosen changed canonical roots plus boundary evidence, not a second scene."""
 
     dependency_revision: str
-    region: DrawingRegion
+    regions: tuple[DrawingRegion, ...]
+    root_order: tuple[str, ...]
     shape_metadata: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
+    region_evidence: Mapping[str, Mapping[str, object]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.dependency_revision:
-            raise ValueError("selected geometry bindings must not be empty")
-        if any(not isinstance(leaf.geometry, (PrimitiveGeometry, PathGeometry,
-                PathGeometryWithCutouts, CompoundPathGeometry)) for leaf in self.region.leaves()):
-            raise ValueError("selected fit requires concrete primitive or path geometry")
+            raise ValueError("selected operation bindings must not be empty")
+        object.__setattr__(self, 'regions', tuple(self.regions))
+        object.__setattr__(self, 'root_order', tuple(self.root_order))
+        selected_ids = {root.id for root in self.regions}
+        if (not self.root_order or len(selected_ids) != len(self.regions)
+                or len(set(self.root_order)) != len(self.root_order) or not selected_ids.issubset(self.root_order)):
+            raise ValueError('selected roots require unique retained output addresses')
         object.__setattr__(self, "shape_metadata", freeze_value(self.shape_metadata))
+        object.__setattr__(self, 'region_evidence', freeze_value(self.region_evidence))
 
 
 @dataclass(frozen=True)
@@ -458,7 +464,7 @@ class RecipeOperation:
     bindings: tuple[RecipeTargetBinding, ...]
     status: ApplicationStatus = "applied"
     diagnostics: Mapping[str, object] = field(default_factory=dict, compare=False)
-    selected_geometry: SelectedGeometryOutcome | None = None
+    selected_outcome: SelectedOperationOutcome | None = None
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -612,13 +618,13 @@ def validate_replay_record(
         raise ValueError("replay output revision mismatch")
 
 
-def geometry_outcome_dependencies(
+def operation_outcome_dependencies(
     operation: RecipeOperation, *, evidence: GeometryEvidence, paint: PaintEvidence,
     upstream: EffectiveDrawingRecipe, input_revision: str,
 ) -> str:
-    """Conservatively bind a chosen fit to all inputs that could affect it."""
+    """Bind a chosen operation outcome to every input that could affect it."""
     return _digest((
-        "selected-geometry.v1", evidence.revision, evidence.engine_revision,
+        "selected-operation.v1", evidence.revision, evidence.engine_revision,
         paint.revision, upstream.revision, input_revision, operation.id,
         operation.origin, operation.action, operation.settings, operation.bindings,
     ))

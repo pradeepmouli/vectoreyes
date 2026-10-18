@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+import numpy as np
 
 from .candidate import (
     FlatFill as LegacyFlatFill,
@@ -44,6 +45,7 @@ from .path_geometry import (
 from .optimizer.corners import rebind_prefit_corner_diagnostics, source_ordered_corner_diagnostics
 from . import corner_provenance
 from .optimizer.vector_region import VectorRegion
+from .types import CoverageField
 from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
 
 
@@ -131,6 +133,133 @@ def apply_region_geometry(
     return result
 
 
+def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequence[VectorRegion] = ()) -> dict[str, dict[str, object]]:
+    """Retain only boundary evidence needed to project canonical selections."""
+    result = {}
+    indexed = index_region_paths(baseline)
+    prior = {address: indexed[path] for path, address in vector_region_address_index(baseline).items()}
+    def visit(region: VectorRegion) -> None:
+        coverage = region.coverage
+        values = coverage.values if isinstance(coverage, CoverageField) else coverage
+        previous = prior.get(region.drawing_id)
+        borrow_raster = previous is not None and np.array_equal(previous.raster, region.raster)
+        old_coverage = None if previous is None else previous.coverage
+        old_values = old_coverage.values if isinstance(old_coverage, CoverageField) else old_coverage
+        borrow_coverage = previous is not None and type(old_coverage) is type(coverage) and (
+            values is None or (np.array_equal(values, old_values) and (
+                not isinstance(coverage, CoverageField) or (coverage.origin == old_coverage.origin
+                    and coverage.canvas_shape == old_coverage.canvas_shape))))
+        result[region.drawing_id] = {
+            'id': region.id, 'raster_shape': region.raster.shape,
+            'raster': None if borrow_raster else region.raster.tobytes(),
+            'raster_source': region.drawing_id if borrow_raster else None,
+            'source_label': region.source_label, 'color_hex': region.color_hex,
+            'original_kind': None if region.original is None else region.original.kind,
+            'original_params': {} if region.original is None else region.original.params,
+            'coverage': None if values is None or borrow_coverage else values.tobytes(),
+            'coverage_source': region.drawing_id if borrow_coverage else None,
+            'coverage_shape': None if values is None else values.shape,
+            'coverage_dtype': None if values is None else values.dtype.str,
+            'coverage_origin': coverage.origin if isinstance(coverage, CoverageField) else None,
+            'coverage_canvas': coverage.canvas_shape if isinstance(coverage, CoverageField) else None,
+        }
+        for child in region.children:
+            visit(child)
+    for root in regions:
+        visit(root)
+    return result
+
+
+def restore_selected_roots(
+    selected: Sequence[DrawingRegion], root_order: Sequence[str], regions: Sequence[VectorRegion], *,
+    shape_metadata: Mapping[str, Mapping[str, object]], region_evidence: Mapping[str, Mapping[str, object]],
+) -> tuple[VectorRegion, ...]:
+    """Project an already selected root delta without topology/fitting decisions."""
+    from .geometry_native import region_path, affine_tuple
+    from .optimizer.symmetry_materialize import relative_source_path
+    from .drawing_fill import serialize_fill
+    from .skia_geometry import unary_union
+    existing = {root.drawing_id: root for root in regions}
+    changed = {root.id: root for root in selected}
+    canonical = drawing_from_vector_regions('selected-input', width=1, height=1, regions=regions)
+    all_roots = tuple(canonical.region(identity) if identity not in changed else changed[identity]
+        for identity in root_order)
+    previous = index_region_paths(regions)
+    addresses = vector_region_address_index(regions)
+    paths_by_address = {address: path for path, address in addresses.items()}
+    by_id = {}
+    native_paths = {}
+    def index(region: DrawingRegion, parent: tuple[int, ...] = ()) -> None:
+        by_id[region.id] = region
+        info = region_evidence.get(region.id)
+        if info is not None:
+            path = (*parent, int(info['id']))
+        else:
+            path = paths_by_address[region.id]
+        native_paths[region.id] = path
+        for child in region.children:
+            index(child, path)
+    for root in all_roots:
+        index(root)
+    prior = {address: previous[path] for address, path in paths_by_address.items()}
+    def convert(region: DrawingRegion) -> VectorRegion:
+        info = region_evidence[region.id]
+        baseline = prior.get(region.id)
+        if region.is_branch:
+            children = tuple(convert(child) for child in region.children)
+            shape = None
+            footprint = unary_union([child.footprint for child in children])
+        else:
+            children = ()
+            if isinstance(region.geometry, CloneGeometry):
+                geometry = region.geometry
+                if len(geometry.transforms) == 1:
+                    source_path = native_paths[geometry.source_region_id]
+                    shape = Shape('use', {**shape_metadata.get(region.id, {}), 'href_obj_id': source_path[-1],
+                        'href_region_path': relative_source_path(native_paths[region.id], source_path),
+                        'transform': affine_tuple(geometry.transforms[0])})
+                else:
+                    shape = Shape('path', {**shape_metadata.get(region.id, {}),
+                        'd': region_path(region, by_id).to_svg_d(), 'canonical_clone_geometry': geometry})
+            else:
+                shape = shape_from_region_geometry(region, shape_metadata.get(region.id, {}))
+            footprint = region_path(region, by_id)
+        original = None if info['original_kind'] is None else Shape(info['original_kind'], dict(info['original_params']))
+        fill = (baseline.fill if baseline is not None and _fill(baseline.fill) == region.fill
+            else None if region.fill is None else working_fill_from_spec(serialize_fill(region.fill)))
+        coverage = prior[info['coverage_source']].coverage if info.get('coverage_source') is not None else None
+        if info.get('coverage') is not None:
+            coverage = np.frombuffer(info['coverage'], dtype=info['coverage_dtype']).reshape(info['coverage_shape'])
+            if info['coverage_origin'] is not None:
+                coverage = CoverageField(coverage, info['coverage_origin'], info['coverage_canvas'])
+        raster = (prior[info['raster_source']].raster if info.get('raster_source') is not None
+            else np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape']))
+        return VectorRegion(int(info['id']), shape, fill,
+            region.z, footprint=footprint, raster=raster,
+            original=original, children=children, source_label=info['source_label'], color_hex=info['color_hex'],
+            drawing_id=region.id, source_regions=region.source_region_ids,
+            coverage=coverage, diagnostics=region.diagnostics)
+    return tuple(convert(changed[identity]) if identity in changed else existing[identity] for identity in root_order)
+
+
+def apply_relationship_region(selected: DrawingRegion, regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
+    """Single projection boundary around canonical relationship actions."""
+    from .drawing_relationships import replace_region
+    current = drawing_from_vector_regions('relationship', width=1, height=1, regions=regions)
+    updated = replace_region(current, selected)
+    evidence = working_region_evidence(regions, baseline=regions)
+    def inherit(region: DrawingRegion, parent: DrawingRegion | None = None) -> None:
+        if region.id not in evidence:
+            evidence[region.id] = {**evidence[parent.id], 'id': int(region.id.rsplit('-', 1)[-1])}
+        for child in region.children:
+            inherit(child, region)
+    for root in updated.regions:
+        inherit(root)
+    changed = tuple(after for before, after in zip(current.regions, updated.regions) if before is not after)
+    return restore_selected_roots(changed, tuple(root.id for root in updated.regions), regions,
+        shape_metadata={}, region_evidence=evidence)
+
+
 def vector_region_address_index(
     regions: Sequence[VectorRegion],
 ) -> dict[tuple[int, ...], str]:
@@ -213,7 +342,9 @@ def drawing_from_vector_regions(
                 ),
             )
         assert region.current is not None
-        if region.current.kind == "use":
+        if 'canonical_clone_geometry' in region.current.params:
+            geometry = region.current.params['canonical_clone_geometry']
+        elif region.current.kind == "use":
             geometry = clone_geometry(region, path)
         else:
             geometry = _geometry(
@@ -329,6 +460,26 @@ def _ingress_corners(geometry, d: str, region_id: str, evidence: object, *, path
         return converted[0], rebound
     by_id = {path.path.id: path for path in converted}
     return replace_component_paths(geometry, tuple(by_id[path.path.id] for path in component_paths(geometry))), rebound
+
+
+def working_fill_from_spec(spec: Mapping[str, object]):
+    """Project canonical paint data at the working-record boundary only."""
+    kind = spec['type']
+    if kind == 'flat':
+        return LegacyFlatFill(spec['color'])
+    if kind == 'linear_gradient':
+        start, end = spec['start'], spec['end']
+        return LegacyLinearGradientFill({'x1': start[0], 'y1': start[1], 'x2': end[0], 'y2': end[1]},
+            [(stop['offset'], stop['color']) for stop in spec['stops']])
+    if kind == 'radial_gradient':
+        center = spec['center']
+        geometry = {'cx': center[0], 'cy': center[1], 'r': spec['radius']}
+        focal = spec.get('focal_point')
+        if focal is not None:
+            geometry.update(fx=focal[0], fy=focal[1])
+        return LegacyRadialGradientFill(geometry, [(stop['offset'], stop['color']) for stop in spec['stops']])
+    origin = spec['origin']
+    return LegacyRasterFill({'x': origin[0], 'y': origin[1], 'w': spec['width'], 'h': spec['height']}, spec['png_base64'])
 
 
 def _fill(fill: object):

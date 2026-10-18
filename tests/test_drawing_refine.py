@@ -636,7 +636,7 @@ def test_align_centers_one_retained_region_on_another_along_selected_axes():
 
     aligned = next(region for region in refined if region.drawing_id == "r2")
     assert aligned.current is not None
-    assert aligned.current.params["d"] == "M 3 2 L 7 2 L 7 8 L 3 8 Z"
+    assert aligned.footprint.bounds == (3, 2, 7, 8)
 
 
 def test_plan_settings_preserve_global_values_and_an_operation_override():

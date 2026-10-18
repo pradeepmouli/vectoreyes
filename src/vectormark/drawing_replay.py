@@ -21,6 +21,7 @@ from .drawing import Drawing
 from .path_topology import component_paths
 from .drawing_adapter import (
     apply_region_geometry, drawing_from_vector_regions, vector_region_address_index,
+    restore_selected_roots, working_region_evidence,
     replace_working_region as _replace_target_region, shape_from_region_geometry,
 )
 from .drawing_actions import (
@@ -47,14 +48,14 @@ from .drawing_recipe import (
     NamedOutputBinding,
     ReplayRecord,
     RecipeOperation,
-    SelectedGeometryOutcome,
+    SelectedOperationOutcome,
     RecipeStep,
     ResolvedCornerEdit,
     ResolveOriginalPaintOperation,
     SourcePathBinding,
     VersionPathSelection,
     drawing_revision,
-    geometry_outcome_dependencies,
+    operation_outcome_dependencies,
     snapshot_geometry_evidence,
     snapshot_paint_evidence,
     validate_replay_record,
@@ -92,6 +93,7 @@ from .optimizer.passes.seams import _command_id as seam_command_id
 from .optimizer.passes.seams import _path_id as seam_path_id
 from .path_geometry import AffineTransform
 from .path_geometry import (
+    CloneGeometry,
     CornerAnchor,
     PathGeometry,
     PathGeometryWithCutouts,
@@ -793,14 +795,14 @@ def _execute_public_operation(
     recipe: EffectiveDrawingRecipe,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
 ) -> DrawingRegions:
-    if operation.selected_geometry is not None:
-        expected = geometry_outcome_dependencies(
+    if operation.selected_outcome is not None:
+        expected = operation_outcome_dependencies(
             operation, evidence=evidence, paint=paint, upstream=recipe,
             input_revision=input_revision(list(regions)),
         )
-        if expected != operation.selected_geometry.dependency_revision:
-            raise ValueError("selected geometry dependencies changed; submit a new fit proposal")
-        return _apply_selected_geometry(operation.selected_geometry, regions)
+        if expected != operation.selected_outcome.dependency_revision:
+            raise ValueError("selected operation dependencies changed; submit a new proposal")
+        return _apply_selected_outcome(operation.selected_outcome, regions)
     action = operation.action
     if isinstance(action, (AddCornerAction, ReplaceCornerAction, RemoveCornerAction)):
         raise ValueError("corner edits must use their source-bound recipe executor")
@@ -832,39 +834,40 @@ def _execute_public_operation(
     )
 
 
-def _apply_selected_geometry(
-    outcome: SelectedGeometryOutcome, regions: DrawingRegions,
+def _apply_selected_outcome(
+    outcome: SelectedOperationOutcome, regions: DrawingRegions,
 ) -> DrawingRegions:
-    return apply_region_geometry(outcome.region, regions, shape_metadata=outcome.shape_metadata)
+    return restore_selected_roots(outcome.regions, outcome.root_order, regions,
+        shape_metadata=outcome.shape_metadata, region_evidence=outcome.region_evidence)
 
 
-def _retain_selected_fit(
+def _retain_selected_outcome(
     operation: RecipeOperation, before: DrawingRegions, after: DrawingRegions,
     *, evidence: GeometryEvidence, paint: PaintEvidence, upstream: EffectiveDrawingRecipe,
 ) -> tuple[RecipeOperation, DrawingRegions]:
-    if not isinstance(operation.action, (FitPrimitiveAction, FitPathDrawingAction, UpdateGeometryAction)):
-        return operation, after
-    target_id = operation.action.target
-    drawing = drawing_from_vector_regions("selected-fit", width=1, height=1, regions=after)
-    selected = drawing.region(target_id)
+    drawing = drawing_from_vector_regions("selected-operation", width=1, height=1, regions=after)
+    prior = {root.drawing_id: input_revision([root]) for root in before}
+    selected = tuple(root for root, native_root in zip(drawing.regions, after)
+        if prior.get(root.id) != input_revision([native_root]))
     native = {leaf.drawing_id: leaf for root in after for leaf in root.leaves()}
     metadata = {}
-    for leaf in selected.leaves():
-        core_params = shape_from_region_geometry(leaf, {}).params
-        target = native[leaf.id]
-        assert target.current is not None
-        metadata[leaf.id] = {key: value for key, value in target.current.params.items()
-                             if key not in core_params}
-    outcome = SelectedGeometryOutcome(
-        dependency_revision=geometry_outcome_dependencies(
+    for root in selected:
+        for leaf in root.leaves():
+            target = native[leaf.id]
+            assert target.current is not None
+            core_params = {} if isinstance(leaf.geometry, CloneGeometry) else shape_from_region_geometry(leaf, {}).params
+            metadata[leaf.id] = {key: value for key, value in target.current.params.items() if key not in core_params}
+    outcome = SelectedOperationOutcome(
+        dependency_revision=operation_outcome_dependencies(
             operation, evidence=evidence, paint=paint, upstream=upstream,
             input_revision=input_revision(list(before)),
         ),
-        region=selected, shape_metadata=metadata,
+        regions=selected, root_order=tuple(root.id for root in drawing.regions), shape_metadata=metadata,
+        region_evidence=working_region_evidence(tuple(root for root in after if root.drawing_id in {item.id for item in selected}), baseline=before),
     )
     # Capture and reuse traverse the same representation boundary, so following
     # steps bind to exactly the same geometry and metadata in either case.
-    return replace(operation, selected_geometry=outcome), _apply_selected_geometry(outcome, before)
+    return replace(operation, selected_outcome=outcome), _apply_selected_outcome(outcome, before)
 
 
 def _fit_source_spans(
@@ -1502,7 +1505,7 @@ def extend_recipe_with_plan(
                     recipe=replace(base_recipe, steps=tuple(steps)),
                     corner_replays=corner_replays,
                 )
-                operation, regions = _retain_selected_fit(
+                operation, regions = _retain_selected_outcome(
                     operation, before_operation, regions, evidence=evidence,
                     paint=paint, upstream=replace(base_recipe, steps=tuple(steps)),
                 )

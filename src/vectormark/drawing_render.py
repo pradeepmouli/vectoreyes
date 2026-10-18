@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from html import escape
-from math import cos, pi, sin
 from collections.abc import Mapping
 import colorsys
 import hashlib
@@ -12,8 +11,8 @@ import re
 
 from .drawing import Drawing, DrawingRegion
 import numpy as np
-import skia
 from .skia_geometry import SkPath, svg_d_to_skia
+from .geometry_native import region_path as _export_path, reflection as _reflection
 from .background import BackgroundColor, background_matches
 from .drawing_fill import (
     FlatFill,
@@ -323,17 +322,6 @@ def _geometry_element(region: DrawingRegion, geometry_id: str) -> str:
     raise TypeError(f"unsupported canonical geometry: {type(geometry).__name__}")
 
 
-def _reflection(point: tuple[float, float], angle_degrees: float) -> AffineTransform:
-    theta = angle_degrees * pi / 180.0
-    ux, uy = cos(theta), sin(theta)
-    a = 2 * ux * ux - 1
-    b = 2 * ux * uy
-    c = b
-    d = 2 * uy * uy - 1
-    px, py = point
-    return AffineTransform(a, b, c, d, px - a * px - c * py, py - b * px - d * py)
-
-
 def _fill_value(fill, fill_id: str) -> tuple[str, str | None]:
     if fill is None:
         return "none", None
@@ -372,46 +360,6 @@ def _fill_value(fill, fill_id: str) -> tuple[str, str | None]:
     else:
         raise TypeError(f"unsupported canonical fill: {type(fill).__name__}")
     return f"url(#{fill_id})", definition
-
-
-def _export_path(leaf: DrawingRegion, by_id: Mapping[str, DrawingRegion]) -> SkPath:
-    """Resolve canonical geometry to exact native curves for export path ops."""
-    geometry = leaf.geometry
-    if isinstance(geometry, CloneGeometry):
-        source = by_id.get(geometry.source_region_id)
-        if source is None or isinstance(source.geometry, CloneGeometry):
-            raise ValueError("clone source must identify a concrete retained region")
-        path = _export_path(source, by_id)
-        result = SkPath()
-        for transform in geometry.transforms:
-            result = result.union(path.affine_transform((transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty)))
-        return result
-    if isinstance(geometry, PathGeometryWithSymmetry):
-        half = SkPath.from_svg_d(geometry.half.to_svg_d())
-        transform = _reflection(geometry.axis.point, geometry.axis.angle_degrees)
-        return half.union(half.affine_transform((transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty)))
-    if isinstance(geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
-        return SkPath.from_svg_d(geometry.to_svg_d(), fill_rule=geometry.fill_rule if isinstance(geometry, CompoundPathGeometry) else "evenodd" if isinstance(geometry, PathGeometryWithCutouts) else None)
-    if isinstance(geometry, PrimitiveGeometry):
-        primitive = geometry.primitive
-        path = skia.Path()
-        if isinstance(primitive, CirclePrimitive):
-            path.addCircle(*primitive.center, primitive.radius)
-        elif isinstance(primitive, EllipsePrimitive):
-            x, y = primitive.center
-            path.addOval(skia.Rect.MakeLTRB(x - primitive.radius_x, y - primitive.radius_y, x + primitive.radius_x, y + primitive.radius_y))
-        elif isinstance(primitive, (RectanglePrimitive, RoundedRectanglePrimitive)):
-            rect = skia.Rect.MakeXYWH(*primitive.origin, primitive.width, primitive.height)
-            if isinstance(primitive, RoundedRectanglePrimitive):
-                path.addRoundRect(rect, primitive.radius_x, primitive.radius_y)
-            else:
-                path.addRect(rect)
-        elif isinstance(primitive, PolygonPrimitive):
-            return SkPath(shell=list(primitive.vertices))
-        else:
-            raise TypeError(f"unsupported primitive: {type(primitive).__name__}")
-        return SkPath.from_skia(path)
-    raise TypeError(f"unsupported canonical geometry: {type(geometry).__name__}")
 
 
 def _paths_overlap(first: SkPath, second: SkPath) -> bool:

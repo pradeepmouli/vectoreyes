@@ -19,7 +19,7 @@ from .components import decompose_components
 from .contour import region_contours
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import apply_region_geometry, drawing_from_vector_regions
+from .drawing_adapter import apply_region_geometry, apply_relationship_region, drawing_from_vector_regions, working_fill_from_spec as _fill
 from .drawing_fill import serialize_fill
 from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
 from .path_fit_evidence import AutomaticFitEvidence
@@ -36,19 +36,18 @@ from .optimizer.automatic_replay import (
     shape_from_primitive_geometry,
 )
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
-from .optimizer.shape_transform import bake_shape_transform
-from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, relative_source_path, remap_symmetry_clones, resolve_source_path, union_self_symmetry
+from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, relative_source_path, resolve_source_path
 from .optimizer.topology import normalize_retained_topology
 from .pipeline import Options, _segment_image
 from .refinement_settings import RefinementPasses
 from .output_settings import DrawingOutputSettings
 from .color import extract_palette, quantize
-from .skia_geometry import SkPath, affinity, unary_union
+from .skia_geometry import SkPath, unary_union
 from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
-from . import drawing_region_actions, path_operations
-from .path_operations import _affine_tuple
+from . import drawing_region_actions, drawing_relationships, path_operations
+from .geometry_native import split_path_by_line as _split_footprint_by_line
 
 
 DrawingRegions = tuple[VectorRegion, ...]
@@ -997,12 +996,13 @@ def refine(
                 epsilon=epsilon,
                 max_error=max_error,
             )
-        elif name == "set_symmetry":
-            regions = _set_symmetry(regions, op)
-        elif name == "assign_clone":
-            regions = _clone(regions, op)
-        elif name == "align":
-            regions = _align(regions, op)
+        elif name in {"set_symmetry", "assign_clone", "align"}:
+            drawing = drawing_from_vector_regions(plan.drawing_id, width=trace.width,
+                height=trace.height, regions=regions)
+            execute = {"set_symmetry": drawing_relationships.set_region_symmetry,
+                "assign_clone": drawing_relationships.assign_clone,
+                "align": drawing_relationships.align_region}[name]
+            regions = apply_relationship_region(execute(drawing, action), regions)
         elif name == "fit_path":
             targets = _targets(regions)
             target = targets[op["target"]]
@@ -1298,98 +1298,6 @@ def _restore_root_metadata(region: VectorRegion, original: VectorRegion | None) 
     )
 
 
-def _clone(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
-    targets = _targets(regions)
-    source_info = targets[op["source"]]
-    source = source_info.region
-    target_info = targets[op["target"]]
-    target = target_info.region
-    assert source.current is not None and source.fill is not None and target.current is not None and target.fill is not None
-    transforms = tuple(_affine_tuple(transform) for transform in op["transforms"])
-    footprints = tuple(
-        _transform_footprint(source.footprint, transform, target.footprint)
-        for transform in transforms
-    )
-    if len(transforms) == 1:
-        shape = Shape("use", {"href_obj_id": source.id, "transform": transforms[0],
-                              "href_region_path": relative_source_path(target_info.region_path, source_info.region_path)})
-        footprint = footprints[0]
-    else:
-        if not all(isinstance(footprint, SkPath) for footprint in footprints):
-            raise ValueError("multi-transform clones require polygonal footprints")
-        footprint = unary_union([footprint for footprint in footprints if isinstance(footprint, SkPath)])
-        shape = Shape("path", {"d": footprint.to_svg_d()})
-    return _replace_leaf(
-        regions,
-        op["target"],
-        lambda region: region.with_current(
-            shape,
-            fill=target.fill,
-            footprint=footprint,
-            diagnostics={"clone": {"source_id": source.id, "transforms": transforms}},
-        ),
-    )
-
-
-def _transform_footprint(
-    footprint: object,
-    transform: tuple[float, float, float, float, float, float],
-    fallback: object,
-) -> object:
-    if not isinstance(footprint, SkPath):
-        return fallback
-    a, b, c, d, e, f = transform
-    return affinity.affine_transform(footprint, [a, c, b, d, e, f])
-
-
-def _set_symmetry(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
-    """Reconstruct one target from the best-fitting half around an explicit axis."""
-    targets = _targets(regions)
-    target_info = targets[op["target"]]
-    target = target_info.region
-    assert target.current is not None and target.fill is not None
-    if not isinstance(target.footprint, SkPath):
-        raise ValueError("set_symmetry requires a polygonal footprint")
-    axis = op["axis"]
-    point = axis["point"]
-    theta = math.radians(float(axis["angle_degrees"]))
-    cx, cy = float(point[0]), float(point[1])
-    matrix = _reflection_matrix(theta, cx, cy)
-    direction = (math.cos(theta), math.sin(theta))
-    parts = _split_footprint_by_line(
-        target.footprint,
-        (cx, cy),
-        (cx + direction[0], cy + direction[1]),
-    )
-    if len(parts) != 2:
-        raise ValueError("symmetry axis must divide the target into two non-empty halves")
-    candidates: list[tuple[float, SkPath]] = []
-    for half in parts:
-        reflected = _transform_footprint(half, matrix, half)
-        if not isinstance(reflected, SkPath):
-            continue
-        reconstructed = unary_union([half, reflected])
-        residual = target.footprint.symmetric_difference(reconstructed).area / max(target.footprint.area, 1.0)
-        candidates.append((float(residual), reconstructed))
-    if not candidates:
-        raise ValueError("symmetry reconstruction produced no valid geometry")
-    residual, footprint = min(candidates, key=lambda item: item[0])
-    joined = union_self_symmetry(
-        target, (footprint,),
-        diagnostics={"mode": "explicit_self", "axis": dict(axis), "residual": residual},
-    )
-    replaced = _replace_leaf(regions, op["target"], lambda region: joined)
-    return remap_symmetry_clones(replaced, {target_info.region_path: target_info.region_path}, before=regions)
-
-
-def _reflection_matrix(theta: float, cx: float, cy: float) -> tuple[float, float, float, float, float, float]:
-    ux, uy = math.cos(theta), math.sin(theta)
-    a, b, c, d = 2 * ux * ux - 1, 2 * ux * uy, 2 * ux * uy, 2 * uy * uy - 1
-    e = cx - (a * cx + c * cy)
-    f = cy - (b * cx + d * cy)
-    return tuple(0.0 if abs(value) < 1e-12 else float(value) for value in (a, b, c, d, e, f))
-
-
 def _drawing_groups(regions: Sequence[VectorRegion]) -> tuple[dict[str, object], ...]:
     """Derive unpainted containers independently of the painted target list."""
     groups = []
@@ -1591,35 +1499,6 @@ def _split_region(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> 
         diagnostics={"split": {"source": target_id, "divider": dict(divider), "children": 2}},
     )
     return _replace_leaf(regions, target_id, lambda _region: branch)
-
-
-def _split_footprint_by_line(
-    footprint: SkPath, first: tuple[float, float], second: tuple[float, float]
-) -> tuple[SkPath, SkPath]:
-    dx = second[0] - first[0]
-    dy = second[1] - first[1]
-    length = math.hypot(dx, dy)
-    if length <= 1e-9:
-        raise ValueError("line divider points must be distinct")
-    direction = (dx / length, dy / length)
-    normal = (-direction[1], direction[0])
-    min_x, min_y, max_x, max_y = footprint.bounds
-    extent = max(math.hypot(max_x - min_x, max_y - min_y) * 4.0, 1.0)
-    start = (first[0] - direction[0] * extent, first[1] - direction[1] * extent)
-    end = (first[0] + direction[0] * extent, first[1] + direction[1] * extent)
-    positive = SkPath([
-        start,
-        end,
-        (end[0] + normal[0] * extent * 2.0, end[1] + normal[1] * extent * 2.0),
-        (start[0] + normal[0] * extent * 2.0, start[1] + normal[1] * extent * 2.0),
-    ])
-    negative = SkPath([
-        start,
-        (start[0] - normal[0] * extent * 2.0, start[1] - normal[1] * extent * 2.0),
-        (end[0] - normal[0] * extent * 2.0, end[1] - normal[1] * extent * 2.0),
-        end,
-    ])
-    return footprint.intersection(positive), footprint.intersection(negative)
 
 
 def _split_footprint_by_path(footprint: SkPath, d: str) -> tuple[SkPath, SkPath]:
@@ -2155,33 +2034,6 @@ def _with_z(region: VectorRegion, z: float) -> VectorRegion:
     return region.with_current(region.current, z=z, footprint=region.footprint)
 
 
-def _align(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
-    """Translate one retained region until its bounds center aligns with another."""
-    targets = _targets(regions)
-    target = targets[op["target"]]
-    reference = targets[op["reference"]]
-    if not isinstance(target.region.footprint, SkPath) or not isinstance(reference.region.footprint, SkPath):
-        raise ValueError("align requires polygonal vector-region footprints")
-    target_bounds = target.region.footprint.bounds
-    reference_bounds = reference.region.footprint.bounds
-    target_center = ((target_bounds[0] + target_bounds[2]) / 2, (target_bounds[1] + target_bounds[3]) / 2)
-    reference_center = ((reference_bounds[0] + reference_bounds[2]) / 2, (reference_bounds[1] + reference_bounds[3]) / 2)
-    axes = set(op["axes"])
-    dx = reference_center[0] - target_center[0] if "x" in axes else 0.0
-    dy = reference_center[1] - target_center[1] if "y" in axes else 0.0
-    assert target.region.current is not None
-    shape = bake_shape_transform(target.region.current, (1, 0, 0, 1, dx, dy))
-    return _replace_leaf(
-        regions,
-        target.id,
-        lambda region: region.with_current(
-            shape,
-            footprint=to_polygon(shape),
-            diagnostics={"align": {"reference": reference.id, "axes": tuple(sorted(axes))}},
-        ),
-    )
-
-
 
 
 def _action_settings(trace: TraceResult, plan: DrawingPlan, op: Mapping[str, object]) -> ActionSettings:
@@ -2226,32 +2078,6 @@ def resolved_action_settings(
     return _action_settings(trace, plan, action.model_dump(exclude_none=True))
 
 
-def _fill(spec: Mapping[str, object]) -> Fill:
-    """Project an assigned canonical paint payload into temporary working paint."""
-    kind = spec["type"]
-    if kind == "flat":
-        return FlatFill(spec["color"])
-    if kind == "linear_gradient":
-        start, end = spec["start"], spec["end"]
-        return LinearGradientFill(
-            {"x1": start[0], "y1": start[1], "x2": end[0], "y2": end[1]},
-            [(stop["offset"], stop["color"]) for stop in spec["stops"]],
-        )
-    if kind == "radial_gradient":
-        center = spec["center"]
-        geometry = {"cx": center[0], "cy": center[1], "r": spec["radius"]}
-        focal = spec.get("focal_point")
-        if focal is not None:
-            geometry.update(fx=focal[0], fy=focal[1])
-        return RadialGradientFill(
-            geometry,
-            [(stop["offset"], stop["color"]) for stop in spec["stops"]],
-        )
-    origin = spec["origin"]
-    return RasterFill(
-        {"x": origin[0], "y": origin[1], "w": spec["width"], "h": spec["height"]},
-        spec["png_base64"],
-    )
 
 
 def _public_fill(fill: Fill | None) -> dict[str, object]:

@@ -808,6 +808,43 @@ Relationship actions, generic outcome
 reuse, remaining adapter removal and final whole-branch review remain open.
 No detector/fitter defaults, native build, deployment or visual acceptance change.
 
+#### Integrated relationships and selected-operation reuse — 2026-10-18
+
+`drawing_relationships` owns explicit clone assignment, alignment and symmetry
+over canonical drawings/regions. The old working-scene implementations are
+deleted. Clone chains resolve to concrete sources with composed transforms;
+multiple transforms remain a canonical clone relationship rather than silently
+becoming unrelated path geometry. Alignment preserves primitive types and typed
+command/anchor identities. Explicit symmetry preserves the existing best-half
+selection and joined filled topology, including cutouts and retired references.
+`geometry_native` shares disposable native path predicates, reflection and line
+clipping between operations and export rather than duplicating their arithmetic.
+
+`SelectedOperationOutcome` replaces the fit-only outcome contract. Every public
+`RecipeOperation` retains changed canonical root subtrees and output ordering,
+including related clone changes and structural merge/split changes. Unchanged
+roots are not copied into a parallel scene. Dependency bindings still cover
+evidence, paint, upstream recipe, exact working input, intent and settings;
+stale selections fail instead of running a solver. Fresh proposals can differ,
+but reuse cannot execute the selected action again.
+
+The projection boundary no longer makes topology or fitting decisions when
+restoring these outcomes. It retains source raster/coverage evidence for new
+components and borrows unchanged evidence from the dependency-bound input rather
+than copying it per geometry edit. Paint projection also lives at this boundary,
+preserving unchanged paint values. No fitter/detector defaults change.
+
+This advances all three concerns together; it does **not** finish removal of the
+whole working-scene model. Automatic detection/batch execution, source-bound
+corner replay, paint resolution and source-evidence bookkeeping still use that
+boundary. Their migration and the parent final whole-branch review remain open.
+No native rebuild, deployment, push or visual-quality acceptance is included.
+Verification: **56 focused tests** pass. The final full source suite passes
+**1,108 tests, 951 warnings** in 122.72s; the diff check is clean. This includes
+no-solver replay for merge/split, paint, order and relationships, a controlled
+varying clone proposer, exact fit/corner correspondence, new-component coverage,
+borrowed raster evidence, invalid root ownership and stale-dependency rejection.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

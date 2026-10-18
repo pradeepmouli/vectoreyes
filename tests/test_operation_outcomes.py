@@ -34,7 +34,6 @@ def fixture():
 
 def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     from vectormark.drawing_adapter import drawing_from_vector_regions
-    from vectormark.drawing_recipe import SelectedGeometryOutcome
     from vectormark.optimizer.topology import normalize_retained_topology
     d = ('M0 0 L4 0 L4 4 L0 4 Z '
          'M1 1 L2 1 L2 2 L1 2 Z '
@@ -49,7 +48,12 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     after = normalize_retained_topology((root, clone))
     selected = drawing_from_vector_regions('drw_test', width=8, height=8, regions=after).region('r1')
     assert [leaf.id for leaf in selected.leaves()] == ['r1-1', 'r1-3']
-    result = replay_module._apply_selected_geometry(SelectedGeometryOutcome('dep', selected), before)
+    from vectormark.drawing_recipe import RecipeOperation
+    from vectormark.drawing_actions import FitPathDrawingAction
+    evidence, paint, upstream = fixture()
+    operation = RecipeOperation('test.fit', 'agent', FitPathDrawingAction(op='fit_path', target='r1'), upstream.settings, ())
+    operation, result = replay_module._retain_selected_outcome(operation, before, after,
+        evidence=evidence, paint=paint, upstream=upstream)
     drawing = drawing_from_vector_regions('drw_test', width=8, height=8, regions=result)
     assert [leaf.id for leaf in drawing.region('r1').leaves()] == ['r1-1', 'r1-3']
     assert [leaf.id for leaf in drawing.region('r2').leaves()] == ['r2-1', 'r2-3']
@@ -534,15 +538,15 @@ def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkey
         lambda *args, **kwargs: pytest.fail('selected fit was regenerated'))
     changed = replace(operation, settings=operation.settings.model_copy(update={'max_error': 2.}))
     changed_recipe = replace(recipe, steps=tuple(changed if step is operation else step for step in recipe.steps))
-    with pytest.raises(ValueError, match='selected geometry dependencies changed'):
+    with pytest.raises(ValueError, match='selected operation dependencies changed'):
         replay_module.propose_effective_recipe(drawing_id='drw_test',
             evidence=evidence, paint=paint, recipe=changed_recipe)
     changed_paint = build_paint_evidence(RasterImage(8, 8, 'rgb8', bytes([0]) * 8 * 8 * 3))
-    with pytest.raises(ValueError, match='selected geometry dependencies changed'):
+    with pytest.raises(ValueError, match='selected operation dependencies changed'):
         replay_module.propose_effective_recipe(drawing_id='drw_test',
             evidence=evidence, paint=changed_paint, recipe=recipe)
     changed_upstream = replace(recipe, settings=recipe.settings.model_copy(update={'purpose': 'both'}))
-    with pytest.raises(ValueError, match='selected geometry dependencies changed'):
+    with pytest.raises(ValueError, match='selected operation dependencies changed'):
         replay_module.propose_effective_recipe(drawing_id='drw_test',
             evidence=evidence, paint=paint, recipe=changed_upstream)
 
@@ -560,7 +564,7 @@ def test_selected_path_geometry_replays_without_running_path_fitter(method, monk
         drawing_id=base.drawing.drawing_id, base_version=base.id, ops=[action]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base.effective_recipe, plan=plan).recipe
-    assert recipe.operations[0].selected_geometry is not None
+    assert recipe.operations[0].selected_outcome is not None
     expected = replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
         evidence=evidence, paint=paint, recipe=recipe)
     def fail(*args, **kwargs):
@@ -606,7 +610,7 @@ def test_selected_fit_preserves_canonical_corner_diagnostics():
         base_recipe=base, plan=plan).recipe
     operation = recipe.operations[0]
     uncached = replace(recipe, steps=tuple(
-        replace(step, selected_geometry=None) if step is operation else step
+        replace(step, selected_outcome=None) if step is operation else step
         for step in recipe.steps))
     selected = replay_module.propose_effective_recipe(drawing_id='drw_test',
         evidence=evidence, paint=paint, recipe=recipe)
