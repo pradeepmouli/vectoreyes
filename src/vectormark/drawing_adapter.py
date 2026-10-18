@@ -30,7 +30,6 @@ from .path_geometry import (
     AffineTransform,
     CirclePrimitive,
     CloneGeometry,
-    CornerAnchor,
     EllipsePrimitive,
     PolygonPrimitive,
     PrimitiveGeometry,
@@ -43,6 +42,7 @@ from .path_geometry import (
     parse_svg_paths,
 )
 from .optimizer.corners import rebind_prefit_corner_diagnostics, source_ordered_corner_diagnostics
+from . import corner_provenance
 from .optimizer.vector_region import VectorRegion
 from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
 
@@ -320,39 +320,11 @@ def _ingress_corners(geometry, d: str, region_id: str, evidence: object, *, path
 
     by_id = {path.path.id: path for path in component_paths(geometry)}
     paths = [by_id[path.path.id] for path in source_paths]
-    anchors: list[list[CornerAnchor]] = [[] for _ in paths]
-    owned_commands: list[set[str]] = [set() for _ in paths]
-    for span in rebound["spans"]:
-        subpath = int(span["subpath"])
-        path_id = paths[subpath].path.id
-        source_id = str(span["corner_id"])
-        prefix = f"p{subpath}."
-        local_id = source_id[len(prefix):] if source_id.startswith(prefix) else source_id
-        command_id = lambda index: f"{path_id}.c{int(index)}"
-        try:
-            anchor = CornerAnchor(
-                id=f"{path_id}.{local_id}",
-                entry_command_id=command_id(span["entry_command"]),
-                exit_command_id=command_id(span["exit_command"]),
-                owned_command_ids=tuple(command_id(index) for index in span["commands"]),
-                radius=span.get("radius"),
-            )
-            if owned_commands[subpath].intersection(anchor.owned_command_ids):
-                rebound["skipped"].append({
-                    "corner_id": source_id,
-                    "reason": "overlapping_corner_ownership",
-                })
-                continue
-            PathGeometry(paths[subpath].path, (*anchors[subpath], anchor))
-            anchors[subpath].append(anchor)
-            owned_commands[subpath].update(anchor.owned_command_ids)
-        except (KeyError, TypeError, ValueError) as error:
-            rebound["skipped"].append({
-                "corner_id": source_id,
-                "reason": "invalid_corner_anchor",
-                "detail": str(error),
-            })
-    converted = [replace(path, anchors=tuple(anchor_list)) for path, anchor_list in zip(paths, anchors)]
+    bound_paths, skipped, _feature_ids = corner_provenance.bind_prefit_corner_anchors(
+        dict(enumerate(paths)), rebound["spans"], overlap_policy="retain_first",
+    )
+    rebound["skipped"].extend(dict(item) for item in skipped)
+    converted = [bound_paths[index] for index in range(len(paths))]
     if isinstance(geometry, PathGeometry):
         return converted[0], rebound
     by_id = {path.path.id: path for path in converted}

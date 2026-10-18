@@ -7,10 +7,10 @@ import re
 
 import numpy as np
 
-from .. import corner_normalization
+from .. import corner_normalization, corner_provenance
 from ..corner_ownership import directed_corner_ownership
 from ..fit import Shape
-from ..path_geometry import CornerAnchor, PathGeometry, command_token, parse_svg_paths
+from ..path_geometry import command_token, parse_svg_paths
 from .vector_region import _parse_subpaths
 
 _CURVE_COMMANDS = {"Q", "C"}
@@ -310,27 +310,17 @@ def normalize_corners_path_d(
         if not local_spans:
             output.append(tokens)
             continue
-        ownership: dict[int, int] = {}
-        for span in local_spans:
-            for index in span["commands"]:
-                ownership[index] = ownership.get(index, 0) + 1
         path_id = f"p{subpath}"
         path = parse_svg_paths(_subpath_d(tokens), region_id="corner", path_ids=(path_id,))[0]
-        anchors = []
-        for span in local_spans:
-            if any(ownership[index] > 1 for index in span["commands"]):
-                skipped.append({"corner_id": span["corner_id"], "reason": "overlapping_corner_ownership"})
-                continue
-            anchors.append(CornerAnchor(id=str(span["corner_id"]),
-                entry_command_id=f"{path_id}.c{span['entry_command']}",
-                exit_command_id=f"{path_id}.c{span['exit_command']}",
-                owned_command_ids=tuple(f"{path_id}.c{index}" for index in span["commands"]),
-                radius=span.get("radius")))
-        canonical, receipt = corner_normalization.normalize_path_corners(
-            PathGeometry(path.path, tuple(anchors)), max_error=max_error,
+        bound_paths, binding_skips, feature_ids = corner_provenance.bind_prefit_corner_anchors(
+            {subpath: path}, local_spans, overlap_policy="reject_all",
         )
-        normalized.extend(receipt["normalized"])
-        skipped.extend({**item, "reason": "protected_point_inside_span"
+        skipped.extend(dict(item) for item in binding_skips)
+        canonical, receipt = corner_normalization.normalize_path_corners(
+            bound_paths[subpath], max_error=max_error,
+        )
+        normalized.extend(feature_ids[item] for item in receipt["normalized"])
+        skipped.extend({**item, "corner_id": feature_ids[item["corner_id"]], "reason": "protected_point_inside_span"
             if item["reason"] == "protected_anchor_inside_span" else item["reason"]}
             for item in receipt["skipped"])
         output.append([*( (kind, list(values)) for command in canonical.path.commands

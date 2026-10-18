@@ -760,6 +760,33 @@ Verification: **172 focused tests** pass. The final full source suite passes
 **1,056 tests, 951 warnings** in 116.08s. The parent final whole-branch review
 remains open.
 
+#### Shared canonical corner provenance binding — 2026-10-18
+
+`corner_provenance.bind_prefit_corner_anchors` publishes already-resolved pre-fit
+declarations onto source-indexed canonical paths. It resolves actual command IDs
+by their positions in the supplied path, preserving sparse retained IDs rather
+than synthesizing `path.cN` addresses. It preserves existing features and returns
+immutable updated paths, skipped-declaration diagnostics and canonical-to-source
+feature-ID bindings. Source subpath indices remain distinct from canonical path
+addresses, including retained component slots and cutouts.
+
+Drawing publication and normalization ingress now share this binder; their
+duplicate anchor-construction loops are removed. Existing overlap behavior is
+explicit rather than silently unified: initial publication retains the first
+valid owner, while normalization rejects every overlapping candidate. Source
+feature names remain unchanged in normalization reports through the returned
+ID bindings. Malformed declarations are skipped without attaching invalid anchors
+or mutating the original paths.
+
+This moves canonical anchor validation/publication out of the working-scene
+adapter, not the source-coordinate matching or topology/paint transactions.
+Those adapter responsibilities, relationship actions, generic outcome reuse and
+final whole-branch review remain open. No fitting/detection defaults change.
+
+Verification: **217 expanded focused tests** pass. The final full source suite
+passes **1,069 tests, 951 warnings** in 116.07s. No native rebuild, deployment,
+push or visual-quality acceptance is included.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
