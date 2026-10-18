@@ -101,6 +101,22 @@ class ArcCommand(PathCommand):
 DrawableCommand: TypeAlias = LineCommand | QuadraticCommand | CubicCommand | ArcCommand
 
 
+def command_token(command: PathCommand) -> tuple[str, tuple[float, ...]]:
+    """Project one typed command to numeric operands without SVG rounding."""
+    if isinstance(command, MoveCommand):
+        return "M", command.end
+    if isinstance(command, LineCommand):
+        return "L", command.end
+    if isinstance(command, QuadraticCommand):
+        return "Q", (*command.control, *command.end)
+    if isinstance(command, CubicCommand):
+        return "C", (*command.control_1, *command.control_2, *command.end)
+    if isinstance(command, ArcCommand):
+        return "A", (command.rx, command.ry, command.rotation_degrees,
+            float(command.large_arc), float(command.sweep), *command.end)
+    raise TypeError(f"unsupported path command: {type(command).__name__}")
+
+
 class Anchor:
     """Semantic annotation over the commands that form one feature.
 

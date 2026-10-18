@@ -7,10 +7,11 @@ import re
 
 import numpy as np
 
-from .. import corner_fitting
+from .. import corner_normalization
 from ..corner_ownership import directed_corner_ownership
 from ..fit import Shape
-from .vector_region import _parse_subpaths, _sample_subpath
+from ..path_geometry import CornerAnchor, PathGeometry, command_token, parse_svg_paths
+from .vector_region import _parse_subpaths
 
 _CURVE_COMMANDS = {"Q", "C"}
 
@@ -305,72 +306,35 @@ def normalize_corners_path_d(
     normalized = []
     output = []
     for subpath, tokens in enumerate(paths):
-        segments = {int(s["command_index"]): s for s in _segments(tokens)}
-        candidates = [s for s in spans if s["subpath"] == subpath and s["kind"] == "curve"]
-        ownership: dict[int, int] = {}
-        for span in candidates:
-            for index in span["commands"]:
-                ownership[index] = ownership.get(index, 0) + 1
-        point_indices = {s["entry_command"] for s in spans
-                         if s["subpath"] == subpath and s["kind"] == "point"}
-        if 0 in point_indices:
-            closing = [i for i, s in segments.items() if s["command"] != "Z"]
-            if closing and np.linalg.norm(segments[closing[-1]]["end"] - tokens[0][1]) <= 1e-9:
-                point_indices.add(closing[-1])
-        replacements = {}
-        for span in candidates:
-            indices = span["commands"]
-            reason = None
-            if not indices or any(tokens[i][0] not in _CURVE_COMMANDS for i in indices):
-                reason = "non_curve_span"
-            elif any(ownership[i] > 1 for i in indices):
-                reason = "overlapping_corner_ownership"
-            elif point_indices.intersection(indices[:-1]):
-                reason = "protected_point_inside_span"
-            elif len(indices) == 1 and tokens[indices[0]][0] == "Q":
-                # Already normalized: do not refit it or alter its handles.
-                continue
-            if reason:
-                skipped.append({"corner_id": span["corner_id"], "reason": reason})
-                continue
-            start = segments[indices[0]]["start"]
-            end = segments[indices[-1]]["end"]
-            source = [("M", list(start)), *(tokens[i] for i in indices)]
-            samples = np.asarray(_sample_subpath(source, 16), dtype=float)
-            if len(samples) < 3:
-                continue
-            quadratic = corner_fitting.fit_corner_span(
-                samples, start=tuple(start), end=tuple(end),
-                command_id=f"p{subpath}.c{indices[-1]}", max_error=max_error,
-            )
-            if quadratic is None:
-                skipped.append({"corner_id": span["corner_id"], "reason": "fit_residual"})
-                continue
-            replacements[indices[0]] = (indices, ("Q", [*quadratic.control, *quadratic.end]))
-            normalized.append(str(span["corner_id"]))
-        if not replacements:
+        local_spans = [s for s in spans if s["subpath"] == subpath]
+        if not local_spans:
             output.append(tokens)
             continue
-        order = [i for i, (command, _values) in enumerate(tokens) if command not in {"M", "Z"}]
-        # A replacement crossing M needs a new serialization start at its entry.
-        # Rotation does not change the closed outline or any retained command.
-        wrap = next((indices for indices, _ in replacements.values()
-                     if any(b < a for a, b in zip(indices, indices[1:]))), None)
-        start_point = tokens[0][1]
-        if wrap is not None:
-            position = order.index(wrap[0])
-            order = order[position:] + order[:position]
-            start_point = list(segments[wrap[0]]["start"])
-        removed = {i for indices, _ in replacements.values() for i in indices[1:]}
-        result_tokens = [("M", start_point)]
-        for index in order:
-            if index in replacements:
-                result_tokens.append(replacements[index][1])
-            elif index not in removed:
-                result_tokens.append(tokens[index])
-        if tokens[-1][0] == "Z":
-            result_tokens.append(tokens[-1])
-        output.append(result_tokens)
+        ownership: dict[int, int] = {}
+        for span in local_spans:
+            for index in span["commands"]:
+                ownership[index] = ownership.get(index, 0) + 1
+        path_id = f"p{subpath}"
+        path = parse_svg_paths(_subpath_d(tokens), region_id="corner", path_ids=(path_id,))[0]
+        anchors = []
+        for span in local_spans:
+            if any(ownership[index] > 1 for index in span["commands"]):
+                skipped.append({"corner_id": span["corner_id"], "reason": "overlapping_corner_ownership"})
+                continue
+            anchors.append(CornerAnchor(id=str(span["corner_id"]),
+                entry_command_id=f"{path_id}.c{span['entry_command']}",
+                exit_command_id=f"{path_id}.c{span['exit_command']}",
+                owned_command_ids=tuple(f"{path_id}.c{index}" for index in span["commands"]),
+                radius=span.get("radius")))
+        canonical, receipt = corner_normalization.normalize_path_corners(
+            PathGeometry(path.path, tuple(anchors)), max_error=max_error,
+        )
+        normalized.extend(receipt["normalized"])
+        skipped.extend({**item, "reason": "protected_point_inside_span"
+            if item["reason"] == "protected_anchor_inside_span" else item["reason"]}
+            for item in receipt["skipped"])
+        output.append([*( (kind, list(values)) for command in canonical.path.commands
+            for kind, values in (command_token(command),)), ("Z", [])])
     normalized_d = " ".join(_subpath_d(tokens) for tokens in output) if normalized else d
     result = rebind_prefit_corner_diagnostics(normalized_d, bound, tolerance=0.02)
     result["normalized"] = normalized

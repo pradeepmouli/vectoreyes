@@ -17,8 +17,8 @@ from .emit import apply_affine_point
 from .fit import _curved_run_d, _fmt
 from .immutable_value import freeze_value
 from .path_geometry import (
-    ArcCommand, CompoundPathGeometry, CornerAnchor, CubicCommand, LineCommand,
-    MoveCommand, PathGeometry, PathGeometryWithCutouts, QuadraticCommand, parse_svg_paths,
+    CompoundPathGeometry, CornerAnchor, PathGeometry, PathGeometryWithCutouts,
+    parse_svg_paths, command_token,
 )
 from .path_topology import component_paths, replace_component_paths
 from .optimizer.vector_region import _sample_subpath
@@ -30,19 +30,7 @@ def _command_stream(geometry: PathGeometry | PathGeometryWithCutouts | CompoundP
     rows = []
     for path in component_paths(geometry):
         for command in path.path.commands:
-            if isinstance(command, MoveCommand):
-                kind, values = "M", command.end
-            elif isinstance(command, LineCommand):
-                kind, values = "L", command.end
-            elif isinstance(command, QuadraticCommand):
-                kind, values = "Q", (*command.control, *command.end)
-            elif isinstance(command, CubicCommand):
-                kind, values = "C", (*command.control_1, *command.control_2, *command.end)
-            elif isinstance(command, ArcCommand):
-                kind, values = "A", (command.rx, command.ry, command.rotation_degrees,
-                    float(command.large_arc), float(command.sweep), *command.end)
-            else:
-                raise TypeError(f"unsupported path command: {type(command).__name__}")
+            kind, values = command_token(command)
             rows.append(TraceCommand(command.id, kind, tuple(values)))
         rows.append(TraceCommand(f"{path.path.id}.c{len(path.path.commands)}", "Z", ()))
     return tuple(rows)

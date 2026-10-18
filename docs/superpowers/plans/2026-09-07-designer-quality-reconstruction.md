@@ -729,6 +729,37 @@ Verification: **54 focused tests** and **1,043 full-suite tests** pass
 (951 full-suite dependency warnings; 175.24s). No native rebuild, deployment,
 push or visual-quality acceptance is part of this checkpoint.
 
+#### Canonical corner-path normalization — 2026-10-18
+
+`corner_normalization.normalize_path_corners` now consumes `PathGeometry` and
+the resolved error budget, returning an immutable updated path and a receipt of
+normalized/skipped features and surviving command endpoints. Exact canonical
+`CornerAnchor` ownership determines the fitted spans; no corner discovery or
+coordinate-based anchor matching occurs inside the operation. It preserves
+unaffected command IDs/coordinates and corner identity/radius, handles shared
+boundaries and wrapped serialization, and protects other feature anchors from
+being consumed. Unsupported non-curve spans and fits below the closed-path
+command minimum are skipped explicitly.
+
+The previous SVG helper delegates normalization to this operation. It retains
+only provenance ingress, malformed/overlapping legacy declaration filtering,
+diagnostic projection and output serialization; the duplicate normalization
+loop is removed. Automatic proposals, explicit path-normalization plans and
+recorded replay therefore use the same canonical operation. Empty declarations
+do not force unnecessary canonical ingress. `command_token` is the shared exact
+numeric command projection used by direct path edits and corner normalization,
+avoiding a second serializer or rounding the numeric input through SVG.
+
+Remaining work includes migrating the provenance adapter/publication boundary,
+relationship actions, generic selected-outcome reuse and complete working-scene
+adapter removal. This source checkpoint does not change corner detection,
+sampling density, fitting defaults or tolerances, and is not a native rebuild,
+deployment or visual-quality acceptance.
+
+Verification: **172 focused tests** pass. The final full source suite passes
+**1,056 tests, 951 warnings** in 116.08s. The parent final whole-branch review
+remains open.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
