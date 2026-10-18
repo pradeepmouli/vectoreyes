@@ -117,6 +117,24 @@ def command_token(command: PathCommand) -> tuple[str, tuple[float, ...]]:
     raise TypeError(f"unsupported path command: {type(command).__name__}")
 
 
+def command_from_token(kind: str, values: Sequence[float], *, command_id: str) -> PathCommand:
+    """Decode one numeric SVG command without imposing filled-path topology."""
+    arity = {"M": 2, "L": 2, "Q": 4, "C": 6, "A": 7}
+    if kind not in arity:
+        raise ValueError(f"unsupported SVG command {kind!r}")
+    if len(values) != arity[kind]:
+        raise ValueError(f"SVG {kind} requires {arity[kind]} operands")
+    if kind == "M":
+        return MoveCommand(command_id, (values[0], values[1]))
+    if kind == "L":
+        return LineCommand(command_id, (values[0], values[1]))
+    if kind == "Q":
+        return QuadraticCommand(command_id, (values[2], values[3]), (values[0], values[1]))
+    if kind == "C":
+        return CubicCommand(command_id, (values[4], values[5]), (values[0], values[1]), (values[2], values[3]))
+    return ArcCommand(command_id, (values[5], values[6]), values[0], values[1], values[2], bool(values[3]), bool(values[4]))
+
+
 class Anchor:
     """Semantic annotation over the commands that form one feature.
 
@@ -621,36 +639,7 @@ def _closed_path_from_svg_commands(
         raise ValueError("typed paths require one explicit M and terminal Z")
     commands: list[PathCommand] = []
     for index, (kind, values) in enumerate(raw_commands[:-1]):
-        command_id = f"{path_id}.c{index}"
-        if kind == "M":
-            if index != 0:
-                raise ValueError("closed SVG subpaths may contain only one M command")
-            commands.append(MoveCommand(command_id, (values[0], values[1])))
-        elif kind == "L":
-            commands.append(LineCommand(command_id, (values[0], values[1])))
-        elif kind == "Q":
-            commands.append(QuadraticCommand(command_id, (values[2], values[3]), (values[0], values[1])))
-        elif kind == "C":
-            commands.append(
-                CubicCommand(
-                    command_id,
-                    (values[4], values[5]),
-                    (values[0], values[1]),
-                    (values[2], values[3]),
-                )
-            )
-        elif kind == "A":
-            commands.append(
-                ArcCommand(
-                    command_id,
-                    (values[5], values[6]),
-                    values[0],
-                    values[1],
-                    values[2],
-                    bool(values[3]),
-                    bool(values[4]),
-                )
-            )
-        else:
-            raise ValueError(f"unsupported SVG command {kind!r}")
+        if kind == "M" and index != 0:
+            raise ValueError("closed SVG subpaths may contain only one M command")
+        commands.append(command_from_token(kind, values, command_id=f"{path_id}.c{index}"))
     return ClosedPath(path_id, tuple(commands))

@@ -787,6 +787,27 @@ Verification: **217 expanded focused tests** pass. The final full source suite
 passes **1,069 tests, 951 warnings** in 116.07s. No native rebuild, deployment,
 push or visual-quality acceptance is included.
 
+#### Typed source-coordinate corner matching — 2026-10-18
+
+`corner_matching.match_prefit_corner_spans` resolves pre-fit declarations against
+typed command endpoints and returns immutable ownership/skip records. The SVG
+diagnostic adapter delegates matching and only projects its existing output
+shape. Shared `path_geometry.command_from_token` also serves closed-path ingress,
+removing a duplicate command decoder without rounding numeric inputs.
+
+Nearest-endpoint tolerance, ambiguous ties, explicit-closing aliases, directed
+ownership and invalid-provenance rejection retain their existing policies. The
+matcher does not impose filled-contour minimum sizes on diagnostic inputs or
+infer undeclared corners. One intentional correction: arc endpoints participate
+in matching; the previous segment walker silently omitted them.
+
+TDD includes missing-operation failures, routing failures before delegation and
+the previously failing arc-endpoint regression. All **71 focused corner tests**
+pass. The full source suite passes **1,086 tests, 951 warnings** in 119.48s.
+Relationship actions, generic outcome
+reuse, remaining adapter removal and final whole-branch review remain open.
+No detector/fitter defaults, native build, deployment or visual acceptance change.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

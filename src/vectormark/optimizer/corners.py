@@ -5,63 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import re
 
-import numpy as np
-
-from .. import corner_normalization, corner_provenance
-from ..corner_ownership import directed_corner_ownership
+from .. import corner_matching, corner_normalization, corner_provenance
 from ..fit import Shape
-from ..path_geometry import command_token, parse_svg_paths
+from ..path_geometry import command_from_token, command_token, parse_svg_paths
 from .vector_region import _parse_subpaths
-
-_CURVE_COMMANDS = {"Q", "C"}
-
-
-def _segments(tokens: list[tuple[str, list[float]]]) -> list[dict[str, object]]:
-    cursor: np.ndarray | None = None
-    subpath_start: np.ndarray | None = None
-    segments: list[dict[str, object]] = []
-    for command_index, (command, values) in enumerate(tokens):
-        if command == "M":
-            cursor = np.asarray(values[:2], dtype=float)
-            subpath_start = cursor.copy()
-            continue
-        if cursor is None:
-            continue
-        start = cursor.copy()
-        if command == "Z":
-            end = subpath_start.copy() if subpath_start is not None else start.copy()
-            start_tangent = end - start
-            end_tangent = start_tangent
-        elif command == "L":
-            end = np.asarray(values[:2], dtype=float)
-            start_tangent = end - start
-            end_tangent = start_tangent
-        elif command == "Q":
-            control = np.asarray(values[:2], dtype=float)
-            end = np.asarray(values[2:4], dtype=float)
-            start_tangent = control - start
-            end_tangent = end - control
-        elif command == "C":
-            first = np.asarray(values[:2], dtype=float)
-            second = np.asarray(values[2:4], dtype=float)
-            end = np.asarray(values[4:6], dtype=float)
-            start_tangent = first - start
-            end_tangent = end - second
-        else:
-            continue
-        segments.append(
-            {
-                "command_index": command_index,
-                "command": command,
-                "start": start,
-                "end": end,
-                "start_tangent": start_tangent,
-                "end_tangent": end_tangent,
-            }
-        )
-        cursor = end
-    return segments
-
 
 def path_corner_diagnostics(
     d: str,
@@ -86,114 +33,16 @@ def path_corner_diagnostics(
 
 
 def _bind_prefit_spans(d: str, declarations: Sequence, *, tolerance: float) -> dict[str, object]:
-    """One ownership definition shared by initial binding and path rewrites."""
-    paths = _parse_subpaths(d)
-    spans, skipped = [], []
+    """Project SVG input/output around the shared typed evidence matcher."""
+    paths = {subpath: tuple(command_from_token(kind, values, command_id=f"p{subpath}.c{index}")
+        for index, (kind, values) in enumerate(tokens) if kind != "Z")
+        for subpath, tokens in enumerate(_parse_subpaths(d))} if declarations else {}
+    matched, skipped = corner_matching.match_prefit_corner_spans(paths, declarations, tolerance=tolerance)
+    spans = [{**span, **{field: list(span[field]) for field in
+        ("commands", "curve_commands", "anchor_commands")}} for span in matched]
     anchors: dict[tuple[int, int], dict[str, object]] = {}
-    for declaration in declarations:
-        corner_id = declaration.get("corner_id") if isinstance(declaration, Mapping) else None
-
-        def invalid_provenance() -> None:
-            skip = {"reason": "invalid_corner_provenance"}
-            if isinstance(corner_id, str) and corner_id:
-                skip["corner_id"] = corner_id
-            skipped.append(skip)
-
-        if not isinstance(declaration, Mapping):
-            invalid_provenance()
-            continue
-        kind = declaration.get("kind")
-        subpath_value = declaration.get("subpath")
-        if (
-            declaration.get("source") != "prefit"
-            or not isinstance(corner_id, str)
-            or not corner_id
-            or not isinstance(subpath_value, int)
-            or isinstance(subpath_value, bool)
-            or kind not in {"point", "curve"}
-        ):
-            invalid_provenance()
-            continue
-
-        point_fields = ("point",) if kind == "point" else ("start_point", "end_point")
-        normalized_points: dict[str, tuple[float, float]] = {}
-        for field in point_fields:
-            value = declaration.get(field)
-            if (
-                not isinstance(value, Sequence)
-                or isinstance(value, (str, bytes))
-                or len(value) != 2
-            ):
-                invalid_provenance()
-                break
-            try:
-                point = (float(value[0]), float(value[1]))
-            except (TypeError, ValueError):
-                invalid_provenance()
-                break
-            if not all(np.isfinite(coordinate) for coordinate in point):
-                invalid_provenance()
-                break
-            normalized_points[field] = point
-        if len(normalized_points) != len(point_fields):
-            continue
-
-        span = dict(declaration)
-        span.update(normalized_points)
-        subpath = subpath_value
-        reason = None
-        if not 0 <= subpath < len(paths):
-            skipped.append({"corner_id": span["corner_id"], "reason": "missing_subpath"})
-            continue
-        tokens = paths[subpath]
-        segments = _segments(tokens)
-        if not segments or not tokens or tokens[0][0] != "M":
-            continue
-        drawable = [int(s["command_index"]) for s in segments if s["command"] != "Z"]
-        endpoints = {0: np.asarray(tokens[0][1], dtype=float)}
-        endpoints.update({int(s["command_index"]): s["end"] for s in segments if s["command"] != "Z"})
-        # M and the explicit closing endpoint are two addresses for one node.
-        if drawable and np.linalg.norm(endpoints[drawable[-1]] - endpoints[0]) <= 1e-9:
-            del endpoints[drawable[-1]]
-
-        def locate(point):
-            matches = sorted((float(np.linalg.norm(end - np.asarray(point, dtype=float))), index)
-                             for index, end in endpoints.items())
-            if not matches or matches[0][0] > tolerance:
-                return None
-            if len(matches) > 1 and abs(matches[1][0] - matches[0][0]) <= 1e-9:
-                return None
-            return matches[0][1]
-
-        if span["kind"] == "point":
-            entry = exit = locate(span["point"])
-            commands = []
-        else:
-            entry, exit = locate(span["start_point"]), locate(span["end_point"])
-            commands = []
-            if entry is not None and exit is not None and entry != exit:
-                explicit_close = bool(drawable) and np.linalg.norm(
-                    segments[drawable[-1]]["end"] - np.asarray(tokens[0][1], dtype=float)
-                ) <= 1e-9
-                try:
-                    commands = list(directed_corner_ownership(
-                        tuple(str(index) for index in [0, *drawable]), str(entry), str(exit),
-                        explicit_closing_drawable=explicit_close,
-                    ))
-                    commands = [int(index) for index in commands]
-                except ValueError as error:
-                    reason = "implicit_closing_edge" if "implicit closing" in str(error) else "ambiguous_span"
-            elif entry == exit and entry is not None:
-                reason = "ambiguous_span"
-        if entry is None or exit is None:
-            reason = "missing_or_ambiguous_endpoint"
-        if reason:
-            skipped.append({"corner_id": span["corner_id"], "reason": reason})
-            continue
-        span.update(entry_command=entry, exit_command=exit, commands=commands,
-                    curve_commands=[i for i in commands if tokens[i][0] in _CURVE_COMMANDS],
-                    anchor_commands=list(dict.fromkeys([entry, *commands, exit])))
-        spans.append(span)
+    for span in spans:
+        subpath = span["subpath"]
         for index in span["anchor_commands"]:
             key = (subpath, index)
             anchor = anchors.setdefault(key, {"subpath": subpath, "command_index": index,
@@ -202,7 +51,7 @@ def _bind_prefit_spans(d: str, declarations: Sequence, *, tolerance: float) -> d
                 anchor["corner_ids"].append(span["corner_id"])
     return recount_corner_diagnostics(d, {
         "path": d, "anchors": [anchors[key] for key in sorted(anchors)],
-        "spans": spans, "skipped": skipped,
+        "spans": spans, "skipped": [dict(item) for item in skipped],
     })
 
 
