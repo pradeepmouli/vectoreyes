@@ -626,7 +626,7 @@ def seams_pass(
             # used by replay before recording any seam constraints. Keep the
             # original geometry when the proposed adjustment is unsafe; the
             # normalized result is a predicate, not replacement geometry.
-            from ..topology import normalize_retained_topology
+            from ...drawing_topology import normalize_retained_topology
 
             try:
                 normalize_retained_topology(replacements, allow_external=True)

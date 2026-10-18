@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...fit import Shape
+from ...drawing_corner_actions import normalize_declared_corners
 from ..automatic_replay import (
     CornerDiagnosticsObservation,
     NormalizeCornersOperation,
@@ -12,12 +12,11 @@ from ..automatic_replay import (
     operation_intent,
 )
 from ..corners import (
-    normalize_corners_path_d,
     recount_corner_diagnostics,
     retained_corner_declaration_matches,
 )
 from ..framework import Proposal
-from ..vector_region import VectorRegion, to_polygon
+from ..vector_region import VectorRegion
 
 
 def corner_normalize_pass(
@@ -38,15 +37,7 @@ def corner_normalize_pass(
         declared = existing if retained_corner_declaration_matches(d, existing) else None
         target_ref = draft_input_ref(obj.id)
         if enabled and declared is not None:
-            normalized_d, diagnostics = normalize_corners_path_d(
-                d, max_error=max_error, diagnostics=declared
-            )
-            shape = Shape("path", {**obj.current.params, "d": normalized_d})
-            replacement = obj.with_current(
-                shape,
-                footprint=to_polygon(shape),
-                diagnostics={"corners": diagnostics},
-            )
+            replacement = normalize_declared_corners(obj, declaration=declared, max_error=max_error)
             intent = operation_intent(
                 NormalizeCornersOperation(target_ref, max_error, declared),
                 (target_ref,),

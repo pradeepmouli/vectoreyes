@@ -86,7 +86,7 @@ from .optimizer.automatic_replay import (
     input_revision,
     replay_batches,
 )
-from .optimizer.topology import normalize_retained_topology
+from .drawing_topology import normalize_retained_topology
 from .optimizer.symmetry_materialize import materialize_self_symmetry
 from .optimizer.vector_region import VectorRegion, _parse_subpaths
 from .drawing_seams import _command_id as seam_command_id

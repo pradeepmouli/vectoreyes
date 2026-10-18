@@ -36,7 +36,7 @@ from .optimizer.automatic_replay import (
 )
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
 from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, relative_source_path, resolve_source_path
-from .optimizer.topology import normalize_retained_topology
+from .drawing_topology import normalize_retained_topology
 from .pipeline import Options, _segment_image
 from .refinement_settings import RefinementPasses
 from .output_settings import DrawingOutputSettings

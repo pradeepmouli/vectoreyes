@@ -1,6 +1,12 @@
 """Source-bound corner fitting and annotation publication on canonical regions."""
 
 from dataclasses import replace
+from collections.abc import Mapping
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .optimizer.automatic_replay import NormalizeCornersOperation, RegionResolver
+    from .optimizer.vector_region import VectorRegion
 
 from .corner_recipe import CornerRecipe, CornerRecipeExecutor, CornerRecipeReplay
 from .drawing import DrawingRegion
@@ -72,3 +78,30 @@ def rebind_corner_annotations(parsed: EditablePathGeometry, annotated: EditableP
             raise ValueError('corner downstream replay changed command topology; no exact annotation rebinding is available')
         rebound.append(replace(current, anchors=original.anchors))
     return replace_component_paths(parsed, rebound)
+
+
+def apply_retained_corner_normalization(
+    action: "NormalizeCornersOperation", resolver: "RegionResolver",
+) -> list["VectorRegion"]:
+    """Apply only the exact retained pre-fit declaration, never detect corners."""
+    return [normalize_declared_corners(resolver.resolve(action.target),
+        declaration=action.declaration, max_error=action.max_error)]
+
+
+def normalize_declared_corners(
+    target: "VectorRegion", *, declaration: Mapping[str, object], max_error: float,
+) -> "VectorRegion":
+    """Normalize and publish one existing declaration for proposals or replay."""
+    from .fit import Shape
+    from .optimizer.corners import normalize_corners_path_d, retained_corner_declaration_matches
+    from .optimizer.vector_region import to_polygon
+
+    if target.current is None or target.current.kind != "path":
+        raise ValueError("corner replay target is not a path")
+    d = str(target.current.params.get("d", ""))
+    if not retained_corner_declaration_matches(d, declaration):
+        raise ValueError("corner operation declaration does not match replay target")
+    normalized_d, diagnostics = normalize_corners_path_d(d, max_error=max_error,
+                                                       diagnostics=declaration)
+    shape = Shape("path", {**target.current.params, "d": normalized_d})
+    return target.with_current(shape, footprint=to_polygon(shape), diagnostics={"corners": diagnostics})

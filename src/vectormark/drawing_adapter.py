@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
+from typing import TYPE_CHECKING
 import numpy as np
+
+if TYPE_CHECKING:
+    from .optimizer.automatic_replay import RefreshDependentClonesOperation, RegionResolver
 
 from .candidate import (
     FlatFill as LegacyFlatFill,
@@ -227,7 +231,7 @@ def apply_region_geometry(
     """
     from .optimizer.vector_region import to_polygon
     from .optimizer.symmetry_materialize import materialize_self_symmetry
-    from .optimizer.topology import normalize_retained_topology
+    from .drawing_topology import normalize_retained_topology
     from .path_topology import component_paths
     metadata = shape_metadata or {}
     prepared = normalize_retained_topology(materialize_self_symmetry(regions))
@@ -596,3 +600,60 @@ def working_fill_from_spec(spec: Mapping[str, object]):
         return LegacyRadialGradientFill(geometry, [(stop['offset'], stop['color']) for stop in spec['stops']])
     origin = spec['origin']
     return LegacyRasterFill({'x': origin[0], 'y': origin[1], 'w': spec['width'], 'h': spec['height']}, spec['png_base64'])
+
+
+def publish_clone_refresh(
+    clone: VectorRegion, source: VectorRegion, *,
+    clone_path: tuple[int, ...], source_path: tuple[int, ...],
+    previous_source_id: int, previous_source_path: tuple[int, ...],
+    refresh_footprint: bool = True,
+) -> VectorRegion:
+    """Publish an exact scoped clone rebinding without rediscovering its source."""
+    from .optimizer.vector_region import to_polygon
+    from .optimizer.symmetry_materialize import relative_source_path
+
+    if clone.current is None or clone.current.kind != "use" or source.current is None:
+        raise ValueError("dependent clone refresh requires bound clone and source geometry")
+    params = {**clone.current.params, "href_obj_id": int(source.id)}
+    if source_path != (*clone_path[:-1], int(source.id)) or "href_region_path" in params:
+        params["href_region_path"] = relative_source_path(clone_path, source_path)
+    diagnostics: dict[str, object] = {"clone_reference_remap": {
+        "previous_source_region_id": previous_source_id,
+        "source_region_id": int(source.id),
+        "previous_source_region_path": previous_source_path,
+        "source_region_path": source_path,
+        "reason": "self_symmetry_materialization",
+    }}
+    for key, field in (("clone", "source_id"), ("clones", "matched_source")):
+        relation = clone.diagnostics.get(key)
+        if isinstance(relation, Mapping):
+            diagnostics[key] = {**relation, field: int(source.id)}
+    footprint = (to_polygon(transform_working_shape(source.current, tuple(clone.current.params["transform"])))
+                 if refresh_footprint else clone.footprint)
+    return clone.with_current(Shape("use", params), footprint=footprint, diagnostics=diagnostics)
+
+
+def refresh_dependent_clones(
+    action: RefreshDependentClonesOperation, resolver: RegionResolver,
+) -> list[VectorRegion]:
+    """Refresh the recorded clones and publish their containing roots atomically."""
+    replacements_by_path: dict[tuple[int, ...], VectorRegion] = {}
+    for refresh in action.clones:
+        clone = resolver.resolve(refresh.clone)
+        source = resolver.resolve(refresh.source)
+        clone_path = tuple(refresh.clone.ancestry)
+        replacements_by_path[clone_path] = publish_clone_refresh(
+            clone, source, clone_path=clone_path, source_path=tuple(refresh.source.ancestry),
+            previous_source_id=refresh.previous_source_id,
+            previous_source_path=refresh.previous_source_path,
+        )
+
+    def replace_paths(region: VectorRegion, path: tuple[int, ...]) -> VectorRegion:
+        if path in replacements_by_path:
+            return replacements_by_path[path]
+        if region.is_leaf:
+            return region
+        children = tuple(replace_paths(child, (*path, int(child.id))) for child in region.children)
+        return region.with_children(children) if children != region.children else region
+
+    return [replace_paths(resolver.resolve(root), tuple(root.ancestry)) for root in action.roots]

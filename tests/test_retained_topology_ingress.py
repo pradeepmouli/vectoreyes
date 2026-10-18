@@ -13,7 +13,7 @@ from vectormark.optimizer.vector_region import VectorRegion
 from vectormark.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
 from vectormark.path_geometry import parse_svg_paths, ArcCommand, CubicCommand
 from vectormark.path_topology import classify_filled_paths, component_paths
-from vectormark.optimizer.topology import normalize_retained_topology
+from vectormark.drawing_topology import normalize_retained_topology
 
 
 OUTER = "M0 0 L12 0 L12 12 L0 12 Z"

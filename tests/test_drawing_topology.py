@@ -10,7 +10,7 @@ def test_working_normalizer_uses_canonical_publication(monkeypatch):
     import vectormark.drawing_topology as publication
     from vectormark.candidate import FlatFill as WorkingFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.topology import normalize_retained_topology
+    from vectormark.drawing_topology import normalize_retained_topology
     from vectormark.optimizer.vector_region import VectorRegion
     source = VectorRegion.from_shape(id=1, shape=Shape('path', {
         'd': 'M0 0 L4 0 L4 4 L0 4 Z M8 0 L12 0 L12 4 L8 4 Z'}),

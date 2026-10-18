@@ -34,7 +34,7 @@ def fixture():
 
 def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     from vectormark.drawing_adapter import drawing_from_vector_regions
-    from vectormark.optimizer.topology import normalize_retained_topology
+    from vectormark.drawing_topology import normalize_retained_topology
     d = ('M0 0 L4 0 L4 4 L0 4 Z '
          'M1 1 L2 1 L2 2 L1 2 Z '
          'M5 5 L7 5 L7 7 L5 7 Z')

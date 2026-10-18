@@ -980,6 +980,33 @@ Verification: **199 focused tests** and the fresh full **1,151-test suite** pass
 and diff check pass. Optional render-DeltaE scoring remains unavailable without
 resvg-py. No native rebuild, deployment, speedup or visual acceptance is claimed.
 
+#### Remaining automatic execution consolidation — 2026-10-18
+
+`drawing_smoothing` owns bounded tangent projection and retained smoothing
+application. `drawing_topology` now owns the former working-forest normalizer,
+exact path-owner correspondence and retained topology application alongside
+canonical component publication. The old `optimizer/topology.py` is deleted,
+and all callers use the shared engine owner without compatibility aliases.
+
+Retained corner normalization delegates to `drawing_corner_actions`; proposals
+and replay share the same declaration validation, normalization and publication.
+`drawing_adapter` owns dependent-clone refresh and its per-clone publisher.
+Symmetry materialization shares that publisher while retaining its scoped
+discovery/no-op checks and existing footprint-refresh policy. Source bindings,
+paint, diagnostics and forest-level publication remain unchanged.
+
+The automatic dispatcher now only routes recorded operations and resolves their
+inputs; it no longer imports optimizer passes or implements these geometry
+mutations. This does not eliminate working-region/evidence adapters or global
+paint/source bookkeeping. Those and the parent whole-branch review remain open.
+No detector thresholds, fit budgets, defaults or corpus artifacts changed.
+Final validation follows.
+
+Verification: **296 focused tests** and the fresh full **1,155-test suite** pass
+(953 warnings, 115.49s). Unused-import/undefined-name lint, standalone imports
+and diff check pass. Optional render-DeltaE scoring remains unavailable without
+resvg-py. No native rebuild, deployment, speedup or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

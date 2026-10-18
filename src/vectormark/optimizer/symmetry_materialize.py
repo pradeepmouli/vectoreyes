@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 
 from ..fit import Shape
 from ..skia_geometry import SkPath, unary_union
-from .vector_region import VectorRegion, to_polygon
+from .vector_region import VectorRegion
 
 
 RegionPath = tuple[int, ...]
@@ -117,7 +117,7 @@ def remap_symmetry_clones(
     *, before: Sequence[VectorRegion],
 ) -> tuple[VectorRegion, ...]:
     """Remap exact before-forest bindings, never an unrelated same-numbered ID."""
-    from ..drawing_adapter import transform_working_shape
+    from ..drawing_adapter import publish_clone_refresh
     prior = index_region_paths(before)
     current = index_region_paths(regions)
     def visit(region: VectorRegion, path: RegionPath) -> VectorRegion:
@@ -143,21 +143,10 @@ def remap_symmetry_clones(
             params["href_region_path"] = relative_source_path(path, new_path)
         if old_path not in sources and params == shape.params:
             return region
-        matrix = tuple(shape.params["transform"])
-        footprint = (to_polygon(transform_working_shape(source.current, matrix))
-                     if old_path in sources else region.footprint)
-        diagnostics = {"clone_reference_remap": {
-            "previous_source_region_id": original.current.params["href_obj_id"], "source_region_id": source.id,
-            "previous_source_region_path": old_path, "source_region_path": new_path,
-            "reason": "self_symmetry_materialization",
-        }}
-        for key, field in (("clone", "source_id"), ("clones", "matched_source")):
-            relation = region.diagnostics.get(key)
-            if isinstance(relation, Mapping):
-                diagnostics[key] = {**relation, field: source.id}
-        return region.with_current(
-            Shape("use", params), footprint=footprint,
-            diagnostics=diagnostics,
+        return publish_clone_refresh(
+            region, source, clone_path=path, source_path=new_path,
+            previous_source_id=original.current.params["href_obj_id"],
+            previous_source_path=old_path, refresh_footprint=old_path in sources,
         )
     return tuple(visit(region, (region.id,)) for region in regions)
 

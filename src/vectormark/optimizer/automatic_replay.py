@@ -15,7 +15,7 @@ from ..immutable_value import freeze_value
 from ..path_geometry import PrimitiveGeometry
 from ..quality import GeometryAssessment
 from ..skia_geometry import SkPath
-from .vector_region import VectorRegion, to_polygon
+from .vector_region import VectorRegion
 from .symmetry_materialize import index_region_paths
 
 if TYPE_CHECKING:
@@ -801,21 +801,9 @@ def _execute_action(
         target = resolver.resolve(action.target)
         return [publish_primitive_geometry(target, action.primitive)]
     if isinstance(action, NormalizeRetainedTopologyOperation):
-        from .passes.compound import topology_path_correspondence
-        from .topology import normalize_retained_topology
+        from ..drawing_topology import apply_retained_topology
 
-        normalized = normalize_retained_topology(snapshot, allow_external=action.allow_external)
-        recorded = tuple(
-            replace(
-                item,
-                target=replace(item.target, batch_id="", input_revision=""),
-            )
-            for item in action.path_correspondence
-        )
-        if topology_path_correspondence(snapshot, normalized) != recorded:
-            raise ValueError("retained topology path correspondence is stale")
-        affected = set(action.affected_ids)
-        return [obj for obj in normalized if int(obj.id) in affected]
+        return apply_retained_topology(action, snapshot)
     if isinstance(action, AssignCloneOperation):
         from ..drawing_adapter import publish_clone_assignment
 
@@ -833,38 +821,13 @@ def _execute_action(
 
         return apply_simplification(action, resolver)
     if isinstance(action, SmoothPathOperation):
-        from .passes.smooth import _smoothed_shape
+        from ..drawing_smoothing import apply_smoothing
 
-        target = resolver.resolve(action.target)
-        if target.current is None:
-            raise ValueError("smooth replay target has no geometry")
-        shape = _smoothed_shape(target.current, max_boundary_error=action.max_boundary_error)
-        if shape is None:
-            raise ValueError("recorded smooth operation no longer applies to its bound input")
-        return [target.with_current(shape, footprint=to_polygon(shape))]
+        return apply_smoothing(action, resolver)
     if isinstance(action, NormalizeCornersOperation):
-        from .corners import (
-            normalize_corners_path_d,
-            retained_corner_declaration_matches,
-        )
+        from ..drawing_corner_actions import apply_retained_corner_normalization
 
-        target = resolver.resolve(action.target)
-        if target.current is None or target.current.kind != "path":
-            raise ValueError("corner replay target is not a path")
-        d = str(target.current.params.get("d", ""))
-        if not retained_corner_declaration_matches(d, action.declaration):
-            raise ValueError("corner operation declaration does not match replay target")
-        normalized_d, diagnostics = normalize_corners_path_d(
-            d,
-            max_error=action.max_error,
-            diagnostics=action.declaration,
-        )
-        shape = Shape("path", {**target.current.params, "d": normalized_d})
-        return [target.with_current(
-            shape,
-            footprint=to_polygon(shape),
-            diagnostics={"corners": diagnostics},
-        )]
+        return apply_retained_corner_normalization(action, resolver)
     if isinstance(action, DeclareIntrinsicSymmetryOperation):
         from ..drawing_symmetry import Axis2D, apply_intrinsic_symmetry
 
@@ -905,54 +868,9 @@ def _execute_action(
 
         return apply_seam_constraints(action, resolver)
     if isinstance(action, RefreshDependentClonesOperation):
-        from ..drawing_adapter import transform_working_shape
-        from .symmetry_materialize import relative_source_path
+        from ..drawing_adapter import refresh_dependent_clones
 
-        replacements_by_path: dict[tuple[int, ...], VectorRegion] = {}
-        for refresh in action.clones:
-            clone = resolver.resolve(refresh.clone)
-            source = resolver.resolve(refresh.source)
-            if clone.current is None or clone.current.kind != "use" or source.current is None:
-                raise ValueError("dependent clone refresh requires bound clone and source geometry")
-            clone_path = tuple(refresh.clone.ancestry)
-            source_path = tuple(refresh.source.ancestry)
-            params = {**clone.current.params, "href_obj_id": int(source.id)}
-            if source_path != (*clone_path[:-1], int(source.id)) or "href_region_path" in params:
-                params["href_region_path"] = relative_source_path(clone_path, source_path)
-            clone_diagnostics: dict[str, object] = {
-                "clone_reference_remap": {
-                    "previous_source_region_id": refresh.previous_source_id,
-                    "source_region_id": int(source.id),
-                    "previous_source_region_path": refresh.previous_source_path,
-                    "source_region_path": source_path,
-                    "reason": "self_symmetry_materialization",
-                }
-            }
-            for key, field in (("clone", "source_id"), ("clones", "matched_source")):
-                relation = clone.diagnostics.get(key)
-                if isinstance(relation, Mapping):
-                    clone_diagnostics[key] = {**relation, field: int(source.id)}
-            matrix = tuple(clone.current.params["transform"])
-            replacements_by_path[clone_path] = clone.with_current(
-                Shape("use", params),
-                footprint=to_polygon(transform_working_shape(source.current, matrix)),
-                diagnostics=clone_diagnostics,
-            )
-
-        def replace_paths(region: VectorRegion, path: tuple[int, ...]) -> VectorRegion:
-            if path in replacements_by_path:
-                return replacements_by_path[path]
-            if region.is_leaf:
-                return region
-            children = tuple(
-                replace_paths(child, (*path, int(child.id))) for child in region.children
-            )
-            return region.with_children(children) if children != region.children else region
-
-        return [
-            replace_paths(resolver.resolve(root), tuple(root.ancestry))
-            for root in action.roots
-        ]
+        return refresh_dependent_clones(action, resolver)
     raise TypeError(f"unsupported automatic replay action: {type(action).__name__}")
 
 
