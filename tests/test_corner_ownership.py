@@ -154,3 +154,19 @@ def test_no_provenance_skip_survives_repeated_noop():
     second_d, second = normalize_corners_path_d(first_d, max_error=1, diagnostics=first)
     assert second_d == first_d == d
     assert second == first
+
+
+def test_rebind_without_declarations_preserves_cleanup_diagnostics():
+    from vectormark.candidate import FlatFill
+    from vectormark.drawing_refine import _rebind_corner_provenance
+    from vectormark.fit import Shape
+    from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+
+    d = "M0 0 Q5 0 10 10 L0 10 Z"
+    shape = Shape("path", {"d": d})
+    before = VectorRegion(1, shape, FlatFill("#112233"), 0,
+        footprint=to_polygon(shape), diagnostics={"corners": path_corner_diagnostics(d)})
+    cleanup = {"path": d, "spans": (), "skipped": ({"reason": "missing_or_stale_provenance"},)}
+    after = before.with_diagnostics({"corners": cleanup})
+    result = _rebind_corner_provenance((before,), (after,), tolerance=1)
+    assert result[0] is after

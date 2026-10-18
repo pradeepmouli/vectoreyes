@@ -996,6 +996,19 @@ def test_nested_path_action_replay_binds_every_command_reference(
             "ops": path_actions,
         }],
     })
+    if any(item["op"] in {"break", "reverse", "mirror"} for item in path_actions):
+        from vectormark.drawing_replay import bind_recipe_operation
+
+        operation = bind_recipe_operation(
+            operation_id="reserved-path-binding", action=plan.ops[0],
+            settings=ActionSettings(epsilon=1, max_error=1, fit_strategy="quadratic"),
+            evidence_revision="binding-test", regions=(source,),
+        )
+        assert {binding.role for binding in operation.bindings} == {"target", *expected_roles}
+        with pytest.raises(ValueError, match="path operation.*not implemented"):
+            extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan)
+        assert source.current is shape
+        return
     if any(item["op"] == "fit" and item.get("type") != "keep" for item in path_actions):
         # This hand-authored fixture has no original material-polyline evidence.
         # Retained fits must not silently validate against their current curves.

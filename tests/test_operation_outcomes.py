@@ -550,7 +550,7 @@ def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkey
 @pytest.mark.parametrize('method', ['fit_path', 'update_geometry'])
 def test_selected_path_geometry_replays_without_running_path_fitter(method, monkeypatch):
     import test_drawing_corner_store_replay as helpers
-    import vectormark.drawing_refine as refine_module
+    import vectormark.path_operations as operations
     store, base, paint, evidence = helpers._source_store()
     commands = base.drawing.regions[0].geometry.path.commands
     action = dict(op=method, target='r1')
@@ -567,11 +567,35 @@ def test_selected_path_geometry_replays_without_running_path_fitter(method, monk
         pytest.fail('selected path was refitted')
     import vectormark.drawing_region_actions as actions
     monkeypatch.setattr(actions, 'fit_region_path', fail)
-    monkeypatch.setattr(refine_module, '_path_shape', fail)
+    monkeypatch.setattr(operations, 'apply_region_path_operations', fail)
     actual = replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
         evidence=evidence, paint=paint, recipe=recipe)
     assert actual.drawing == expected.drawing
     assert actual.replay.path_correspondence == expected.replay.path_correspondence
+
+
+def test_direct_path_plan_executes_canonical_operation_once(monkeypatch):
+    import test_drawing_corner_store_replay as helpers
+    import vectormark.path_operations as operations
+    from vectormark.drawing import Drawing
+    store, base, paint, evidence = helpers._source_store()
+    calls = []
+    execute = operations.apply_region_path_operations
+    def record(drawing, action, **kwargs):
+        calls.append((drawing, kwargs['settings']))
+        return execute(drawing, action, **kwargs)
+    monkeypatch.setattr(operations, 'apply_region_path_operations', record)
+    command = base.drawing.region('r1').geometry.path.drawable_commands[0].id
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id=base.drawing.drawing_id, base_version=base.id,
+        ops=[dict(op='update_geometry', target='r1',
+            ops=[dict(op='fit', target=command, type='keep')])]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base.effective_recipe, plan=plan).recipe
+    replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert len(calls) == 1
+    assert isinstance(calls[0][0], Drawing)
 
 
 def test_selected_fit_preserves_canonical_corner_diagnostics():

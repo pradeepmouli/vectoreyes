@@ -681,6 +681,33 @@ renderer for render-ΔE scoring remains absent; no native build, deployment or
 visual-quality acceptance is claimed. Remaining canonical action migration and
 the parent plan's final whole-branch review are still open.
 
+#### Canonical direct path edits — 2026-10-17
+
+`path_operations.apply_region_path_operations` consumes the canonical drawing,
+typed `UpdateGeometryAction`, resolved settings and optional exact material-span
+evidence. It returns an updated immutable region and a command-lineage/acceptance
+receipt. Numeric input comes from typed commands rather than rounded SVG text.
+`drawing_refine` partitions ordered cleanup stages and delegates direct edits;
+the shared scene adapter still owns topology, clones, paint and publication.
+The old scene-bound `_path_shape` executor and duplicated fitting helpers are
+removed. Inclusive `between`, source-distance guards, anchor retirement/rebinding
+and composed command correspondence retain their existing semantics.
+
+Three schema-declared operations (`reverse`, `mirror`, `break`) previously did
+nothing in this executor. They now fail explicitly before changing geometry;
+their geometry semantics remain unimplemented. No compatibility no-op is kept.
+The full-suite replay regression exposed empty corner diagnostics being
+reconstructed after cleanup despite having no declarations to preserve. The
+legacy rebind now leaves those cleanup diagnostics untouched. Dependency checks
+are unchanged; this is not a general redesign of cleanup observation recording.
+
+Verification: **1,029 passed, 951 warnings** in 123.09s in the final full source
+suite; the focused reserved-operation/binding/corner group passed 42 checks.
+Additional validation is recorded in the operation-outcomes progress ledger. Remaining
+corner/relationship execution, generic outcome reuse, full adapter removal and
+the parent final whole-branch review are still open. No native build, deployment
+or visual acceptance is implied by this source checkpoint.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
