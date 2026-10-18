@@ -19,7 +19,7 @@ from .components import decompose_components
 from .contour import region_contours
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import apply_region_geometry, apply_relationship_region, drawing_from_vector_regions, working_fill_from_spec as _fill
+from .drawing_adapter import apply_region_geometry, publish_region_update, drawing_from_vector_regions, working_fill_from_spec as _fill
 from .drawing_fill import serialize_fill
 from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
 from .path_fit_evidence import AutomaticFitEvidence
@@ -46,7 +46,8 @@ from .skia_geometry import SkPath, unary_union
 from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
-from . import drawing_region_actions, drawing_relationships, path_operations
+from . import drawing_region_actions, drawing_relationships, path_operations, paint_fitting
+from .paint_fitting import sampled_flat_hex as _sampled_flat_hex
 from .geometry_native import split_path_by_line as _split_footprint_by_line
 
 
@@ -1002,7 +1003,7 @@ def refine(
             execute = {"set_symmetry": drawing_relationships.set_region_symmetry,
                 "assign_clone": drawing_relationships.assign_clone,
                 "align": drawing_relationships.align_region}[name]
-            regions = apply_relationship_region(execute(drawing, action), regions)
+            regions = publish_region_update(execute(drawing, action), regions)
         elif name == "fit_path":
             targets = _targets(regions)
             target = targets[op["target"]]
@@ -1670,15 +1671,6 @@ def refill_changed_regions_from_source(
     return refill_regions(_invalidate_changed_fills(before, current), rgb, allow_gradients=allow_gradients)
 
 
-def _sampled_flat_hex(mask: np.ndarray, rgb: np.ndarray) -> str:
-    """Use the source's median color when gradient fitting selects a flat fill."""
-    pixels = rgb[mask]
-    if len(pixels) == 0:
-        return "#000000"
-    red, green, blue = np.rint(np.median(pixels, axis=0)).astype(np.uint8)
-    return f"#{red:02X}{green:02X}{blue:02X}"
-
-
 def _visible_leaf_masks(
     regions: Sequence[VectorRegion],
     canvas_shape: tuple[int, int],
@@ -1726,22 +1718,7 @@ def _fill_sample_mask(
     is no longer useful.  Fall back to its visible footprint in that case so
     the fill pass still has meaningful source samples.
     """
-    source_mask = np.asarray(region.raster, dtype=bool)
-    if source_mask.shape != visible_mask.shape:
-        return visible_mask, "visible_footprint"
-    supported = visible_mask & source_mask
-    visible_area = int(visible_mask.sum())
-    minimum_support = max(3, int(np.ceil(visible_area * 0.05)))
-    # Fill analysis should learn the material's interior, not the composited
-    # white/background fringe around a traced outline.  Preserve the previous
-    # supported-mask fallback for thin details that do not have a two-pixel
-    # interior core.
-    core = ndimage.binary_erosion(supported, iterations=2)
-    if int(core.sum()) >= minimum_support:
-        return core, "visible_source_material_core"
-    if int(supported.sum()) >= minimum_support:
-        return supported, "visible_source_material"
-    return visible_mask, "visible_footprint"
+    return paint_fitting.source_sample_mask(region.raster, visible_mask)
 
 
 def apply_output_fill_settings(
@@ -1804,7 +1781,6 @@ def refill_regions(regions: Sequence[VectorRegion], rgb: np.ndarray, *, allow_gr
     """
     canvas_shape = rgb.shape[:2]
     visible_masks = _visible_leaf_masks(regions, canvas_shape)
-
     def visit(region: VectorRegion) -> VectorRegion:
         if region.is_leaf:
             if region.fill is not None:
@@ -1813,17 +1789,17 @@ def refill_regions(regions: Sequence[VectorRegion], rgb: np.ndarray, *, allow_gr
             footprint = region.footprint
             if not isinstance(footprint, SkPath):
                 footprint = to_polygon(region.current)
-            sample_mask, sample_domain = _fill_sample_mask(region, visible_masks[region.id])
-            fill = fit_fill(sample_mask, rgb, flat_hex=_sampled_flat_hex(sample_mask, rgb), allow_gradients=allow_gradients)
+            fitted = paint_fitting.fit_source_paint(rgb,
+                source_mask=region.raster, visible_mask=visible_masks[region.id], allow_gradients=allow_gradients)
+            fill = _fill(serialize_fill(fitted.fill))
+            if isinstance(fill, FlatFill):
+                # Preserve the numeric fitter's median-color output spelling.
+                fill = FlatFill(fill.hex.upper())
             return region.with_current(
                 region.current,
                 fill=fill,
                 footprint=footprint,
-                diagnostics={"fill": {
-                    "status": "refit",
-                    "mask": sample_domain,
-                    "sampled_pixels": int(sample_mask.sum()),
-                }},
+                diagnostics={'fill': fitted.diagnostics},
             )
         children = tuple(visit(child) for child in region.children)
         return region if children == region.children else region.with_children(children)

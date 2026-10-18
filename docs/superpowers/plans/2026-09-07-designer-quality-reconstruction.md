@@ -845,6 +845,31 @@ no-solver replay for merge/split, paint, order and relationships, a controlled
 varying clone proposer, exact fit/corner correspondence, new-component coverage,
 borrowed raster evidence, invalid root ownership and stale-dependency rejection.
 
+#### Canonical corner replay and source paint fitting — 2026-10-18
+
+`drawing_corner_actions` owns selected-path corner recipe application, fitted
+command/feature identity binding, corner diagnostics and exact-topology annotation
+transfer. Replay retains its evidence and ancestry checks, then delegates the
+geometry decision. The shared `publish_region_update` adapter publishes both
+corner and relationship results, preserving untouched component paths and paint.
+
+`paint_fitting.fit_source_paint` returns immutable canonical paint and sampling
+diagnostics from source pixels and visibility. Both canonical region paint fitting
+and transitional refill use this kernel. Source support, erosion, thin-detail
+fallback and median-color decisions are unchanged. Paint fitting must not require
+whole-scene geometry conversion: a newly merged working region can legitimately
+contain disconnected paths before topology publication. This is not permission to
+weaken canonical geometry validation or construct placeholder geometry.
+
+The old duplicate corner-binding/diagnostic and paint-conversion implementations
+are removed. SVG annotation ingress/publication, automatic batch execution,
+global visibility/shared-gradient orchestration and source bookkeeping still need
+migration; the working-scene adapter and parent final review are not complete.
+No detector/fitter defaults changed. Verification: **206 expanded tests** and the
+full **1,122-test suite** pass (951 warnings, 140.28s); diff check is clean.
+Optional render-DeltaE scoring remains unavailable without resvg-py. No native
+build, deployment, push or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

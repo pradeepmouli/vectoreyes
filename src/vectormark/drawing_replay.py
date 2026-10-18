@@ -22,6 +22,7 @@ from .path_topology import component_paths
 from .drawing_adapter import (
     apply_region_geometry, drawing_from_vector_regions, vector_region_address_index,
     restore_selected_roots, working_region_evidence,
+    publish_region_update,
     replace_working_region as _replace_target_region, shape_from_region_geometry,
 )
 from .drawing_actions import (
@@ -104,6 +105,8 @@ from .path_geometry import (
     parse_svg_paths,
 )
 from .fit import Shape
+from . import drawing_corner_actions
+from .drawing_corner_actions import displayed_corner_id as _displayed_corner_id
 
 
 @dataclass(frozen=True)
@@ -268,26 +271,6 @@ def _replay_regions_with_producers(
     return regions, producers, corner_replays
 
 
-def _corner_diagnostics(geometry: PathGeometry) -> dict[str, object]:
-    positions = {
-        command.id: index for index, command in enumerate(geometry.path.commands)
-    }
-    return {
-        "path": geometry.to_svg_d(),
-        "spans": [
-            {
-                "corner_id": anchor.id,
-                "entry_command": positions[anchor.entry_command_id],
-                "exit_command": positions[anchor.exit_command_id],
-                "commands": [positions[item] for item in anchor.owned_command_ids],
-                "radius": anchor.radius,
-            }
-            for anchor in geometry.anchors
-            if isinstance(anchor, CornerAnchor)
-        ],
-    }
-
-
 def _path_geometry(
     geometry: object, path_id: str
 ) -> PathGeometry | None:
@@ -304,64 +287,6 @@ def _path_geometry(
             None,
         )
     return None
-
-
-def _replace_path_geometry(
-    geometry: PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry,
-    path_id: str,
-    replacement: PathGeometry,
-) -> PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry:
-    if isinstance(geometry, PathGeometry):
-        if geometry.path.id != path_id:
-            raise ValueError("corner recipe target path is stale")
-        return replacement
-    from .path_topology import component_paths, replace_component_paths
-
-    paths = component_paths(geometry)
-    matches = [index for index, path in enumerate(paths) if path.path.id == path_id]
-    if len(matches) != 1:
-        raise ValueError("corner recipe target path is absent or ambiguous")
-    replaced = list(paths)
-    replaced[matches[0]] = replacement
-    return replace_component_paths(geometry, replaced)
-
-
-def _displayed_corner_id(feature_id: str, source_path_id: str, target_path_id: str) -> str:
-    prefix = source_path_id + "."
-    return f"{target_path_id}.{feature_id.removeprefix(prefix)}" if feature_id.startswith(prefix) else feature_id
-
-
-def _rebind_corner_fit_path_identity(
-    geometry: PathGeometry, target_path_id: str, *, source_path_id: str
-) -> PathGeometry:
-    """Project a source-fit result onto one stable displayed path address."""
-
-    command_ids = {
-        command.id: f"{target_path_id}.c{index}"
-        for index, command in enumerate(geometry.path.commands)
-    }
-    commands = tuple(
-        replace(command, id=command_ids[command.id])
-        for command in geometry.path.commands
-    )
-    anchors: list[CornerAnchor] = []
-    for anchor in geometry.anchors:
-        if not isinstance(anchor, CornerAnchor):
-            raise TypeError("corner fitter emitted a non-corner anchor")
-        anchors.append(replace(
-            anchor,
-            id=_displayed_corner_id(anchor.id, source_path_id, target_path_id),
-            entry_command_id=command_ids[anchor.entry_command_id],
-            exit_command_id=command_ids[anchor.exit_command_id],
-            owned_command_ids=tuple(
-                command_ids[command_id]
-                for command_id in anchor.owned_command_ids
-            ),
-        ))
-    return PathGeometry(
-        replace(geometry.path, id=target_path_id, commands=commands),
-        tuple(anchors),
-    )
 
 
 def _path_geometries(
@@ -409,34 +334,7 @@ def _restore_canonical_path_annotations(
         path_ids=path_ids,
         defer_overlaps=True,
     )
-    parsed_paths = _path_geometries(parsed)
-    annotated_paths = _path_geometries(annotated)
-    if tuple(path.path.id for path in parsed_paths) != tuple(
-        path.path.id for path in annotated_paths
-    ):
-        raise ValueError(
-            "corner downstream replay changed path identity; "
-            "no exact annotation rebinding is available"
-        )
-    rebound_paths: list[PathGeometry] = []
-    for parsed_path, annotated_path in zip(
-        parsed_paths, annotated_paths, strict=True
-    ):
-        parsed_signature = tuple(
-            (command.id, type(command)) for command in parsed_path.path.commands
-        )
-        annotated_signature = tuple(
-            (command.id, type(command)) for command in annotated_path.path.commands
-        )
-        if parsed_signature != annotated_signature:
-            raise ValueError(
-                "corner downstream replay changed command topology; "
-                "no exact annotation rebinding is available"
-            )
-        rebound_paths.append(replace(parsed_path, anchors=annotated_path.anchors))
-    from .path_topology import replace_component_paths
-
-    canonical = replace_component_paths(parsed, rebound_paths)
+    canonical = drawing_corner_actions.rebind_corner_annotations(parsed, annotated)
     params["canonical_path_geometry"] = canonical
     shape = Shape("path", params)
     return _replace_target_region(
@@ -480,44 +378,16 @@ def _execute_corner_recipe(
     drawing = drawing_from_vector_regions(
         "corner-execution", width=1.0, height=1.0, regions=regions
     )
-    canonical = next(
-        leaf.geometry
-        for root in drawing.regions
-        for leaf in root.leaves()
-        if leaf.id == application.target_region_id
+    updated, replay = drawing_corner_actions.apply_region_corner_recipe(
+        drawing.region(application.target_region_id), path_id=application.target_path_id,
+        recipe=application.recipe, evidence=source.fit,
     )
-    if not isinstance(canonical, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
-        raise ValueError("corner recipe target has no directly editable path geometry")
-    selected = _path_geometry(canonical, application.target_path_id)
-    if selected is None:
-        raise ValueError("corner recipe target path is stale")
-    replay = CornerRecipeExecutor().replay(application.recipe, source.fit)
-    geometry = _rebind_corner_fit_path_identity(
-        replay.fit.geometry, selected.path.id, source_path_id=source.fit.source.path.id
-    )
-    replaced = _replace_path_geometry(
-        canonical, application.target_path_id, geometry
-    )
+    replaced = updated.geometry
     path_ids = tuple(path.path.id for path in _path_geometries(replaced))
-    shape = Shape(
-        "path",
-        {
-            "d": replaced.to_svg_d(),
-            "path_ids": path_ids,
-            "fill_rule": replaced.fill_rule if isinstance(replaced, CompoundPathGeometry) else "evenodd" if isinstance(replaced, PathGeometryWithCutouts) else "nonzero",
-            "canonical_path_geometry": replaced,
-        },
-    )
-    diagnostics = _corner_diagnostics(geometry)
-    result = _replace_target_region(
-        regions,
-        application.target_region_id,
-        lambda region: region.with_current(
-            shape,
-            footprint=to_polygon(shape),
-            diagnostics={"corners": diagnostics},
-        ),
-    )
+    result = publish_region_update(updated, regions, shape_metadata={updated.id: {
+        'path_ids': path_ids, 'fill_rule': replaced.fill_rule if isinstance(replaced, CompoundPathGeometry)
+        else 'evenodd' if isinstance(replaced, PathGeometryWithCutouts) else 'nonzero',
+    }})
     if application.downstream_batches:
         masks = {
             int(root.id): np.asarray(root.raster, dtype=bool).copy()

@@ -19,14 +19,7 @@ from .candidate import (
 )
 from .drawing import Canvas, Drawing, DrawingRegion
 from .fit import Shape
-from .drawing_fill import (
-    FlatFill,
-    GradientStop,
-    LinearGradientFill,
-    RadialGradientFill,
-    RasterFill,
-    compose_affine,
-)
+from .drawing_fill import compose_affine
 from .path_geometry import (
     AffineTransform,
     CirclePrimitive,
@@ -44,6 +37,7 @@ from .path_geometry import (
 )
 from .optimizer.corners import rebind_prefit_corner_diagnostics, source_ordered_corner_diagnostics
 from . import corner_provenance
+from .paint_fitting import canonical_fill as _fill
 from .optimizer.vector_region import VectorRegion
 from .types import CoverageField
 from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
@@ -242,8 +236,10 @@ def restore_selected_roots(
     return tuple(convert(changed[identity]) if identity in changed else existing[identity] for identity in root_order)
 
 
-def apply_relationship_region(selected: DrawingRegion, regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
-    """Single projection boundary around canonical relationship actions."""
+def publish_region_update(selected: DrawingRegion, regions: Sequence[VectorRegion], *,
+    shape_metadata: Mapping[str, Mapping[str, object]] | None = None,
+) -> tuple[VectorRegion, ...]:
+    """Project a canonical region update without repeating its geometry decision."""
     from .drawing_relationships import replace_region
     current = drawing_from_vector_regions('relationship', width=1, height=1, regions=regions)
     updated = replace_region(current, selected)
@@ -257,7 +253,7 @@ def apply_relationship_region(selected: DrawingRegion, regions: Sequence[VectorR
         inherit(root)
     changed = tuple(after for before, after in zip(current.regions, updated.regions) if before is not after)
     return restore_selected_roots(changed, tuple(root.id for root in updated.regions), regions,
-        shape_metadata={}, region_evidence=evidence)
+        shape_metadata=shape_metadata or {}, region_evidence=evidence)
 
 
 def vector_region_address_index(
@@ -480,35 +476,3 @@ def working_fill_from_spec(spec: Mapping[str, object]):
         return LegacyRadialGradientFill(geometry, [(stop['offset'], stop['color']) for stop in spec['stops']])
     origin = spec['origin']
     return LegacyRasterFill({'x': origin[0], 'y': origin[1], 'w': spec['width'], 'h': spec['height']}, spec['png_base64'])
-
-
-def _fill(fill: object):
-    if isinstance(fill, LegacyFlatFill):
-        return FlatFill(fill.hex)
-    if isinstance(fill, LegacyLinearGradientFill):
-        geometry = fill.geometry
-        return LinearGradientFill(
-            (geometry["x1"], geometry["y1"]),
-            (geometry["x2"], geometry["y2"]),
-            tuple(GradientStop(offset, color) for offset, color in fill.stops),
-        )
-    if isinstance(fill, LegacyRadialGradientFill):
-        geometry = fill.geometry
-        return RadialGradientFill(
-            (geometry["cx"], geometry["cy"]),
-            geometry["r"],
-            tuple(GradientStop(offset, color) for offset, color in fill.stops),
-            focal_point=(
-                (geometry.get("fx", geometry["cx"]), geometry.get("fy", geometry["cy"]))
-                if "fx" in geometry or "fy" in geometry else None
-            ),
-        )
-    if isinstance(fill, LegacyRasterFill):
-        geometry = fill.geometry
-        return RasterFill(
-            (geometry["x"], geometry["y"]),
-            geometry["w"],
-            geometry["h"],
-            fill.png_b64,
-        )
-    return None
