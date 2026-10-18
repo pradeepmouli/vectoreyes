@@ -651,6 +651,36 @@ instead of the removed import; no unused compatibility alias was retained.
 No native rebuild, deployment or visual acceptance is claimed. The optional
 render-ΔE scoring dependency is still absent from this environment.
 
+#### Canonical region path publication — 2026-10-17
+
+`fit_region_path` now consumes a canonical `DrawingRegion`, existing
+`FitPathDrawingAction`, retained raster and resolved settings. It invokes the
+typed numeric kernel and returns a canonical leaf or component subtree, retaining
+paint, z-order and lineage. `publish_region_paths` shares the existing filled-path
+classifier and owns stable component slots, cutout ownership, retired paths and
+topology receipts. The working normalizer delegates those decisions to it rather
+than maintaining a parallel publisher.
+
+Plan actions reach this operation through `DrawingEngine`. The old
+`_fit_target_path` wrapper is removed. New results and dependency-bound selected
+results share `apply_region_geometry` in the sanctioned scene adapter; clone
+expansion and original path slots remain transaction-wide. Raw working-path text,
+footprints, raster state and legacy corner provenance translation remain adapter
+responsibilities during migration. A targeted regression caught fresh fits
+skipping that existing corner ingress; fresh-fit application now explicitly
+performs it, while retained selections preserve exact canonical annotations.
+No legacy post-fit corner inference or alternate fitter is introduced.
+
+This migrates the whole-region path action, not direct path edits, remaining
+relationship/corner actions, or the entire working-scene model. Fitter thresholds
+and defaults are unchanged. Native compilation/deployment remain separate.
+
+Verification: **182 focused checks** pass. Final full source suite after the
+corner-ingress correction: **1,011 passed, 951 warnings** in 116.20s. The optional
+renderer for render-ΔE scoring remains absent; no native build, deployment or
+visual-quality acceptance is claimed. Remaining canonical action migration and
+the parent plan's final whole-branch review are still open.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

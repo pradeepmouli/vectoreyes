@@ -11,10 +11,11 @@ from dataclasses import replace
 import numpy as np
 
 from .drawing import Drawing, DrawingRegion
-from .drawing_actions import ActionSettings, FitPrimitiveAction, SetFillAction, SetZOrderAction
+from .drawing_actions import ActionSettings, FitPathDrawingAction, FitPrimitiveAction, SetFillAction, SetZOrderAction
 from .drawing_plan import PlanValidationError, _expand_merge_regions
 from .drawing_fill import deserialize_fill
 from .primitive_fitting import fit_primitive_geometry
+from . import drawing_topology, path_fitting
 
 
 def _require_leaf_target(region: DrawingRegion, target_id: str) -> None:
@@ -49,6 +50,17 @@ def set_region_fill(region: DrawingRegion, action: SetFillAction) -> DrawingRegi
     """Assign canonical paint without modifying geometry or its annotations."""
     _require_leaf_target(region, action.target)
     return replace(region, fill=deserialize_fill(action.fill.model_dump()))
+
+
+def fit_region_path(
+    region: DrawingRegion, action: FitPathDrawingAction, *,
+    raster: np.ndarray, settings: ActionSettings,
+) -> DrawingRegion:
+    """Fit retained contours and publish a canonical leaf or component subtree."""
+    _require_leaf_target(region, action.target)
+    paths = path_fitting.fit_raster_paths(raster, region_id=region.id, settings=settings)
+    selected = replace(region, diagnostics={**region.diagnostics, 'geometry': {'explicit': 'path'}})
+    return drawing_topology.publish_region_paths(selected, paths, fill_rule='evenodd')
 
 
 def set_drawing_z_order(drawing: Drawing, action: SetZOrderAction) -> Drawing:

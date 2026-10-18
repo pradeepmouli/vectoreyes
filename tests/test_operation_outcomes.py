@@ -59,7 +59,7 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
 @pytest.mark.parametrize('with_cutout', [False, True])
 @pytest.mark.parametrize('with_clone', [False, True])
 def test_selected_path_fit_retains_split_components_without_refitting(monkeypatch, with_cutout, with_clone):
-    import vectormark.drawing_refine as refine_module
+    import vectormark.drawing_region_actions as actions
     evidence, paint, _ = fixture()
     raster = np.zeros((8, 8), dtype=bool)
     raster[0:4, 0:4] = True
@@ -80,7 +80,7 @@ def test_selected_path_fit_retains_split_components_without_refitting(monkeypatc
         base_version='v0', ops=[dict(op='fit_path', target='r1')]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
-    monkeypatch.setattr(refine_module, '_fit_target_path',
+    monkeypatch.setattr(actions, 'fit_region_path',
         lambda *args, **kwargs: pytest.fail('selected component fit was regenerated'))
     first = replay_module.propose_effective_recipe(drawing_id='drw_test',
         evidence=evidence, paint=paint, recipe=recipe)
@@ -196,6 +196,51 @@ def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
     assert calls[0][1]['region_id'] == 'r1'
     assert calls[0][1]['settings'].max_error == 2.0
     assert calls[0][1]['settings'].fit_strategy == 'progressive'
+
+
+def test_whole_region_fit_retains_matching_prefit_corner_ingress():
+    from vectormark.path_fitting import fit_raster_paths
+    from vectormark.optimizer.corners import path_corner_diagnostics
+    evidence, paint, base = fixture()
+    fitted = fit_raster_paths(evidence.trace_roots[0].raster, region_id='r1', settings=base.settings)[0]
+    d = fitted.to_svg_d()
+    point = fitted.path.drawable_commands[0].end
+    corners = path_corner_diagnostics(d, declared_corners=(point,))
+    assert len(corners['spans']) == 1
+    source = evidence.trace_roots[0].with_current(Shape('path', {'d': d}),
+        diagnostics={'corners': corners})
+    evidence = build_geometry_evidence(kind='source', trace=evidence.trace,
+        geometry_source=evidence.geometry_source, trace_roots=(source,))
+    base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, base.settings)
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0', ops=[dict(op='fit_path', target='r1')]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    result = replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert len(result.drawing.region('r1').geometry.anchors) == 1
+
+
+def test_path_plan_executes_canonical_region_action(monkeypatch):
+    import vectormark.drawing_region_actions as actions
+    from vectormark.drawing import DrawingRegion
+    evidence, paint, base = fixture()
+    calls = []
+    execute = actions.fit_region_path
+    def record(region, action, **kwargs):
+        calls.append((region, kwargs['settings']))
+        return execute(region, action, **kwargs)
+    monkeypatch.setattr(actions, 'fit_region_path', record)
+    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        drawing_id='drw_test', base_version='v0',
+        ops=[dict(op='fit_path', target='r1', settings=dict(epsilon=0.25))]))
+    recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
+        base_recipe=base, plan=plan).recipe
+    replay_module.propose_effective_recipe(drawing_id='drw_test',
+        evidence=evidence, paint=paint, recipe=recipe)
+    assert len(calls) == 1
+    assert isinstance(calls[0][0], DrawingRegion)
+    assert calls[0][1].epsilon == 0.25
 
 
 def test_primitive_plan_executes_the_canonical_region_action(monkeypatch):
@@ -520,7 +565,8 @@ def test_selected_path_geometry_replays_without_running_path_fitter(method, monk
         evidence=evidence, paint=paint, recipe=recipe)
     def fail(*args, **kwargs):
         pytest.fail('selected path was refitted')
-    monkeypatch.setattr(refine_module, '_fit_target_path', fail)
+    import vectormark.drawing_region_actions as actions
+    monkeypatch.setattr(actions, 'fit_region_path', fail)
     monkeypatch.setattr(refine_module, '_path_shape', fail)
     actual = replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
         evidence=evidence, paint=paint, recipe=recipe)

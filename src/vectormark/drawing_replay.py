@@ -17,9 +17,12 @@ from .corner_recipe import (
     RemoveCorner,
     ReplaceCorner,
 )
-from .drawing import Drawing, DrawingRegion
+from .drawing import Drawing
 from .path_topology import component_paths
-from .drawing_adapter import drawing_from_vector_regions, vector_region_address_index
+from .drawing_adapter import (
+    apply_region_geometry, drawing_from_vector_regions, vector_region_address_index,
+    replace_working_region as _replace_target_region, shape_from_region_geometry,
+)
 from .drawing_actions import (
     ActionSettings,
     ActionSettingsOverride,
@@ -81,7 +84,6 @@ from .optimizer.automatic_replay import (
     bind_intent,
     input_revision,
     replay_batches,
-    shape_from_primitive_geometry,
 )
 from .optimizer.topology import normalize_retained_topology
 from .optimizer.symmetry_materialize import materialize_self_symmetry
@@ -358,31 +360,6 @@ def _rebind_corner_fit_path_identity(
         replace(geometry.path, id=target_path_id, commands=commands),
         tuple(anchors),
     )
-
-
-def _replace_target_region(
-    regions: DrawingRegions,
-    target_region_id: str,
-    replacement,
-) -> DrawingRegions:
-    matched = 0
-
-    def visit(region: VectorRegion) -> VectorRegion:
-        nonlocal matched
-        if region.drawing_id == target_region_id:
-            matched += 1
-            return replacement(region)
-        if region.is_leaf:
-            return region
-        children = tuple(visit(child) for child in region.children)
-        return region if children == region.children else region.with_children(children)
-
-    result = tuple(visit(region) for region in regions)
-    if matched != 1:
-        raise ValueError(
-            f"corner recipe target is absent or ambiguous: {target_region_id!r}"
-        )
-    return result
 
 
 def _path_geometries(
@@ -855,57 +832,10 @@ def _execute_public_operation(
     )
 
 
-def _selected_geometry_shape(region: DrawingRegion, metadata: Mapping[str, object]) -> Shape:
-    geometry = region.geometry
-    if isinstance(geometry, PrimitiveGeometry):
-        shape = shape_from_primitive_geometry(geometry)
-        return Shape(shape.kind, {**metadata, **shape.params})
-    if geometry is None:
-        raise ValueError("selected leaf geometry is missing")
-    return Shape("path", {
-        **metadata, "d": geometry.to_svg_d(),
-        "canonical_path_geometry": geometry,
-    })
-
-
 def _apply_selected_geometry(
     outcome: SelectedGeometryOutcome, regions: DrawingRegions,
 ) -> DrawingRegions:
-    selected = outcome.region
-    prepared = normalize_retained_topology(materialize_self_symmetry(regions))
-    if selected.is_leaf:
-        shape = _selected_geometry_shape(selected, outcome.shape_metadata.get(selected.id, {}))
-    else:
-        all_paths = tuple(path for leaf in selected.leaves() for path in component_paths(leaf.geometry))
-        paths = {path.path.id: path for path in all_paths}
-        topology = selected.diagnostics.get("topology", {})
-        source_order = tuple(topology.get("source_path_ids", tuple(paths)))
-        retired = set(topology.get("retired_path_ids", ()))
-        if (len(paths) != len(all_paths) or len(set(source_order)) != len(source_order)
-                or not set(paths).issubset(source_order)
-                or not (set(source_order) - set(paths)).issubset(retired)
-                or set(paths) & retired):
-            raise ValueError("selected component path ownership is inconsistent")
-        order = tuple(key for key in source_order if key in paths)
-        # Let the existing normalizer perform the leaf-to-branch transition in
-        # one transaction, including expansion of clones referencing the leaf.
-        shape = Shape("path", {"d": " ".join(paths[key].to_svg_d() for key in order),
-                               "path_ids": tuple(order), "fill_rule": "evenodd"})
-    result = normalize_retained_topology(_replace_target_region(
-        prepared, selected.id,
-        lambda region: region.with_current(
-            shape, footprint=to_polygon(shape), diagnostics=selected.diagnostics,
-        ),
-    ), component_path_orders={selected.id: source_order} if selected.is_branch else None)
-    if selected.is_branch:
-        for leaf in selected.leaves():
-            shape = _selected_geometry_shape(leaf, outcome.shape_metadata.get(leaf.id, {}))
-            result = _replace_target_region(result, leaf.id,
-                lambda region, leaf=leaf, shape=shape: region.with_current(
-                    shape, footprint=to_polygon(shape), diagnostics=leaf.diagnostics))
-        result = _replace_target_region(result, selected.id,
-            lambda region: region.with_diagnostics(selected.diagnostics))
-    return result
+    return apply_region_geometry(outcome.region, regions, shape_metadata=outcome.shape_metadata)
 
 
 def _retain_selected_fit(
@@ -920,7 +850,7 @@ def _retain_selected_fit(
     native = {leaf.drawing_id: leaf for root in after for leaf in root.leaves()}
     metadata = {}
     for leaf in selected.leaves():
-        core_params = _selected_geometry_shape(leaf, {}).params
+        core_params = shape_from_region_geometry(leaf, {}).params
         target = native[leaf.id]
         assert target.current is not None
         metadata[leaf.id] = {key: value for key, value in target.current.params.items()

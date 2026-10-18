@@ -7,6 +7,43 @@ from vectormark.drawing_actions import ActionSettings, FitPrimitiveAction
 from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
+@pytest.mark.parametrize('split', [False, True])
+def test_region_path_action_publishes_canonical_components_and_cutouts(split):
+    import vectormark.drawing_region_actions as actions
+    from vectormark.drawing_actions import FitPathDrawingAction
+    from vectormark.path_geometry import PathGeometryWithCutouts
+    region = DrawingRegion('r2-1', PrimitiveGeometry(RectanglePrimitive((0, 0), 2, 2)),
+        fill=FlatFill('#123456'), z=7, source_region_ids=('original',))
+    raster = np.zeros((20, 20), dtype=bool)
+    raster[1:10, 1:10] = True
+    raster[3:6, 3:6] = False
+    if split:
+        raster[14:18, 14:18] = True
+    result = actions.fit_region_path(region,
+        FitPathDrawingAction(op='fit_path', target=region.id), raster=raster,
+        settings=ActionSettings(epsilon=0.1, max_error=0.1, fit_strategy='quadratic'))
+    assert result.id == region.id and result.is_branch == split
+    assert len(result.leaves()) == (2 if split else 1)
+    assert any(isinstance(leaf.geometry, PathGeometryWithCutouts) for leaf in result.leaves())
+    for leaf in result.leaves():
+        assert leaf.fill is region.fill and leaf.z == region.z
+        assert leaf.source_region_ids == region.source_region_ids
+        assert leaf.diagnostics['geometry'] == {'explicit': 'path'}
+    assert isinstance(region.geometry, PrimitiveGeometry)
+
+
+@pytest.mark.parametrize('branch', [False, True])
+def test_region_path_action_requires_matching_leaf(branch):
+    import vectormark.drawing_region_actions as actions
+    from vectormark.drawing_actions import FitPathDrawingAction
+    leaf = DrawingRegion('r1-1', PrimitiveGeometry(RectanglePrimitive((0, 0), 4, 4)))
+    region = DrawingRegion('r1', children=(leaf,)) if branch else leaf
+    with pytest.raises(ValueError, match='leaf' if branch else 'target'):
+        actions.fit_region_path(region, FitPathDrawingAction(op='fit_path', target='r1'),
+            raster=np.ones((8, 8), dtype=bool),
+            settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+
+
 def test_region_primitive_action_preserves_identity_paint_and_provenance():
     import vectormark.drawing_region_actions as actions
     original = DrawingRegion('r2-1', PrimitiveGeometry(RectanglePrimitive((1, 1), 2, 2)),

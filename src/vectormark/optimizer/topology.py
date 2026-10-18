@@ -4,8 +4,10 @@ from collections.abc import Mapping, Sequence
 import re
 
 from ..fit import Shape
+from ..drawing import DrawingRegion
+from .. import drawing_topology
 from ..path_geometry import parse_svg_paths
-from ..path_topology import classify_filled_paths, component_paths
+from ..path_topology import component_paths
 from .gate import rasterize
 from .corners import source_ordered_corner_diagnostics, recount_corner_diagnostics
 from .shape_transform import bake_shape_transform
@@ -91,20 +93,15 @@ def normalize_retained_topology(
             parsed = parse_svg_paths(d, region_id=address, path_ids=shape.params.get("path_ids"))
             identities = tuple(item.path.id for item in parsed)
             source_order = tuple((component_path_orders or {}).get(address, identities))
-            if len(set(source_order)) != len(source_order) or not set(identities).issubset(source_order):
-                raise ValueError("component path order must uniquely include every retained path")
             from ..path_geometry import CompoundPathGeometry
 
-            topology = classify_filled_paths(parsed, fill_rule=shape.params.get("fill_rule", "nonzero"),
+            published = drawing_topology.publish_region_paths(
+                DrawingRegion(address, parsed[0], diagnostics=region.diagnostics), parsed,
+                fill_rule=shape.params.get("fill_rule", "nonzero"), source_path_order=source_order,
                 defer_overlaps=defer_overlaps or bool(region.diagnostics.get("topology", {}).get("pending")))
-            if isinstance(topology.components[0], CompoundPathGeometry):
-                compound = topology.components[0]
+            if isinstance(published.geometry, CompoundPathGeometry):
                 result = region.with_current(Shape("path", {**shape.params, "path_ids": tuple(item.path.id for item in parsed)}),
-                    footprint=region.footprint, diagnostics={"topology": {
-                        "operation": "deferred_topology", "pending": True,
-                        "reason": compound.reason, "source_path_ids": tuple(item.path.id for item in parsed),
-                        "resolution": "stitch_or_plan_geometry_edit",
-                    }})
+                    footprint=region.footprint, diagnostics={"topology": published.diagnostics['topology']})
                 active.remove(path)
                 built[path] = result
                 return result
@@ -115,29 +112,28 @@ def normalize_retained_topology(
                 region = region.with_current(shape, footprint=region.footprint,
                     diagnostics={"topology": {"operation": "resolved_topology", "pending": False}})
                 result = region
-            if len(topology.components) > 1 or topology.redundant_paths:
+            retained_ids = {item.path.id for leaf in published.leaves() for item in component_paths(leaf.geometry)}
+            if published.is_branch or set(identities) != retained_ids:
                 # Source text is preserved verbatim per subpath, keeping fit
                 # digest bindings valid even when serialization style differs.
                 raw = tuple(part.strip() for part in re.findall(r"M[^M]*", d))
                 children = []
-                ownership = []
-                for component in topology.components:
+                for selected in published.leaves():
+                    component = selected.geometry
                     members = {item.path.id for item in component_paths(component)}
                     indices = tuple(i for i, identity in enumerate(identities) if identity in members)
                     output_d = " ".join(raw[i] for i in indices)
                     output_ids = tuple(identities[i] for i in indices)
-                    outer = component_paths(component)[0].path.id
-                    local_id = source_order.index(outer) + 1
-                    child_address = f"{address}-{local_id}" if len(topology.components) > 1 else address
+                    local_id = int(selected.id.rsplit('-', 1)[1]) if published.is_branch else region.id
+                    child_address = selected.id
                     output_shape = Shape("path", {**shape.params, "d": output_d, "path_ids": output_ids,
                                                    "fill_rule": "evenodd" if len(indices) > 1 else "nonzero"})
                     footprint = to_polygon(output_shape)
                     diagnostics = {**region.diagnostics, "corners": _component_corners(
                         region.diagnostics.get("corners"), d, output_d, indices,
-                    ), "topology": {"source_target_id": address, "source_path_ids": output_ids,
-                                    "source_subpath_indices": indices}}
+                    ), "topology": selected.diagnostics['topology']}
                     child = VectorRegion(
-                        local_id if len(topology.components) > 1 else region.id,
+                        local_id,
                         output_shape, region.fill, region.z, footprint,
                         raster=rasterize(footprint, region.raster.shape) if region.raster.size else region.raster,
                         original=region.original, drawing_id=child_address,
@@ -145,8 +141,8 @@ def normalize_retained_topology(
                         source_regions=region.source_regions, coverage=region.coverage, diagnostics=diagnostics,
                     )
                     children.append(child)
-                    ownership.extend((identity, child_address) for identity in output_ids)
-                retired = tuple(item.path.id for item in topology.redundant_paths)
+                correspondence = dict(published.diagnostics['topology'])
+                retired = correspondence['retired_path_ids']
                 evidence = region.diagnostics.get("corners", {})
                 if isinstance(evidence, Mapping):
                     evidence = source_ordered_corner_diagnostics(d, evidence)
@@ -156,15 +152,7 @@ def normalize_retained_topology(
                     and type(span.get("subpath")) is int and 0 <= span["subpath"] < len(identities)
                     and identities[span["subpath"]] in retired and "corner_id" in span
                 ) if isinstance(evidence, Mapping) else ()
-                correspondence = {
-                    "operation": "retained_topology", "source_target_id": address,
-                    "source_path_ids": identities, "path_owner_remap": tuple(ownership),
-                    "created_target_ids": tuple(child.drawing_id for child in children) if len(children) > 1 else (),
-                    "retired_target_ids": (), "retired_path_ids": retired,
-                    "retired_feature_ids": retired_features,
-                    "preserved_command_ids": tuple(command.id for item in parsed if item.path.id not in retired
-                                                   for command in item.path.commands),
-                }
+                correspondence['retired_feature_ids'] = retired_features
                 result = branch(region, tuple(children), correspondence) if len(children) > 1 else children[0].with_diagnostics({"topology": correspondence})
         elif region.current.kind == "use":
             source_path = resolve_source_path(prior, path, region.current.params, allow_external=allow_external)

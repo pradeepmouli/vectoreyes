@@ -20,7 +20,7 @@ from .components import decompose_components
 from .contour import region_contours
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import drawing_from_vector_regions
+from .drawing_adapter import apply_region_geometry, drawing_from_vector_regions
 from .drawing_fill import serialize_fill
 from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
 from .path_fit_evidence import AutomaticFitEvidence
@@ -51,7 +51,7 @@ from .quality import polyline_boundary_distance
 from .surface_merge import material_groups, merge_material_regions
 from .segment import fill_small_compatible_holes
 from .types import Region
-from . import drawing_region_actions, path_fitting
+from . import drawing_region_actions
 
 
 DrawingRegions = tuple[VectorRegion, ...]
@@ -976,7 +976,7 @@ def refine(
         name = action.op
         settings = _action_settings(trace, plan, op)
         epsilon, max_error = settings.epsilon, settings.max_error
-        if index and name in {"fit_primitive", "set_fill"}:
+        if index and name in {"fit_path", "fit_primitive", "set_fill"}:
             # Temporary adapter: later actions must see earlier plan edits,
             # while the first action reuses the already validated projection.
             drawing = drawing_from_vector_regions(
@@ -1010,18 +1010,12 @@ def refine(
             targets = _targets(regions)
             target = targets[op["target"]]
             try:
-                shape = _fit_target_path(target, settings=settings)
+                updated = drawing_region_actions.fit_region_path(
+                    drawing.region(target.id), action, raster=target.region.raster, settings=settings,
+                )
+                regions = apply_region_geometry(updated, regions, ingress_prefit_corners=True)
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
-            regions = _replace_leaf(
-                regions,
-                target.id,
-                lambda region: region.with_current(
-                    shape,
-                    footprint=to_polygon(shape),
-                    diagnostics={"geometry": {"explicit": "path"}},
-                ),
-            )
         elif name == "fit_primitive":
             targets = _targets(regions)
             target = targets[op["target"]]
@@ -2197,20 +2191,6 @@ def _align(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> Drawing
             diagnostics={"align": {"reference": reference.id, "axes": tuple(sorted(axes))}},
         ),
     )
-
-
-def _fit_target_path(target: _Target, *, settings: ActionSettings) -> Shape:
-    """Project typed numeric fits into the temporary working-region scene."""
-    paths = path_fitting.fit_raster_paths(
-        target.region.raster, region_id=target.id, settings=settings,
-    )
-    params: dict[str, object] = {
-        "d": " ".join(path.to_svg_d() for path in paths),
-        "path_ids": tuple(path.path.id for path in paths),
-    }
-    if len(paths) > 1:
-        params["fill_rule"] = "evenodd"
-    return Shape("path", params)
 
 
 def _path_shape(

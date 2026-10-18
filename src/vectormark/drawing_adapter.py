@@ -7,7 +7,7 @@ footprints. This module is the only sanctioned projection across that seam.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 from .candidate import (
@@ -17,6 +17,7 @@ from .candidate import (
     RasterFill as LegacyRasterFill,
 )
 from .drawing import Canvas, Drawing, DrawingRegion
+from .fit import Shape
 from .drawing_fill import (
     FlatFill,
     GradientStop,
@@ -44,6 +45,90 @@ from .path_geometry import (
 from .optimizer.corners import rebind_prefit_corner_diagnostics, source_ordered_corner_diagnostics
 from .optimizer.vector_region import VectorRegion
 from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
+
+
+def replace_working_region(
+    regions: Sequence[VectorRegion], target_region_id: str,
+    replacement: Callable[[VectorRegion], VectorRegion],
+) -> tuple[VectorRegion, ...]:
+    """Replace exactly one addressed working node without changing siblings."""
+    matched = 0
+    def visit(region: VectorRegion) -> VectorRegion:
+        nonlocal matched
+        if region.drawing_id == target_region_id:
+            matched += 1
+            return replacement(region)
+        if region.is_leaf:
+            return region
+        children = tuple(visit(child) for child in region.children)
+        return region if children == region.children else region.with_children(children)
+    result = tuple(visit(region) for region in regions)
+    if matched != 1:
+        raise ValueError(f'drawing region target is absent or ambiguous: {target_region_id!r}')
+    return result
+
+
+def shape_from_region_geometry(region: DrawingRegion, metadata: Mapping[str, object]) -> Shape:
+    """Project one concrete canonical leaf into the temporary Shape vocabulary."""
+    from .optimizer.automatic_replay import shape_from_primitive_geometry
+    geometry = region.geometry
+    if isinstance(geometry, PrimitiveGeometry):
+        shape = shape_from_primitive_geometry(geometry)
+        return Shape(shape.kind, {**metadata, **shape.params})
+    if not isinstance(geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+        raise ValueError('selected leaf requires concrete primitive or path geometry')
+    return Shape('path', {**metadata, 'd': geometry.to_svg_d(), 'canonical_path_geometry': geometry})
+
+
+def apply_region_geometry(
+    selected: DrawingRegion, regions: Sequence[VectorRegion], *,
+    shape_metadata: Mapping[str, Mapping[str, object]] | None = None,
+    ingress_prefit_corners: bool = False,
+) -> tuple[VectorRegion, ...]:
+    """Apply a canonical selection in the shared clone/topology transaction.
+
+    Fresh numeric fits still need the existing pre-fit provenance translation;
+    retained selections instead carry their exact canonical annotations.
+    """
+    from .optimizer.vector_region import to_polygon
+    from .optimizer.symmetry_materialize import materialize_self_symmetry
+    from .optimizer.topology import normalize_retained_topology
+    from .path_topology import component_paths
+    metadata = shape_metadata or {}
+    prepared = normalize_retained_topology(materialize_self_symmetry(regions))
+    if selected.is_leaf:
+        shape = shape_from_region_geometry(selected, metadata.get(selected.id, {}))
+        if ingress_prefit_corners and shape.kind == 'path':
+            paths = component_paths(selected.geometry)
+            params = {key: value for key, value in shape.params.items() if key != 'canonical_path_geometry'}
+            shape = Shape('path', {**params, 'path_ids': tuple(path.path.id for path in paths),
+                                  'fill_rule': 'evenodd'})
+    else:
+        all_paths = tuple(path for leaf in selected.leaves() for path in component_paths(leaf.geometry))
+        paths = {path.path.id: path for path in all_paths}
+        topology = selected.diagnostics.get('topology', {})
+        source_order = tuple(topology.get('source_path_ids', tuple(paths)))
+        retired = set(topology.get('retired_path_ids', ()))
+        if (len(paths) != len(all_paths) or len(set(source_order)) != len(source_order)
+                or not set(paths).issubset(source_order)
+                or not (set(source_order) - set(paths)).issubset(retired)
+                or set(paths) & retired):
+            raise ValueError('selected component path ownership is inconsistent')
+        order = tuple(key for key in source_order if key in paths)
+        shape = Shape('path', {'d': ' '.join(paths[key].to_svg_d() for key in order),
+                               'path_ids': order, 'fill_rule': 'evenodd'})
+    result = normalize_retained_topology(replace_working_region(prepared, selected.id,
+        lambda region: region.with_current(shape, footprint=to_polygon(shape), diagnostics=selected.diagnostics)),
+        component_path_orders={selected.id: source_order} if selected.is_branch else None)
+    if selected.is_branch and not ingress_prefit_corners:
+        for leaf in selected.leaves():
+            shape = shape_from_region_geometry(leaf, metadata.get(leaf.id, {}))
+            result = replace_working_region(result, leaf.id,
+                lambda region, leaf=leaf, shape=shape: region.with_current(
+                    shape, footprint=to_polygon(shape), diagnostics=leaf.diagnostics))
+        result = replace_working_region(result, selected.id,
+            lambda region: region.with_diagnostics(selected.diagnostics))
+    return result
 
 
 def vector_region_address_index(
