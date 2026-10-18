@@ -66,7 +66,6 @@ def replace_working_region(
 
 def shape_from_region_geometry(region: DrawingRegion, metadata: Mapping[str, object]) -> Shape:
     """Project one concrete canonical leaf into the temporary Shape vocabulary."""
-    from .optimizer.automatic_replay import shape_from_primitive_geometry
     geometry = region.geometry
     if isinstance(geometry, PrimitiveGeometry):
         shape = shape_from_primitive_geometry(geometry)
@@ -74,6 +73,81 @@ def shape_from_region_geometry(region: DrawingRegion, metadata: Mapping[str, obj
     if not isinstance(geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
         raise ValueError('selected leaf requires concrete primitive or path geometry')
     return Shape('path', {**metadata, 'd': geometry.to_svg_d(), 'canonical_path_geometry': geometry})
+
+
+def primitive_geometry_from_shape(shape: Shape) -> PrimitiveGeometry:
+    """Decode a working primitive at the canonical boundary, without fitting."""
+    params = shape.params
+    if shape.kind == "circle":
+        return PrimitiveGeometry(CirclePrimitive((params["cx"], params["cy"]), params["r"]))
+    if shape.kind == "ellipse":
+        return PrimitiveGeometry(EllipsePrimitive(
+            (params["cx"], params["cy"]), params["rx"], params["ry"]
+        ))
+    if shape.kind == "rect":
+        origin = (params["x"], params["y"])
+        if "rx" in params or "ry" in params:
+            return PrimitiveGeometry(RoundedRectanglePrimitive(
+                origin, params["w"], params["h"],
+                params.get("rx", params.get("ry", 0.0)),
+                params.get("ry", params.get("rx", 0.0)),
+            ))
+        return PrimitiveGeometry(RectanglePrimitive(origin, params["w"], params["h"]))
+    if shape.kind == "polygon":
+        return PrimitiveGeometry(PolygonPrimitive(tuple(tuple(point) for point in params["points"])))
+    raise TypeError(f"automatic primitive intent requires a typed primitive, got {shape.kind!r}")
+
+
+def shape_from_primitive_geometry(geometry: PrimitiveGeometry) -> Shape:
+    """Project selected numeric primitive values; never invoke recognition."""
+    primitive = geometry.primitive
+    if isinstance(primitive, CirclePrimitive):
+        return Shape("circle", {"cx": primitive.center[0], "cy": primitive.center[1], "r": primitive.radius})
+    if isinstance(primitive, EllipsePrimitive):
+        return Shape("ellipse", {"cx": primitive.center[0], "cy": primitive.center[1],
+                                 "rx": primitive.radius_x, "ry": primitive.radius_y})
+    if isinstance(primitive, RoundedRectanglePrimitive):
+        return Shape("rect", {"x": primitive.origin[0], "y": primitive.origin[1],
+                              "w": primitive.width, "h": primitive.height,
+                              "rx": primitive.radius_x, "ry": primitive.radius_y})
+    if isinstance(primitive, RectanglePrimitive):
+        return Shape("rect", {"x": primitive.origin[0], "y": primitive.origin[1],
+                              "w": primitive.width, "h": primitive.height})
+    if isinstance(primitive, PolygonPrimitive):
+        return Shape("polygon", {"points": tuple(primitive.vertices)})
+    raise TypeError(f"unsupported typed primitive: {type(primitive).__name__}")
+
+
+def publish_primitive_geometry(
+    target: VectorRegion, geometry: PrimitiveGeometry, *,
+    diagnostics: Mapping[str, object] | None = None,
+) -> VectorRegion:
+    """Publish already-selected geometry while retaining source and paint evidence."""
+    from .optimizer.vector_region import to_polygon
+    shape = shape_from_primitive_geometry(geometry)
+    return target.with_current(shape, footprint=to_polygon(shape), diagnostics=diagnostics)
+
+
+def restore_corner_annotations(
+    regions: Sequence[VectorRegion], *, target_region_id: str,
+    annotated: PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry,
+) -> tuple[VectorRegion, ...]:
+    """Carry anchors across exact downstream topology without rewriting SVG values."""
+    from .drawing_corner_actions import rebind_corner_annotations
+    from .optimizer.vector_region import to_polygon
+
+    def restore(target: VectorRegion) -> VectorRegion:
+        if target.current is None or target.current.kind != "path":
+            raise ValueError("corner downstream replay target is not a path")
+        params = dict(target.current.params)
+        parsed = geometry_from_svg_d(str(params.get("d", "")), region_id=target_region_id,
+            fill_rule="evenodd" if params.get("fill_rule") == "evenodd" else "nonzero",
+            path_ids=params.get("path_ids"), defer_overlaps=True)
+        params["canonical_path_geometry"] = rebind_corner_annotations(parsed, annotated)
+        shape = Shape("path", params)
+        return target.with_current(shape, footprint=to_polygon(shape))
+
+    return replace_working_region(regions, target_region_id, restore)
 
 
 def apply_region_geometry(
@@ -396,27 +470,8 @@ def _geometry(kind: str, params: Mapping[str, object], region_id: str, public_id
             return canonical
         fill_rule = "evenodd" if params.get("fill_rule") == "evenodd" else "nonzero"
         return geometry_from_svg_d(str(params["d"]), region_id=region_id, fill_rule=fill_rule, path_ids=params.get("path_ids"), defer_overlaps=True)
-    if kind == "circle":
-        return PrimitiveGeometry(CirclePrimitive((params["cx"], params["cy"]), params["r"]))
-    if kind == "ellipse":
-        return PrimitiveGeometry(
-            EllipsePrimitive((params["cx"], params["cy"]), params["rx"], params["ry"])
-        )
-    if kind == "rect":
-        origin = (params["x"], params["y"])
-        if "rx" in params or "ry" in params:
-            return PrimitiveGeometry(
-                RoundedRectanglePrimitive(
-                    origin,
-                    params["w"],
-                    params["h"],
-                    params.get("rx", params.get("ry", 0.0)),
-                    params.get("ry", params.get("rx", 0.0)),
-                )
-            )
-        return PrimitiveGeometry(RectanglePrimitive(origin, params["w"], params["h"]))
-    if kind == "polygon":
-        return PrimitiveGeometry(PolygonPrimitive(tuple(tuple(point) for point in params["points"])))
+    if kind in {"circle", "ellipse", "rect", "polygon"}:
+        return primitive_geometry_from_shape(Shape(kind, dict(params)))
     if kind == "use":
         source_id = public_ids[int(params["href_obj_id"])]
         values = tuple(float(value) for value in params.get("transform", (1, 0, 0, 1, 0, 0)))

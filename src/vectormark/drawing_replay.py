@@ -22,8 +22,7 @@ from .path_topology import component_paths
 from .drawing_adapter import (
     apply_region_geometry, drawing_from_vector_regions, vector_region_address_index,
     restore_selected_roots, working_region_evidence,
-    publish_region_update,
-    replace_working_region as _replace_target_region, shape_from_region_geometry,
+    publish_region_update, restore_corner_annotations, shape_from_region_geometry,
 )
 from .drawing_actions import (
     ActionSettings,
@@ -89,7 +88,7 @@ from .optimizer.automatic_replay import (
 )
 from .optimizer.topology import normalize_retained_topology
 from .optimizer.symmetry_materialize import materialize_self_symmetry
-from .optimizer.vector_region import VectorRegion, _parse_subpaths, to_polygon
+from .optimizer.vector_region import VectorRegion, _parse_subpaths
 from .optimizer.passes.seams import _command_id as seam_command_id
 from .optimizer.passes.seams import _path_id as seam_path_id
 from .path_geometry import AffineTransform
@@ -101,10 +100,8 @@ from .path_geometry import (
     CompoundPathGeometry,
     PathGeometryWithSymmetry,
     PrimitiveGeometry,
-    geometry_from_svg_d,
     parse_svg_paths,
 )
-from .fit import Shape
 from . import drawing_corner_actions
 from .drawing_corner_actions import displayed_corner_id as _displayed_corner_id
 
@@ -301,49 +298,6 @@ def _path_geometries(
     return ()
 
 
-def _restore_canonical_path_annotations(
-    regions: DrawingRegions,
-    *,
-    target_region_id: str,
-    annotated: PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry,
-) -> DrawingRegions:
-    """Rebind retained annotations after exact downstream path operations.
-
-    Automatic replay updates the legacy working ``Shape``.  Canonical path
-    geometry remains derived from that result; only the non-geometric anchor
-    annotations are retained from the corner replay.  Positional command IDs
-    are safe to reuse only while downstream operations preserve exact command
-    topology.
-    """
-
-    target = next(
-        leaf
-        for root in regions
-        for leaf in root.leaves()
-        if leaf.drawing_id == target_region_id
-    )
-    if target.current is None or target.current.kind != "path":
-        raise ValueError("corner downstream replay target is not a path")
-    params = dict(target.current.params)
-    path_ids = params.get("path_ids")
-    fill_rule = "evenodd" if params.get("fill_rule") == "evenodd" else "nonzero"
-    parsed = geometry_from_svg_d(
-        str(params.get("d", "")),
-        region_id=target_region_id,
-        fill_rule=fill_rule,
-        path_ids=path_ids,
-        defer_overlaps=True,
-    )
-    canonical = drawing_corner_actions.rebind_corner_annotations(parsed, annotated)
-    params["canonical_path_geometry"] = canonical
-    shape = Shape("path", params)
-    return _replace_target_region(
-        regions,
-        target_region_id,
-        lambda region: region.with_current(shape, footprint=to_polygon(shape)),
-    )
-
-
 def _execute_corner_recipe(
     application: ApplyCornerRecipeOperation,
     evidence: GeometryEvidence,
@@ -396,7 +350,7 @@ def _execute_corner_recipe(
         result = tuple(normalize_retained_topology(replay_batches(
             list(result), application.downstream_batches, masks=masks
         )))
-        result = _restore_canonical_path_annotations(
+        result = restore_corner_annotations(
             result,
             target_region_id=application.target_region_id,
             annotated=replaced,

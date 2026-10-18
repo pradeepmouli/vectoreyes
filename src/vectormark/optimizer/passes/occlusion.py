@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from ...candidate import FlatFill
+from ...drawing_adapter import primitive_geometry_from_shape
 from ...fit import Shape
 from ...occlusion import ScenePrimitive, reconstruct_scene, region_adjacency
 from ...symmetry import detect_axis
@@ -16,7 +17,6 @@ from ..automatic_replay import (
     ReconstructOcclusionOperation,
     RetainedOcclusionSource,
     draft_input_ref,
-    primitive_geometry_from_shape,
 )
 from ..framework import Proposal
 from ..gate import rasterize

@@ -12,14 +12,7 @@ import numpy as np
 from ..fit import Shape
 from ..drawing_actions import ActionSettings, OperationOrigin
 from ..immutable_value import freeze_value
-from ..path_geometry import (
-    CirclePrimitive,
-    EllipsePrimitive,
-    PolygonPrimitive,
-    PrimitiveGeometry,
-    RectanglePrimitive,
-    RoundedRectanglePrimitive,
-)
+from ..path_geometry import PrimitiveGeometry
 from ..quality import GeometryAssessment
 from ..skia_geometry import SkPath
 from .vector_region import VectorRegion, to_polygon
@@ -473,56 +466,8 @@ def draft_input_ref(obj_id: int) -> PassInputRegionRef:
     return PassInputRegionRef("", "", (int(obj_id),))
 
 
-def primitive_geometry_from_shape(shape: Shape) -> PrimitiveGeometry:
-    params = shape.params
-    if shape.kind == "circle":
-        return PrimitiveGeometry(CirclePrimitive((params["cx"], params["cy"]), params["r"]))
-    if shape.kind == "ellipse":
-        return PrimitiveGeometry(EllipsePrimitive(
-            (params["cx"], params["cy"]), params["rx"], params["ry"]
-        ))
-    if shape.kind == "rect":
-        origin = (params["x"], params["y"])
-        if "rx" in params or "ry" in params:
-            return PrimitiveGeometry(RoundedRectanglePrimitive(
-                origin,
-                params["w"],
-                params["h"],
-                params.get("rx", params.get("ry", 0.0)),
-                params.get("ry", params.get("rx", 0.0)),
-            ))
-        return PrimitiveGeometry(RectanglePrimitive(origin, params["w"], params["h"]))
-    if shape.kind == "polygon":
-        return PrimitiveGeometry(PolygonPrimitive(tuple(tuple(point) for point in params["points"])))
-    raise TypeError(f"automatic primitive intent requires a typed primitive, got {shape.kind!r}")
-
-
-def shape_from_primitive_geometry(geometry: PrimitiveGeometry) -> Shape:
-    primitive = geometry.primitive
-    if isinstance(primitive, CirclePrimitive):
-        return Shape("circle", {"cx": primitive.center[0], "cy": primitive.center[1], "r": primitive.radius})
-    if isinstance(primitive, EllipsePrimitive):
-        return Shape("ellipse", {
-            "cx": primitive.center[0], "cy": primitive.center[1],
-            "rx": primitive.radius_x, "ry": primitive.radius_y,
-        })
-    if isinstance(primitive, RoundedRectanglePrimitive):
-        return Shape("rect", {
-            "x": primitive.origin[0], "y": primitive.origin[1],
-            "w": primitive.width, "h": primitive.height,
-            "rx": primitive.radius_x, "ry": primitive.radius_y,
-        })
-    if isinstance(primitive, RectanglePrimitive):
-        return Shape("rect", {
-            "x": primitive.origin[0], "y": primitive.origin[1],
-            "w": primitive.width, "h": primitive.height,
-        })
-    if isinstance(primitive, PolygonPrimitive):
-        return Shape("polygon", {"points": tuple(primitive.vertices)})
-    raise TypeError(f"unsupported typed primitive: {type(primitive).__name__}")
-
-
 def primitive_intent(obj_id: int, primitive: Shape, *, epsilon: float) -> AutomaticIntent:
+    from ..drawing_adapter import primitive_geometry_from_shape
     target = draft_input_ref(obj_id)
     return AutomaticIntent(
         operation_id="",
@@ -852,9 +797,9 @@ def _execute_action(
     resolver: RegionResolver,
 ) -> list[VectorRegion]:
     if isinstance(action, FitPrimitiveOperation):
+        from ..drawing_adapter import publish_primitive_geometry
         target = resolver.resolve(action.target)
-        primitive = shape_from_primitive_geometry(action.primitive)
-        return [target.with_current(primitive, footprint=to_polygon(primitive))]
+        return [publish_primitive_geometry(target, action.primitive)]
     if isinstance(action, NormalizeRetainedTopologyOperation):
         from .passes.compound import topology_path_correspondence
         from .topology import normalize_retained_topology
@@ -970,6 +915,7 @@ def _execute_action(
             cubic=action.cubic,
         )
     if isinstance(action, ReconstructOcclusionOperation):
+        from ..drawing_adapter import shape_from_primitive_geometry
         from ..candidate import FlatFill
         from ..occlusion import ScenePrimitive, _retained_region_shape, intersection_lens_d
         from ..types import Region

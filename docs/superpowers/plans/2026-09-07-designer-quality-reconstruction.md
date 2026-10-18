@@ -870,6 +870,32 @@ full **1,122-test suite** pass (951 warnings, 140.28s); diff check is clean.
 Optional render-DeltaE scoring remains unavailable without resvg-py. No native
 build, deployment, push or visual acceptance is claimed.
 
+#### Consolidated publication boundary — 2026-10-18
+
+Corner replay no longer constructs working `Shape` objects or calculates their
+footprints. `drawing_adapter.restore_corner_annotations` performs that boundary
+translation and delegates exact command-topology checks to the canonical corner
+operation. Downstream raw SVG coordinates are retained rather than serialized
+again. The shared replacement guard now reports an absent or ambiguous target
+explicitly instead of leaking a failed target lookup.
+
+Primitive decoding and projection now live only in `drawing_adapter`.
+`publish_primitive_geometry` is shared by manual primitive fitting and automatic
+primitive replay; replay publishes its retained numeric result without rerunning
+recognition. Occlusion uses the same primitive conversion. The duplicate decoder
+in canonical drawing ingress and both converters in automatic replay are deleted,
+with no compatibility aliases or changes to fitting policies.
+
+This consolidates publication, not all automatic execution. Clone assignment,
+symmetry reconstruction, seam constraints, simplification and occlusion still
+have working-region execution boundaries; their migration must preserve each
+retained intent's input/output semantics rather than replace it with a fresh
+detector call. Global paint orchestration and source evidence also remain open.
+Verification: **81 focused tests**, **89 additional engine/topology/occlusion
+tests**, and the fresh full **1,131-test suite** pass (953 warnings, 115.82s).
+Standalone imports and diff check pass. Optional render-DeltaE scoring is still
+unavailable without resvg-py. No native build, deployment or visual acceptance.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

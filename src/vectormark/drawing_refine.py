@@ -19,7 +19,7 @@ from .components import decompose_components
 from .contour import region_contours
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import apply_region_geometry, publish_region_update, drawing_from_vector_regions, working_fill_from_spec as _fill
+from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill
 from .drawing_fill import serialize_fill
 from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
 from .path_fit_evidence import AutomaticFitEvidence
@@ -33,7 +33,6 @@ from .optimizer.automatic_replay import (
     AutomaticActionOutcome,
     ReplayBatch,
     optimize_with_intent,
-    shape_from_primitive_geometry,
 )
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
 from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, relative_source_path, resolve_source_path
@@ -1022,15 +1021,13 @@ def refine(
                     drawing.region(target.id), action,
                     raster=target.region.raster, settings=settings,
                 )
-                shape = shape_from_primitive_geometry(updated.geometry)
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
             regions = _replace_leaf(
                 regions,
                 target.id,
-                lambda region: region.with_current(
-                    shape,
-                    footprint=to_polygon(shape),
+                lambda region: publish_primitive_geometry(
+                    region, updated.geometry,
                     diagnostics={"geometry": updated.diagnostics["geometry"]},
                 ),
             )
