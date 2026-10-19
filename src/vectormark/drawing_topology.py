@@ -114,6 +114,7 @@ def normalize_retained_topology(
     regions: Sequence[VectorRegion], *, allow_external: bool = False,
     defer_overlaps: bool = False,
     component_path_orders: Mapping[str, Sequence[str]] | None = None,
+    normalize_components: bool = True,
 ) -> tuple[VectorRegion, ...]:
     """Publish real component children, exact references and identity correspondence.
 
@@ -121,8 +122,13 @@ def normalize_retained_topology(
     failure is atomic and new child IDs cannot capture an unrelated clone.
     Retained replay may supply original source-path slots after redundant paths
     have been retired, preserving component IDs without recreating that geometry.
+    ``normalize_components=False`` refreshes resolved clone/branch geometry only,
+    allowing paint invalidation before the existing component-publication step.
     """
-    from .drawing_adapter import transform_working_shape
+    from .drawing_adapter import transform_working_shape, vector_region_address_index
+    from .geometry_native import affine_tuple
+    from .path_geometry import CloneGeometry
+    from .skia_geometry import unary_union
     from .fit import Shape
     from .path_geometry import parse_svg_paths
     from .optimizer.gate import rasterize
@@ -155,7 +161,22 @@ def normalize_retained_topology(
             children = tuple(visit((*path, child.id)) for child in region.children)
             if any(a is not b for a, b in zip(children, region.children, strict=True)):
                 result = region.with_children(children)
-        elif region.current.kind == "path":
+                result = replace(result, footprint=unary_union([child.footprint for child in children]))
+        elif isinstance(region.current.params.get("canonical_clone_geometry"), CloneGeometry):
+            geometry = region.current.params["canonical_clone_geometry"]
+            sources = {address: ancestry for ancestry, address in vector_region_address_index(regions).items()}
+            source_path = sources.get(geometry.source_region_id)
+            if source_path is None:
+                if not allow_external:
+                    raise ValueError("clone source is not retained")
+            else:
+                source = visit(source_path)
+                footprint = unary_union([source.footprint.affine_transform(affine_tuple(transform))
+                    for transform in geometry.transforms])
+                if footprint.to_svg_d() != region.footprint.to_svg_d():
+                    result = region.with_current(Shape("path", {**region.current.params,
+                        "d": footprint.to_svg_d()}), footprint=footprint)
+        elif region.current.kind == "path" and normalize_components:
             shape = region.current
             d = str(shape.params["d"])
             address = region.drawing_id or "-".join(str(part) for part in path)
@@ -197,6 +218,15 @@ def normalize_retained_topology(
                     child_address = selected.id
                     output_shape = Shape("path", {**shape.params, "d": output_d, "path_ids": output_ids,
                                                    "fill_rule": "evenodd" if len(indices) > 1 else "nonzero"})
+                    if (cached := shape.params.get("canonical_path_geometry")) is not None:
+                        from .drawing_corner_actions import rebind_corner_annotations
+                        from .path_topology import replace_component_paths
+                        cached_paths = {item.path.id: item for item in component_paths(cached)}
+                        local_paths = tuple(rebind_corner_annotations(item, cached_paths[item.path.id])
+                            for item in component_paths(component))
+                        local_geometry = replace_component_paths(component, local_paths)
+                        output_shape = Shape("path", {**output_shape.params,
+                            "canonical_path_geometry": local_geometry})
                     footprint = to_polygon(output_shape)
                     diagnostics = {**region.diagnostics, "corners": _component_corners(
                         region.diagnostics.get("corners"), d, output_d, indices,
@@ -230,7 +260,7 @@ def normalize_retained_topology(
                 built[path] = result
                 return result
             source = visit(source_path)
-            if source.is_branch:
+            if source.is_branch and normalize_components:
                 if not prior[source_path].is_leaf or source.diagnostics.get("topology", {}).get("operation") != "retained_topology":
                     raise ValueError("clone source requires retained concrete geometry")
                 children = []
@@ -259,8 +289,9 @@ def normalize_retained_topology(
                 # Freeze the pre-normalization scoped binding before new local
                 # component IDs can shadow an otherwise unique external ID.
                 params = {**region.current.params, "href_region_path": relative_source_path(path, source_path)}
-                if params != region.current.params:
-                    result = region.with_current(Shape("use", params), footprint=region.footprint)
+                footprint = source.footprint.affine_transform(tuple(params["transform"]))
+                if params != region.current.params or footprint.to_svg_d() != region.footprint.to_svg_d():
+                    result = region.with_current(Shape("use", params), footprint=footprint)
         active.remove(path)
         built[path] = result
         return result

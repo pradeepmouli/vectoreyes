@@ -33,6 +33,53 @@ def _trace():
     return TraceResult(48, 24, TraceOptions(), (), "")
 
 
+def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
+    from vectormark.drawing_engine import RasterImage
+    from vectormark.drawing_actions import ActionSettings
+    from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_geometry_evidence, build_paint_evidence
+    from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
+
+    source = RasterImage(48, 24, 'rgb8', bytes([255]) * 48 * 24 * 3)
+    root = _region('M0 0 L10 0 L10 10 L0 10 Z M2 2 L4 2 L4 4 L2 4 Z')
+    reference = VectorRegion.from_shape(id=2,
+        shape=Shape('path', {'d': 'M20 0 L20 10 L24 3 L24 1 Z'}),
+        fill=FlatFill('#123456'), z=1, raster=np.zeros((24, 48), bool), drawing_id='r2')
+    evidence = build_geometry_evidence(kind='source', trace=_trace(), geometry_source=source, trace_roots=(root, reference))
+    paint = build_paint_evidence(source)
+    base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
+        ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+    plan = parse_plan({'version': 'vectormark.plan.v1', 'drawing_id': 'drw_test', 'base_version': 'v0', 'ops': [
+        {'op': 'update_geometry', 'target': 'r1', 'ops': [
+            {'op': 'set_parallel', 'target': 'r1.p1.c1', 'reference': 'r2.p0.c1', 'distance': -2},
+            {'op': 'snap', 'target': 'r1.p1.c2', 'reference': 'r2.p0.c2'},
+            {'op': 'snap', 'target': 'r1.p1.c3', 'reference': 'r2.p0.c3'},
+        ]},
+    ]})
+    recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
+    replay = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
+    actual = next(region for region in replay.regions if region.drawing_id == 'r1')
+    assert actual.is_branch and len(actual.children) == 2
+    for child in actual.children:
+        cache = child.current.params['canonical_path_geometry']
+        assert cache.to_svg_d() == child.current.params['d']
+        assert tuple(path.path.id for path in component_paths(cache)) == child.current.params['path_ids']
+
+
+def test_redundant_path_retirement_projects_only_surviving_canonical_cache():
+    from vectormark.path_geometry import CompoundPathGeometry
+
+    paths = parse_svg_paths(f'{OUTER} {HOLE}', region_id='r1')
+    cache = CompoundPathGeometry(paths, 'nonzero', 'retained input')
+    d = cache.to_svg_d()
+    root = _region(d, fill_rule='nonzero')
+    root = root.with_current(Shape('path', {'d': d, 'fill_rule': 'nonzero',
+        'canonical_path_geometry': cache}), footprint=root.footprint)
+    result = normalize_retained_topology((root,))
+    actual = result[0].current.params['canonical_path_geometry']
+    assert len(component_paths(actual)) == 1
+    assert actual.to_svg_d() == result[0].current.params['d']
+
+
 def test_hole_first_keeps_original_path_identity_but_corrects_topology():
     geometry = geometry_from_svg_d(f"{HOLE} {OUTER}", region_id="r1", fill_rule="evenodd")
     assert isinstance(geometry, PathGeometryWithCutouts)

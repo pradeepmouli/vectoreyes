@@ -17,6 +17,51 @@ def fixture():
     return Drawing('drw_test', Canvas(48, 48), (region, reference))
 
 
+@pytest.mark.parametrize('ops,expected', [
+    ([{'op': 'snap', 'target': 'r1.p0.c2', 'reference': 'r2.p0.c1'},
+      {'op': 'align', 'target': 'r1.p0.c2', 'reference': 'r2.p0.c3', 'axes': ['x']}], (20, 20)),
+    ([{'op': 'align', 'target': 'r1.p0.c2', 'reference': 'r2.p0.c1', 'axes': ['x']},
+      {'op': 'align', 'target': 'r1.p0.c2', 'reference': 'r2.p0.c3', 'axes': ['y']}], (30, 30)),
+    ([{'op': 'snap', 'target': 'r1.p0.c1', 'reference': 'r2.p0.c1'},
+      {'op': 'snap', 'target': 'r1.p0.c2', 'reference': 'r1.p0.c1'}], (30, 20)),
+])
+def test_direct_actions_execute_in_order_and_read_current_references(ops, expected):
+    from vectormark.path_operations import apply_region_path_operations
+
+    drawing = fixture()
+    action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': ops})
+    result, _ = apply_region_path_operations(drawing, action,
+        settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+    assert result.geometry.path.commands[2].end == expected
+    assert drawing.region('r1').geometry.path.commands[2].end == (8, 1)
+
+
+def test_ordered_action_rebinds_original_command_after_removal():
+    from vectormark.path_operations import apply_region_path_operations
+
+    action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': [
+        {'op': 'remove', 'target': 'r1.p0.c1'},
+        {'op': 'snap', 'target': 'r1.p0.c3', 'reference': 'r2.p0.c1'},
+    ]})
+    result, receipt = apply_region_path_operations(fixture(), action,
+        settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+    assert result.geometry.path.commands[2].end == (30, 20)
+    assert receipt['path_command_lineage']['commands']['r1.p0.c3'] == 'r1.p0.c2'
+    assert 'r1.p0.c1' not in receipt['path_command_lineage']['commands']
+
+
+def test_ordered_action_cannot_retarget_a_retired_reference_by_ordinal():
+    from vectormark.path_operations import apply_region_path_operations
+
+    action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': [
+        {'op': 'remove', 'target': 'r1.p0.c1'},
+        {'op': 'snap', 'target': 'r1.p0.c3', 'reference': 'r1.p0.c1'},
+    ]})
+    with pytest.raises(ValueError, match='retired by an earlier operation'):
+        apply_region_path_operations(fixture(), action,
+            settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+
+
 @pytest.mark.parametrize('op', [
     {'op': 'remove', 'target': 'r1.p0.c2'},
     {'op': 'snap', 'target': 'r1.p0.c2', 'reference': 'r2.p0.c1'},

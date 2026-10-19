@@ -1118,6 +1118,41 @@ Verification: **148 focused tests** and the fresh full **1,177-test suite** pass
 at its actual partition owner. Targeted unused-import/undefined-name lint,
 standalone partition/refine/replay/engine/MCP imports and diff check pass.
 
+#### Engine branch review fix pass — 2026-10-18
+
+One fresh-context read-only review of `2481aef..efe898f` found three Important
+correctness defects, all independently reproduced before production edits:
+
+- Source edits did not refresh dependent clone footprints. Resolved single- and
+  multi-transform clone geometry and changed branch footprints now refresh before
+  paint invalidation. Component publication remains after paint to preserve merge
+  fill inheritance. Nested-source, later-split and replay checks cover the fix.
+- Direct path programs grouped actions by kind instead of applying submitted
+  order. Execution now composes ordered single steps, current reference values,
+  exact version-scoped command bindings and lineage. Retired references reject
+  rather than accidentally selecting another command at the same ordinal.
+- Component splitting retained a whole-region canonical path cache. Each child
+  now receives only its own component paths and exact-bound annotations; both
+  cutout-to-component edits and redundant-path retirement are covered.
+
+Multi-transform clone tests also exposed duplicate typed clone data in generic
+metadata and inappropriate path-only corner binding; canonical clone values now
+stay in canonical geometry rather than being copied into that metadata.
+
+The review was risk-based, not exhaustive coverage of all 170 changed files.
+Numerical quality, all corner/lineage combinations, MCP security/transport, UI,
+packaging, cutout-export behavior, native parity, performance and visual acceptance
+are not certified. No Critical findings or deferred minors were reported. The
+private working-record boundary and later plan slices remain explicitly open.
+Full fix-pass validation follows; no deployment is authorized by this review.
+
+Verification: all three findings have behavioral RED-to-GREEN regressions;
+**203 focused tests** and the fresh full **1,189-test suite** pass (953 warnings,
+131.34s). Changed execution modules/tests pass targeted unused-import and
+undefined-name checks; replay's six existing unused imports remain outside this
+fix. Standalone engine/replay/MCP imports and diff check pass. No native rebuild,
+performance or visual certification is implied; resvg-py remains unavailable.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

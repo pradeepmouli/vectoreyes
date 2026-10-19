@@ -680,7 +680,8 @@ def _retain_selected_outcome(
             target = native[leaf.id]
             assert target.current is not None
             core_params = {} if isinstance(leaf.geometry, CloneGeometry) else shape_from_region_geometry(leaf, {}).params
-            metadata[leaf.id] = {key: value for key, value in target.current.params.items() if key not in core_params}
+            metadata[leaf.id] = {key: value for key, value in target.current.params.items()
+                if key not in core_params and key != "canonical_clone_geometry"}
     outcome = SelectedOperationOutcome(
         dependency_revision=operation_outcome_dependencies(
             operation, evidence=evidence, paint=paint, upstream=upstream,

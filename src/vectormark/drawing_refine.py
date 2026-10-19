@@ -476,6 +476,8 @@ def refine(
         elif name == "set_z_order":
             z_order = action
 
+        # Refresh resolved clone and branch footprints before paint invalidation.
+        regions = normalize_retained_topology(regions, normalize_components=False)
         # Geometry is authoritative.  A changed leaf must not retain a fill
         # fitted to its earlier mask; clear it, then run the one shared fill
         # pass against its new vector footprint.  An explicit ``set_fill`` is
@@ -484,7 +486,6 @@ def refine(
         if rgb is not None and name not in {"set_fill", "set_z_order"}:
             regions = refill_changed_regions_from_source(before, regions, rgb)
         regions = normalize_retained_topology(regions)
-
     if z_order is not None:
         drawing = drawing_from_vector_regions(
             plan.drawing_id, width=trace.width, height=trace.height, regions=regions,

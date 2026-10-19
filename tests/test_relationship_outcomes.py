@@ -26,6 +26,57 @@ def evidence_fixture():
         evidence.engine_revision, ActionSettings(epsilon=1, max_error=1.5, fit_strategy='quadratic'))
 
 
+@pytest.mark.parametrize('nested', [False, True])
+@pytest.mark.parametrize('transforms,left', [([{'tx': 8}], 9), ([{'tx': 8}, {'tx': 4}], 5)])
+def test_source_edit_refreshes_clone_footprint_before_later_partition_and_replay(nested, transforms, left):
+    source = RasterImage(16, 16, 'rgb8', bytes([255]) * 16 * 16 * 3)
+    trace = TraceResult(16, 16, TraceOptions(), (), '<svg/>')
+    roots = tuple(VectorRegion.from_shape(id=index,
+        shape=Shape('rect', dict(x=x, y=y, w=4., h=4.)), fill=FlatFill('#112233'),
+        z=index, raster=np.ones((16, 16), dtype=bool), drawing_id=f'r{index}',
+        source_regions=(f'r{index}',)) for index, x, y in ((1, 1., 1.), (2, 9., 1.), (3, 1., 9.)))
+    source_id = 'r1-1' if nested else 'r1'
+    if nested:
+        roots = (VectorRegion.branch(id=10, children=(replace(roots[0], drawing_id=source_id),), drawing_id='r1'), *roots[1:])
+    evidence = build_geometry_evidence(kind='source', trace=trace, geometry_source=source, trace_roots=roots)
+    paint = build_paint_evidence(source)
+    base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
+        ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0', ops=[
+        {'op': 'assign_clone', 'source': source_id, 'target': 'r2', 'transforms': transforms},
+        {'op': 'align', 'target': source_id, 'reference': 'r3', 'axes': ['y']},
+    ])
+    recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
+    replay = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
+    clone = next(region for region in replay.regions if region.drawing_id == 'r2')
+    assert clone.footprint.bounds == (left, 9, 13, 13)
+    assert next(region for region in replay.regions if region.drawing_id == 'r1').footprint.bounds == (1, 9, 5, 13)
+    split = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v1', ops=[
+        {'op': 'split', 'target': 'r2', 'divider': {'type': 'line', 'points': [(0, 11), (16, 11)]}},
+    ])
+    revised = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=recipe, plan=split).recipe
+    result = propose_effective_recipe(evidence=evidence, paint=paint, recipe=revised, drawing_id='drw_test')
+    assert next(region for region in result.regions if region.drawing_id == 'r2').is_branch
+
+
+def test_clone_geometry_is_refreshed_before_paint_invalidation():
+    from vectormark.drawing_refine import refine
+
+    roots = tuple(VectorRegion.from_shape(id=index,
+        shape=Shape('rect', dict(x=x, y=y, w=4., h=4.)), fill=FlatFill('#112233'),
+        z=index, raster=np.ones((16, 16), dtype=bool), drawing_id=f'r{index}')
+        for index, x, y in ((1, 1., 1.), (2, 9., 1.), (3, 1., 9.)))
+    image = np.zeros((16, 16, 3), dtype=np.uint8)
+    image[:8, :, 0] = 255
+    image[8:, :, 1] = 255
+    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0', ops=[
+        {'op': 'assign_clone', 'source': 'r1', 'target': 'r2', 'transforms': [{'tx': 8}]},
+        {'op': 'align', 'target': 'r1', 'reference': 'r3', 'axes': ['y']},
+    ])
+    actual = refine(TraceResult(16, 16, TraceOptions(), (), '<svg/>'), roots, plan, rgb=image)
+    assert next(region for region in actual if region.drawing_id == 'r2').fill.hex.lower() == '#00ff00'
+
+
 @pytest.mark.parametrize('operation', [
     {'op': 'assign_clone', 'source': 'r1', 'target': 'r2', 'transforms': [{'tx': 8}]},
     {'op': 'align', 'target': 'r2', 'reference': 'r1', 'axes': ['y']},

@@ -59,6 +59,72 @@ def apply_region_path_operations(
     source_text: str | None = None,
     previous_lineage: Mapping[str, object] | None = None,
 ) -> tuple[DrawingRegion, Mapping[str, object]]:
+    """Execute the ordered program, binding version-scoped selections per step."""
+    from .drawing_relationships import replace_region
+
+    if len(action.ops) <= 1:
+        return _apply_single_path_operation(drawing, action, settings=settings,
+            fit_sources=fit_sources, source_text=source_text, previous_lineage=previous_lineage)
+    validate_plan(DrawingPlan(version="vectormark.plan.v1", drawing_id=drawing.drawing_id,
+        base_version="v0", ops=(action,)), drawing)
+    original = drawing.region(action.target)
+    if not isinstance(original.geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+        raise ValueError("direct path operations require a concrete path-region leaf")
+    bindings = {command.id: command.id for command in _command_stream(original.geometry)}
+    input_ids = frozenset(bindings)
+    metrics: dict[str, object] = {}
+    current = drawing
+
+    def bind(identity: str) -> str:
+        if identity not in input_ids:
+            return identity
+        if identity not in bindings:
+            raise ValueError(f"path command {identity!r} was retired by an earlier operation")
+        return bindings[identity]
+
+    for operation in action.ops:
+        changes: dict[str, object] = {}
+        for field in ("target", "reference", "between"):
+            value = getattr(operation, field, None)
+            if isinstance(value, str):
+                changes[field] = bind(value)
+            elif isinstance(value, tuple):
+                changes[field] = tuple(bind(identity) for identity in value)
+        step = action.model_copy(update={"ops": (operation.model_copy(update=changes),)})
+        sources = None if fit_sources is None else {
+            bindings.get(identity, identity): points for identity, points in fit_sources.items()
+            if identity not in input_ids or identity in bindings
+        }
+        updated, receipt = _apply_single_path_operation(current, step, settings=settings,
+            fit_sources=sources)
+        immediate = receipt["path_command_lineage"]["commands"]
+        bindings = {old: immediate[intermediate] for old, intermediate in bindings.items()
+            if intermediate in immediate}
+        metrics.update(receipt.get("fit_acceptance", {}))
+        current = replace_region(current, updated)
+    result = current.region(action.target)
+    lineage = bindings
+    input_d = source_text if source_text is not None else original.geometry.to_svg_d()
+    if previous_lineage is not None:
+        input_d = str(previous_lineage["input_d"])
+        lineage = {old: bindings[intermediate] for old, intermediate in previous_lineage["commands"].items()
+            if intermediate in bindings}
+    final = dict(receipt)
+    final["path_command_lineage"] = {
+        "input_d": input_d, "output_d": result.geometry.to_svg_d(), "commands": lineage,
+    }
+    if metrics:
+        final["fit_acceptance"] = metrics
+    result = replace(result, diagnostics={**result.diagnostics, "fit_acceptance": metrics})
+    return result, freeze_value(final)
+
+
+def _apply_single_path_operation(
+    drawing: Drawing, action: UpdateGeometryAction, *, settings: ActionSettings,
+    fit_sources: Mapping[str, np.ndarray] | None = None,
+    source_text: str | None = None,
+    previous_lineage: Mapping[str, object] | None = None,
+) -> tuple[DrawingRegion, Mapping[str, object]]:
     """Apply one direct stage to canonical geometry and return its binding receipt.
 
     The engine chooses original-material spans. This operation does not own

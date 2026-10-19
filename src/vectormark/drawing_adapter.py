@@ -639,6 +639,7 @@ def drawing_from_vector_regions(
         if (
             region.current.kind == "path"
             and "canonical_path_geometry" not in region.current.params
+            and isinstance(geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry))
         ):
             geometry, diagnostics["corners"] = _ingress_corners(
                 geometry,
