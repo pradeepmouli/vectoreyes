@@ -6,7 +6,6 @@ reports are derived artifacts, never a second editable scene representation.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 
@@ -15,13 +14,12 @@ import numpy as np
 from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill, normalize_drawing_addresses, root_region_address, rebind_working_corner_provenance, restore_working_root_metadata
+from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill, normalize_drawing_addresses, root_region_address, rebind_working_corner_provenance, restore_working_root_metadata, WorkingLeafTarget, working_leaf_targets, replace_working_leaf
 from .drawing_fill import serialize_fill
 from .drawing_trace import TraceResult, svg_path_commands
 from .emit import render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
-from .fit import Shape, _fmt
-from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath
-from .optimizer.gate import rasterize
+from .fit import Shape
+from .optimizer.vector_region import VectorRegion
 from .optimizer.automatic_replay import (
     AutomaticActionOutcome,
     ReplayBatch,
@@ -33,9 +31,7 @@ from .drawing_topology import normalize_retained_topology
 from .pipeline import Options
 from .refinement_settings import RefinementPasses
 from .drawing_paint import refill_all_regions_from_source, refill_changed_regions_from_source
-from .skia_geometry import SkPath, unary_union
-from . import drawing_region_actions, drawing_relationships, path_operations
-from .geometry_native import split_path_by_line as _split_footprint_by_line
+from . import drawing_region_actions, drawing_relationships, path_operations, drawing_partition
 
 
 DrawingRegions = tuple[VectorRegion, ...]
@@ -82,15 +78,6 @@ class RenderedDrawing:
     report: Mapping[str, object]
 
 
-@dataclass(frozen=True)
-class _Target:
-    id: str
-    root_id: str
-    region: VectorRegion
-    source_regions: frozenset[str]
-    region_path: tuple[int, ...]
-
-
 def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> RenderedDrawing:
     """Serialize retained geometry and paint; execution owns all reconstruction."""
     def validate(region: VectorRegion) -> None:
@@ -104,7 +91,7 @@ def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> Rende
             validate(child)
     for region in regions:
         validate(region)
-    targets = _targets(regions)
+    targets = working_leaf_targets(regions)
     ordered = sorted(targets.values(), key=lambda target: (target.region.z, target.region.id))
     reference_index = index_region_paths(regions)
     targets_by_path = {target.region_path: target for target in ordered}
@@ -115,7 +102,7 @@ def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> Rende
     # reusable geometry lives in an unpainted definition.  The source and each
     # clone are then independently painted instances with stable target IDs.
     clone_definition_ids: dict[str, str] = {}
-    clone_sources: dict[str, _Target] = {}
+    clone_sources: dict[str, WorkingLeafTarget] = {}
     targets_by_id = {target.id: target for target in ordered}
     for target in ordered:
         current = target.region.current
@@ -188,7 +175,7 @@ def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> Rende
 
 def drawing_summary(trace: TraceResult, regions: Sequence[VectorRegion]) -> dict[str, object]:
     """Return the compact, merged-root view agents receive after interactive trace."""
-    targets = _targets(regions)
+    targets = working_leaf_targets(regions)
     ordered = sorted(targets.values(), key=lambda target: (target.region.z, target.region.id))
     summaries: list[dict[str, object]] = []
     for target in ordered:
@@ -394,10 +381,10 @@ def refine(
                 plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
             )
         if name == "merge":
-            regions = _group_regions(regions, op)
+            regions = drawing_partition.merge_regions(regions, action)
         elif name == "split":
             try:
-                regions = _split_region(regions, op)
+                regions = drawing_partition.split_region(regions, action)
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/divider", str(error)) from error
         elif name in {"detect_primitives", "detect_symmetry", "detect_clones"}:
@@ -419,7 +406,7 @@ def refine(
                 "align": drawing_relationships.align_region}[name]
             regions = publish_region_update(execute(drawing, action), regions)
         elif name == "fit_path":
-            targets = _targets(regions)
+            targets = working_leaf_targets(regions)
             target = targets[op["target"]]
             try:
                 updated = drawing_region_actions.fit_region_path(
@@ -429,7 +416,7 @@ def refine(
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
         elif name == "fit_primitive":
-            targets = _targets(regions)
+            targets = working_leaf_targets(regions)
             target = targets[op["target"]]
             try:
                 updated = drawing_region_actions.fit_region_primitive(
@@ -438,7 +425,7 @@ def refine(
                 )
             except ValueError as error:
                 raise PlanValidationError(f"/ops/{index}/target", str(error)) from error
-            regions = _replace_leaf(
+            regions = replace_working_leaf(
                 regions,
                 target.id,
                 lambda region: publish_primitive_geometry(
@@ -460,7 +447,7 @@ def refine(
                         max_error=max_error,
                     )
                     continue
-                targets = _targets(regions)
+                targets = working_leaf_targets(regions)
                 target = targets[target_id]
                 drawing = drawing_from_vector_regions(
                     plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
@@ -485,7 +472,7 @@ def refine(
             # Public fill assignments have no affine overrides.
             # This conversion remains only until working-region paint migrates.
             fill = _fill(serialize_fill(updated.fill))
-            regions = _replace_leaf(regions, target_id, lambda region: _with_fill(region, fill))
+            regions = replace_working_leaf(regions, target_id, lambda region: _with_fill(region, fill))
         elif name == "set_z_order":
             z_order = action
 
@@ -505,7 +492,7 @@ def refine(
         ordered = drawing_region_actions.set_drawing_z_order(drawing, z_order)
         for root in ordered.regions:
             for leaf in root.leaves():
-                regions = _replace_leaf(regions, leaf.id, lambda region, z=leaf.z: _with_z(region, z))
+                regions = replace_working_leaf(regions, leaf.id, lambda region, z=leaf.z: _with_z(region, z))
     return normalize_retained_topology(normalize_drawing_addresses(regions))
 
 
@@ -589,7 +576,7 @@ def run_detection_with_intent(
         else ()
     )
     if selected_ids:
-        selected_region_ids = {_targets(regions)[selected_id].region.id for selected_id in selected_ids}
+        selected_region_ids = {working_leaf_targets(regions)[selected_id].region.id for selected_id in selected_ids}
         original_pass = pass_fn
 
         def pass_fn(objects, masks):  # type: ignore[no-redef]
@@ -641,310 +628,6 @@ def _drawing_groups(regions: Sequence[VectorRegion]) -> tuple[dict[str, object],
     return tuple(groups)
 
 
-def _targets(regions: Sequence[VectorRegion]) -> dict[str, _Target]:
-    """Derive public target handles from the region tree; do not persist an index."""
-    result: dict[str, _Target] = {}
-
-    def visit(region: VectorRegion, root_label: str, legacy_label: str, path: tuple[int, ...]) -> None:
-        if region.is_leaf:
-            label = _leaf_address(root_label, region, legacy_label)
-            if label in result:
-                raise ValueError(f"duplicate drawing region id: {label}")
-            # Target lineage belongs to the retained leaf, not to its root
-            # container.  A root can be a semantic union while its children
-            # remain independently traced, cloned, or split regions.
-            sources = frozenset(region.source_regions or (root_label,))
-            result[label] = _Target(label, root_label, region, sources, path)
-            return
-        for child in region.children:
-            visit(child, root_label, f"{legacy_label}-{child.id}", (*path, child.id))
-
-    for region in regions:
-        drawing_id = region.drawing_id
-        if type(drawing_id) is not str:
-            raise ValueError("drawing root is missing a stable drawing_id")
-        visit(region, drawing_id, drawing_id, (region.id,))
-    return result
-
-
-def _leaf_address(root_address: str, region: VectorRegion, legacy_address: str) -> str:
-    """Return a compact retained leaf address, with legacy-tree fallback."""
-    candidate = region.drawing_id
-    if isinstance(candidate, str) and (
-        candidate.startswith(f"{root_address}-")
-        or (candidate == root_address and legacy_address == root_address)
-    ):
-        return candidate
-    return legacy_address
-
-
-def _replace_leaf(
-    regions: Sequence[VectorRegion], target_id: str, transform: Callable[[VectorRegion], VectorRegion]
-) -> DrawingRegions:
-    """Replace one labeled leaf while retaining the rest of the forest by value."""
-    changed = False
-
-    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> VectorRegion:
-        nonlocal changed
-        if region.is_leaf:
-            label = _leaf_address(root_label, region, legacy_label)
-            if label == target_id:
-                changed = True
-                return transform(region)
-            return region
-        children = tuple(
-            visit(child, root_label, f"{legacy_label}-{child.id}")
-            for child in region.children
-        )
-        return region.with_children(children) if children != region.children else region
-
-    replaced = tuple(visit(region, root_region_address(region), root_region_address(region)) for region in regions)
-    if not changed:
-        raise KeyError(target_id)
-    return replaced
-
-
-def _group_regions(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
-    """Create a semantic target with a SkPath-unioned, seam-free outline."""
-    targets = _targets(regions)
-    member_ids = _expand_merge_member_ids(targets, tuple(op["regions"]))
-    members = tuple(targets[region_id] for region_id in member_ids)
-    member_regions = tuple(member.region for member in members)
-    first = member_regions[0]
-    assert first.current is not None and first.fill is not None
-    raster = np.zeros_like(first.raster, dtype=bool)
-    for member in member_regions:
-        raster |= member.raster
-    footprints = [member.footprint for member in member_regions]
-    if not all(isinstance(footprint, SkPath) for footprint in footprints):
-        raise ValueError("merge requires polygonal vector-region footprints")
-    footprint = unary_union([footprint for footprint in footprints if isinstance(footprint, SkPath)])
-    shape = Shape("path", {"d": footprint.to_svg_d()})
-    merged = VectorRegion.from_shape(
-        id=max(region.id for region in _all_regions(regions)) + 1,
-        shape=shape,
-        fill=first.fill,
-        z=min(member.z for member in member_regions),
-        raster=raster,
-        footprint=footprint,
-        color_hex=first.color_hex,
-        drawing_id=op["id"],
-        source_regions=tuple(sorted({source for member in members for source in member.source_regions})),
-        diagnostics={"merge": {"unioned": True, "sources": member_ids}},
-    )
-    return _remove_leaves(regions, frozenset(member_ids)) + (merged,)
-
-
-def _expand_merge_member_ids(targets: Mapping[str, _Target], requested_ids: Sequence[object]) -> tuple[str, ...]:
-    """Resolve a branch/root reference to every leaf currently retained below it."""
-    resolved: list[str] = []
-    for requested in requested_ids:
-        assert isinstance(requested, str)
-        members = (requested,) if requested in targets else tuple(
-            sorted(target_id for target_id in targets if target_id.startswith(f"{requested}-"))
-        )
-        if not members:
-            raise KeyError(requested)
-        for member in members:
-            if member in resolved:
-                raise ValueError(f"merge region {requested!r} resolves to an already selected child")
-            resolved.append(member)
-    return tuple(resolved)
-
-
-def _split_region(regions: Sequence[VectorRegion], op: Mapping[str, object]) -> DrawingRegions:
-    """Replace one retained target with two exact vector clips across an explicit divider."""
-    targets = _targets(regions)
-    target_id = op["target"]
-    assert isinstance(target_id, str)
-    target = targets[target_id]
-    source = target.region
-    if not source.is_leaf or source.current is None or source.fill is None:
-        raise ValueError("split requires a filled leaf target")
-    if not isinstance(source.footprint, SkPath):
-        raise ValueError("split requires a polygonal vector-region footprint")
-
-    divider = op["divider"]
-    assert isinstance(divider, Mapping)
-    divider_type = divider["type"]
-    if divider_type == "line":
-        points = divider["points"]
-        assert isinstance(points, Sequence)
-        first = points[0]
-        second = points[1]
-        assert isinstance(first, Sequence) and isinstance(second, Sequence)
-        parts = _split_footprint_by_line(
-            source.footprint,
-            (float(first[0]), float(first[1])),
-            (float(second[0]), float(second[1])),
-        )
-    elif divider_type == "path":
-        d = divider["d"]
-        assert isinstance(d, str)
-        parts = _split_footprint_by_path(source.footprint, d)
-    else:  # guarded by plan validation; keeps this executor safe for direct callers.
-        raise ValueError("divider type must be 'line' or 'path'")
-
-    if len(parts) != 2 or any(part.is_empty or part.area <= 1e-6 for part in parts):
-        raise ValueError("divider does not divide the target into two non-empty regions")
-
-    next_id = max(region.id for region in _all_regions(regions)) + 1
-    children: list[VectorRegion] = []
-    for index, footprint in enumerate(parts):
-        shape = Shape("path", {"d": footprint.to_svg_d()})
-        children.append(
-            VectorRegion.from_shape(
-                id=source.id if index == 0 else next_id,
-                shape=shape,
-                fill=source.fill,
-                z=source.z + index * 0.001,
-                footprint=footprint,
-                raster=rasterize(footprint, source.raster.shape),
-                source_label=source.source_label,
-                color_hex=source.color_hex,
-                source_regions=source.source_regions,
-                coverage=source.coverage,
-                diagnostics={
-                    "split": {
-                        "source": target_id,
-                        "divider": dict(divider),
-                        "part": index + 1,
-                    }
-                },
-            )
-        )
-    branch = VectorRegion.branch(
-        id=source.id,
-        children=tuple(children),
-        z=source.z,
-        raster=source.raster,
-        footprint=source.footprint,
-        fill=source.fill,
-        source_label=source.source_label,
-        color_hex=source.color_hex,
-        drawing_id=source.drawing_id,
-        source_regions=source.source_regions,
-        diagnostics={"split": {"source": target_id, "divider": dict(divider), "children": 2}},
-    )
-    return _replace_leaf(regions, target_id, lambda _region: branch)
-
-
-def _split_footprint_by_path(footprint: SkPath, d: str) -> tuple[SkPath, SkPath]:
-    """Split one simple footprint using an open divider whose endpoints touch its boundary."""
-    subpaths = _parse_subpaths(d)
-    if len(subpaths) != 1 or not subpaths[0] or subpaths[0][0][0] != "M" or any(kind == "Z" for kind, _ in subpaths[0]):
-        raise ValueError("path divider must contain exactly one open SVG subpath")
-    sampled_divider = _sample_subpath(subpaths[0], samples=32)
-    if len(sampled_divider) < 2:
-        raise ValueError("path divider must contain a drawable segment")
-    rings = footprint.linearized_subpaths
-    if len(rings) != 1:
-        raise ValueError("path divider currently requires a simple target without holes or disconnected islands")
-    ring = rings[0]
-    start, start_segment, start_t, start_distance = _project_to_ring(sampled_divider[0], ring)
-    end, end_segment, end_t, end_distance = _project_to_ring(sampled_divider[-1], ring)
-    min_x, min_y, max_x, max_y = footprint.bounds
-    endpoint_tolerance = max(1.0, min(3.0, math.hypot(max_x - min_x, max_y - min_y) * 0.005))
-    if max(start_distance, end_distance) > endpoint_tolerance:
-        raise ValueError("path divider endpoints must lie on the target boundary")
-    boundary = _forward_ring_arc(ring, end, end_segment, end_t, start, start_segment, start_t)
-    divider_d = _snapped_open_divider_d(subpaths[0], start, end)
-    boundary_d = " ".join(f"L{_fmt(x)} {_fmt(y)}" for x, y in boundary[1:])
-    clip = SkPath.from_svg_d(f"{divider_d} {boundary_d} Z")
-    first = footprint.intersection(clip)
-    second = footprint.difference(first)
-    return first, second
-
-
-def _snapped_open_divider_d(
-    tokens: Sequence[tuple[str, list[float]]], start: tuple[float, float], end: tuple[float, float]
-) -> str:
-    """Serialize one open divider while snapping only its boundary endpoints."""
-    normalized = [(kind, list(values)) for kind, values in tokens]
-    normalized[0][1][:2] = [start[0], start[1]]
-    final_kind, final_values = normalized[-1]
-    endpoint_offset = {"L": 0, "Q": 2, "C": 4, "A": 5}.get(final_kind)
-    if endpoint_offset is None:
-        raise ValueError("path divider must end with a drawable SVG command")
-    final_values[endpoint_offset:endpoint_offset + 2] = [end[0], end[1]]
-    parts: list[str] = []
-    for kind, values in normalized:
-        parts.append(kind + " ".join(_fmt(value) for value in values))
-    return " ".join(parts)
-
-
-def _project_to_ring(
-    point: tuple[float, float], ring: Sequence[tuple[float, float]]
-) -> tuple[tuple[float, float], int, float, float]:
-    px, py = point
-    best: tuple[tuple[float, float], int, float, float] | None = None
-    for index, start in enumerate(ring):
-        end = ring[(index + 1) % len(ring)]
-        dx = end[0] - start[0]
-        dy = end[1] - start[1]
-        length_sq = dx * dx + dy * dy
-        t = 0.0 if length_sq <= 1e-12 else max(0.0, min(1.0, ((px - start[0]) * dx + (py - start[1]) * dy) / length_sq))
-        projected = (start[0] + t * dx, start[1] + t * dy)
-        distance = math.hypot(px - projected[0], py - projected[1])
-        if best is None or distance < best[3]:
-            best = (projected, index, t, distance)
-    assert best is not None
-    return best
-
-
-def _forward_ring_arc(
-    ring: Sequence[tuple[float, float]],
-    start: tuple[float, float],
-    start_segment: int,
-    start_t: float,
-    end: tuple[float, float],
-    end_segment: int,
-    end_t: float,
-) -> list[tuple[float, float]]:
-    """Return the forward boundary arc, including projected start/end points."""
-    if start_segment == end_segment and start_t <= end_t:
-        return [start, end]
-    points = [start]
-    index = (start_segment + 1) % len(ring)
-    while index != (end_segment + 1) % len(ring):
-        points.append(ring[index])
-        index = (index + 1) % len(ring)
-    points.append(end)
-    return points
-
-
-def _remove_leaves(regions: Sequence[VectorRegion], removed_ids: frozenset[str]) -> DrawingRegions:
-    """Remove selected labeled leaves, pruning only now-empty branch nodes."""
-
-    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> VectorRegion | None:
-        if region.is_leaf:
-            label = _leaf_address(root_label, region, legacy_label)
-            return None if label in removed_ids else region
-        children = tuple(
-            child
-            for child in (
-                visit(child, root_label, f"{legacy_label}-{child.id}")
-                for child in region.children
-            )
-            if child is not None
-        )
-        if not children:
-            return None
-        return region if children == region.children else region.with_children(children)
-
-    return tuple(
-        region
-        for root in regions
-        if (region := visit(root, root_region_address(root), root_region_address(root))) is not None
-    )
-
-
-def _all_regions(regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
-    all_regions: list[VectorRegion] = []
-    for region in regions:
-        all_regions.append(region)
-        all_regions.extend(region.leaves()) if region.is_branch else None
-    return tuple(all_regions)
 
 
 def _with_fill(region: VectorRegion, fill: Fill) -> VectorRegion:

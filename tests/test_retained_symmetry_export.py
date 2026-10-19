@@ -76,7 +76,8 @@ def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(mon
     import vectormark.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "unary_union", forbidden)
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
-    monkeypatch.setattr(drawing_refine, "rasterize", forbidden)
+    import vectormark.drawing_partition as partition
+    monkeypatch.setattr(partition, "rasterize", forbidden)
     trace = SimpleNamespace(width=48, height=24)
     first = drawing_refine.render_drawing(trace, regions)
     assert first.svg == drawing_refine.render_drawing(trace, regions).svg

@@ -8,7 +8,7 @@ footprints. This module is the only sanctioned projection across that seam.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 import numpy as np
 
@@ -47,6 +47,95 @@ from .optimizer.vector_region import VectorRegion
 from .types import CoverageField
 from .skia_geometry import SkPath
 from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
+
+
+@dataclass(frozen=True)
+class WorkingLeafTarget:
+    """Derived address and source evidence for one working leaf."""
+
+    id: str
+    root_id: str
+    region: VectorRegion
+    source_regions: frozenset[str]
+    region_path: tuple[int, ...]
+
+
+def working_leaf_targets(regions: Sequence[VectorRegion]) -> dict[str, WorkingLeafTarget]:
+    """Derive public target handles from the region tree; do not persist an index."""
+    result: dict[str, WorkingLeafTarget] = {}
+
+    def visit(region: VectorRegion, root_label: str, legacy_label: str, path: tuple[int, ...]) -> None:
+        if region.is_leaf:
+            label = _public_region_id(region, root_label, legacy_label)
+            if label in result:
+                raise ValueError(f"duplicate drawing region id: {label}")
+            # Target lineage belongs to the retained leaf, not to its root
+            # container.  A root can be a semantic union while its children
+            # remain independently traced, cloned, or split regions.
+            sources = frozenset(region.source_regions or (root_label,))
+            result[label] = WorkingLeafTarget(label, root_label, region, sources, path)
+            return
+        for child in region.children:
+            visit(child, root_label, f"{legacy_label}-{child.id}", (*path, child.id))
+
+    for region in regions:
+        drawing_id = region.drawing_id
+        if type(drawing_id) is not str:
+            raise ValueError("drawing root is missing a stable drawing_id")
+        visit(region, drawing_id, drawing_id, (region.id,))
+    return result
+
+
+def replace_working_leaf(
+    regions: Sequence[VectorRegion], target_id: str, transform: Callable[[VectorRegion], VectorRegion]
+) -> tuple[VectorRegion, ...]:
+    """Replace one labeled leaf while retaining the rest of the forest by value."""
+    changed = False
+
+    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> VectorRegion:
+        nonlocal changed
+        if region.is_leaf:
+            label = _public_region_id(region, root_label, legacy_label)
+            if label == target_id:
+                changed = True
+                return transform(region)
+            return region
+        children = tuple(
+            visit(child, root_label, f"{legacy_label}-{child.id}")
+            for child in region.children
+        )
+        return region.with_children(children) if children != region.children else region
+
+    replaced = tuple(visit(region, root_region_address(region), root_region_address(region)) for region in regions)
+    if not changed:
+        raise KeyError(target_id)
+    return replaced
+
+
+def remove_working_leaves(regions: Sequence[VectorRegion], removed_ids: frozenset[str]) -> tuple[VectorRegion, ...]:
+    """Remove selected labeled leaves, pruning only now-empty branch nodes."""
+
+    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> VectorRegion | None:
+        if region.is_leaf:
+            label = _public_region_id(region, root_label, legacy_label)
+            return None if label in removed_ids else region
+        children = tuple(
+            child
+            for child in (
+                visit(child, root_label, f"{legacy_label}-{child.id}")
+                for child in region.children
+            )
+            if child is not None
+        )
+        if not children:
+            return None
+        return region if children == region.children else region.with_children(children)
+
+    return tuple(
+        region
+        for root in regions
+        if (region := visit(root, root_region_address(root), root_region_address(root))) is not None
+    )
 
 
 def replace_working_region(

@@ -27,6 +27,7 @@ from vectormark import drawing_paint
 from vectormark.fit import Shape
 from vectormark.optimizer.gate import rasterize
 from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.skia_geometry import unary_union
 
 
 def _disk() -> np.ndarray:
@@ -363,7 +364,7 @@ def test_merge_creates_one_native_target_with_combined_source_provenance():
     assert all(target["diagnostics"]["merge"] == {"unioned": True, "sources": ["r1", "r2"]}
                for target in report["targets"])
     assert regions[0].footprint.symmetric_difference(
-        drawing_refine.unary_union([root.footprint for root in rooted.regions])
+        unary_union([root.footprint for root in rooted.regions])
     ).area == 0
 
 

@@ -1090,6 +1090,34 @@ Verification: **90 focused tests** and the fresh full **1,172-test suite** pass
 adapter/refine/replay/engine/MCP imports and diff check pass. Optional
 render-DeltaE scoring remains unavailable without resvg-py.
 
+#### Shared merge/split execution — 2026-10-18
+
+`drawing_partition.merge_regions` and `split_region` now execute the existing
+typed `MergeAction`/`SplitAction` contracts. Refinement dispatches to them rather
+than owning a second region-construction implementation. The shared owner retains
+the complete union/clipping operation, raster publication, ordering, paint and
+source provenance. The existing line splitter remains the shared native geometry
+kernel; open-path splitting retains its sampling and boundary-snapping policy.
+
+Derived leaf targets and leaf replacement/removal moved to `drawing_adapter`.
+All consumers share its existing public-region address rule; the duplicate leaf
+address decoder was deleted. These remain private working-evidence projections,
+not a new public scene model or a claim that `VectorRegion` migration is complete.
+
+Direct engine tests cover scoped child merging, line and curved dividers,
+footprint preservation, stable child addressing, retained source paint/evidence
+and invalid-divider rejection. A test that depended on refinement incidentally
+re-exporting `unary_union` now imports the geometry owner directly. No numeric
+threshold, detector, output-color or export-repair policy changed.
+
+Full validation and the parent whole-branch review follow. No native rebuild,
+deployment or new corpus visual acceptance is claimed.
+
+Verification: **148 focused tests** and the fresh full **1,177-test suite** pass
+(953 warnings, 139.81s). The renderer-purity guard now intercepts rasterization
+at its actual partition owner. Targeted unused-import/undefined-name lint,
+standalone partition/refine/replay/engine/MCP imports and diff check pass.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
