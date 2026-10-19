@@ -57,7 +57,6 @@ from .drawing_refine import (
     labeled_drawing_svg,
     refine,
     render_drawing as render_drawing_regions,
-    refill_all_regions_from_source,
     stitch_regions,
 )
 from .drawing_state import (

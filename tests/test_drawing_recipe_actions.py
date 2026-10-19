@@ -28,7 +28,8 @@ from vectormark.drawing_replay import (
     raster_pixels,
     propose_effective_recipe,
 )
-from vectormark.drawing_refine import refine, refill_changed_regions_from_source
+from vectormark.drawing_refine import refine
+from vectormark.drawing_paint import refill_changed_regions_from_source
 from vectormark.drawing_render import drawing_summary
 from vectormark.drawing_state import DrawingStore
 from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult

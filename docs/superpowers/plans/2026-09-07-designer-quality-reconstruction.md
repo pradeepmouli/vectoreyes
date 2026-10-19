@@ -1007,6 +1007,35 @@ Verification: **296 focused tests** and the fresh full **1,155-test suite** pass
 and diff check pass. Optional render-DeltaE scoring remains unavailable without
 resvg-py. No native rebuild, deployment, speedup or visual acceptance is claimed.
 
+#### Shared drawing-paint orchestration and scoped evidence — 2026-10-18
+
+`drawing_paint` owns geometry-change fill invalidation, visible-pixel sampling,
+source refill, shared symmetry/gradient surfaces and terminal output limits.
+Plan/replay orchestration calls this shared owner; `paint_fitting` remains the
+geometry-independent numeric fitter. Output palette limits are still terminal,
+not an intermediate recipe mutation. The old implementations are removed from
+`drawing_refine`; geometry execution and source raster evidence are unchanged.
+
+Regression tests exposed a real ownership defect: visibility and invalidation
+used local leaf IDs, which may repeat under different roots or nested branches.
+They now use full ancestry paths throughout refill and shared-surface handling.
+Previously one child could receive another child's sampled paint, or an unchanged
+child could be invalidated. Those cases are corrected without changing sampling,
+gradient, output-palette or fitting thresholds. Coverage includes nested repeated
+IDs, independent source colors, one changed child, self-symmetry surfaces, shared
+gradients with white cutouts, and geometry/evidence-preserving output limits.
+
+This consolidates global paint orchestration, not every initial trace/root
+assembly or working-evidence projection. Those remaining adapters and the parent
+whole-branch review are still open. Final validation follows.
+
+Verification: **107 focused tests** and the fresh full **1,161-test suite** pass
+(953 warnings, 165.87s). New paint-module/test unused-import and undefined-name
+checks, standalone paint/refine/replay/MCP imports and diff check pass. Existing
+unused imports elsewhere are not a whole-workspace lint sign-off. Optional
+render-DeltaE scoring remains unavailable without resvg-py. No native rebuild,
+deployment, speedup or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

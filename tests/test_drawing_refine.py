@@ -1,4 +1,5 @@
 from pathlib import Path
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -20,6 +21,8 @@ from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.drawing_trace import PythonTraceEngine, TraceCommand, TraceOptions, TracePath, TraceRegion, TraceResult, svg_path_commands
 from vectormark.candidate import FlatFill, LinearGradientFill
 from vectormark.fill_fit import fit_fill
+from vectormark.paint_fitting import sampled_flat_hex
+from vectormark import drawing_paint
 from vectormark.fit import Shape
 from vectormark.optimizer.gate import rasterize
 from vectormark.optimizer.vector_region import VectorRegion
@@ -138,7 +141,8 @@ def test_auto_refine_refits_every_final_leaf_from_source_after_geometry_passes()
     assert all(leaf.fill != FlatFill("#010203") for leaf in leaves)
 
 
-def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings():
+@pytest.mark.parametrize('nested_local_ids', [False, True])
+def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(nested_local_ids):
     image = np.full((20, 48, 3), 255, dtype=np.uint8)
     for x in (*range(4, 20), *range(28, 44)):
         image[4:16, x] = (20 + 5 * x, 60, 220 - 4 * x)
@@ -166,9 +170,13 @@ def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(
         raster=np.zeros((20, 48), dtype=bool),
         color_hex="#E03C30",
     )
+    if nested_local_ids:
+        left = VectorRegion.branch(id=11, children=(replace(left, id=1),))
+        cutout = VectorRegion.branch(id=12, children=(replace(cutout, id=1),))
+        right = VectorRegion.branch(id=13, children=(replace(right, id=1),))
     root = VectorRegion.branch(id=10, children=(left, cutout, right), z=0, drawing_id="r1")
 
-    refilled = drawing_refine.refill_all_regions_from_source((root,), image)
+    refilled = drawing_paint.refill_all_regions_from_source((root,), image)
     fills = [leaf.fill for leaf in refilled[0].leaves()]
 
     assert isinstance(fills[0], LinearGradientFill)
@@ -286,7 +294,7 @@ def test_merge_invalidates_its_inherited_fill_then_refills_from_the_cached_sourc
 
     merged_mask = rasterize(merged[0].footprint, rgb.shape[:2])
     assert merged[0].fill == fit_fill(
-        merged_mask, rgb, flat_hex=drawing_refine._sampled_flat_hex(merged_mask, rgb)
+        merged_mask, rgb, flat_hex=sampled_flat_hex(merged_mask, rgb)
     )
     assert merged[0].fill != FlatFill("#112233")
     assert merged[0].diagnostics["fill"]["status"] == "refit"
@@ -313,7 +321,7 @@ def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cach
     for child in split[0].leaves():
         child_mask = rasterize(child.footprint, rgb.shape[:2])
         assert child.fill == fit_fill(
-            child_mask, rgb, flat_hex=drawing_refine._sampled_flat_hex(child_mask, rgb)
+            child_mask, rgb, flat_hex=sampled_flat_hex(child_mask, rgb)
         )
         assert child.fill != FlatFill("#FF6600")
     assert all(child.diagnostics["fill"]["status"] == "refit" for child in split[0].leaves())

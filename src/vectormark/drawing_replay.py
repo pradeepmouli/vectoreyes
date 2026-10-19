@@ -60,12 +60,12 @@ from .drawing_recipe import (
     snapshot_paint_evidence,
     validate_replay_record,
 )
+from .drawing_paint import (
+    apply_output_fill_settings, refill_all_regions_from_source, refill_changed_regions_from_source,
+)
 from .drawing_refine import (
-    apply_output_fill_settings,
     DrawingRegions,
     refine,
-    refill_all_regions_from_source,
-    refill_changed_regions_from_source,
     ordered_path_operation_stages,
     resolved_action_settings,
     run_detection_with_intent,
