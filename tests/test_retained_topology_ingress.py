@@ -243,7 +243,8 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
         contours=contours, trace_path=TracePath(DISCONNECTED, "evenodd", ()),
         effective_trace_level="pixel",
     ),))
-    result = drawing_refine.root_regions(trace)
+    from vectormark.drawing_assembly import root_regions
+    result = root_regions(trace)
     assert result.regions[0].is_branch
     records = result.trace.root_path_evidence
     assert [(record.region_id, record.path_id) for record in records] == [("r1-1", "r1.p0"), ("r1-2", "r1.p1")]
@@ -275,7 +276,8 @@ def test_empty_plan_with_rgb_preserves_shared_gradient_without_refilling(monkeyp
     before = drawing_refine.render_drawing(_trace(), (source,)).svg
     def forbidden(*args, **kwargs):
         raise AssertionError("pure topology normalization refitted paint or geometry")
-    monkeypatch.setattr(drawing_refine, "fit_fill", forbidden)
+    import vectormark.drawing_assembly as assembly
+    monkeypatch.setattr(assembly, "fit_fill", forbidden)
     import vectormark.drawing_paint as paint
     import vectormark.paint_fitting as paint_fitting
     monkeypatch.setattr(paint, "fit_fill", forbidden)

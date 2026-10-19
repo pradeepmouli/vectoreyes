@@ -15,7 +15,8 @@ from vectormark.drawing_recipe import (
     build_paint_evidence,
 )
 from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
-from vectormark.drawing_refine import drawing_summary, labeled_drawing_svg, refine, render_drawing, root_regions
+from vectormark.drawing_refine import drawing_summary, labeled_drawing_svg, refine, render_drawing
+from vectormark.drawing_assembly import root_regions
 from vectormark.drawing_render import render_drawing as render_canonical_drawing
 from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.drawing_trace import PythonTraceEngine, TraceCommand, TraceOptions, TracePath, TraceRegion, TraceResult, svg_path_commands

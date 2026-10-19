@@ -27,7 +27,8 @@ from .drawing_recipe import (
     ResolveOriginalPaintOperation, build_geometry_evidence, build_paint_evidence,
     validate_replay_record,
 )
-from .drawing_refine import auto_refine_with_intent, drawing_summary, root_regions, stitch_regions_with_intent
+from .drawing_refine import auto_refine_with_intent, drawing_summary, stitch_regions_with_intent
+from .drawing_assembly import root_regions
 from .drawing_replay import (
     extend_recipe_with_plan, propose_effective_recipe, raster_pixels,
 )

@@ -73,8 +73,10 @@ def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(mon
     import vectormark.path_fitting as fitting
     monkeypatch.setattr(fit_module, "atomic_flatten_path_d", forbidden)
     monkeypatch.setattr(fitting, "fit_raster_paths", forbidden)
-    for name in ("unary_union", "_surface_shape", "rasterize"):
-        monkeypatch.setattr(drawing_refine, name, forbidden)
+    import vectormark.drawing_assembly as assembly
+    monkeypatch.setattr(assembly, "unary_union", forbidden)
+    monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
+    monkeypatch.setattr(drawing_refine, "rasterize", forbidden)
     trace = SimpleNamespace(width=48, height=24)
     first = drawing_refine.render_drawing(trace, regions)
     assert first.svg == drawing_refine.render_drawing(trace, regions).svg
@@ -97,7 +99,8 @@ def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
         Shape("path", {"d": "M20 2 L22 2 L22 18 L20 18 Z"}), diagnostics={"symmetry": {}}))
     def forbidden(*args, **kwargs):
         raise AssertionError("renderer fitted an undisclosed surface")
-    monkeypatch.setattr(drawing_refine, "_surface_shape", forbidden)
+    import vectormark.drawing_assembly as assembly
+    monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
     rendered = drawing_refine.render_drawing(SimpleNamespace(width=48, height=24), regions)
     assert "surface-" not in rendered.svg
     assert len(rendered.report["targets"]) == 2

@@ -1036,6 +1036,33 @@ unused imports elsewhere are not a whole-workspace lint sign-off. Optional
 render-DeltaE scoring remains unavailable without resvg-py. No native rebuild,
 deployment, speedup or visual acceptance is claimed.
 
+#### Initial root assembly ownership — 2026-10-18
+
+`drawing_assembly` now owns the active v0 root builder, raw-contour entry,
+coverage-aware material-polyline union, corner-aware fitting and exact retained
+fit-evidence publication. `PythonDrawingEngine.fit_trace`, report scripts and
+tests use that owner directly; refinement orchestration no longer owns initial
+construction. Existing observer stages and source ordering are unchanged.
+
+Address publication moved into the shared drawing adapter, preserving existing
+child slots, internal IDs and root-address validation. The unreferenced older
+boundary-clipping assembly route and its unused surface/AA-completion helpers
+were deleted rather than retained as compatibility alternatives. Renderer tests
+now guard the actual active assembly fitter instead of an unused helper.
+
+Existing root render hashes and source-contour correspondence checks still pass.
+No contour, corner, fitting, material-merge or diagnostic-stage policies changed.
+Remaining work is the broader working-evidence projection audit and the parent
+whole-branch review; this is not a native build or visual acceptance. Final
+validation follows.
+
+Verification: **132 focused tests** and the fresh full **1,165-test suite** pass
+(953 warnings, 124.33s). Targeted unused-import/undefined-name lint, standalone
+assembly/refine/engine/MCP imports, both report-script compilation checks and
+diff check pass. Existing root render hashes remain unchanged. Optional
+render-DeltaE scoring remains unavailable without resvg-py. No native rebuild,
+deployment, speedup or visual acceptance is claimed.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

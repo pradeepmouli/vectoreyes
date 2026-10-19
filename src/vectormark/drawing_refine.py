@@ -7,27 +7,21 @@ reports are derived artifacts, never a second editable scene representation.
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 
 import numpy as np
-from scipy import ndimage
 
 from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
-from .components import decompose_components
-from .contour import region_contours
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill
+from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill, normalize_drawing_addresses, root_region_address
 from .drawing_fill import serialize_fill
-from .drawing_trace import RootPathEvidence, TraceResult, svg_path_commands, _polyline_trace_path
-from .path_fit_evidence import AutomaticFitEvidence
+from .drawing_trace import TraceResult, svg_path_commands
 from .emit import render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
-from .fill_fit import fit_fill
-from .fit import Shape, _fmt, fit_path_stages
-from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath, to_polygon
-from .optimizer.corners import path_corner_diagnostics, rebind_prefit_corner_diagnostics
+from .fit import Shape, _fmt
+from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath
+from .optimizer.corners import rebind_prefit_corner_diagnostics
 from .optimizer.gate import rasterize
 from .optimizer.automatic_replay import (
     AutomaticActionOutcome,
@@ -35,29 +29,17 @@ from .optimizer.automatic_replay import (
     optimize_with_intent,
 )
 from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
-from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, relative_source_path, resolve_source_path
+from .optimizer.symmetry_materialize import index_region_paths, materialize_self_symmetry, resolve_source_path
 from .drawing_topology import normalize_retained_topology
-from .pipeline import Options, _segment_image
+from .pipeline import Options
 from .refinement_settings import RefinementPasses
 from .drawing_paint import refill_all_regions_from_source, refill_changed_regions_from_source
 from .skia_geometry import SkPath, unary_union
-from .surface_merge import material_groups, merge_material_regions
-from .segment import fill_small_compatible_holes
-from .types import Region
 from . import drawing_region_actions, drawing_relationships, path_operations
 from .geometry_native import split_path_by_line as _split_footprint_by_line
 
 
 DrawingRegions = tuple[VectorRegion, ...]
-DecompositionObserver = Callable[[str, tuple[Region, ...], tuple[Fill, ...] | None], None]
-
-
-@dataclass(frozen=True)
-class RootRegionsResult:
-    """The one retained forest and the trace enriched by its actual root fits."""
-
-    regions: DrawingRegions
-    trace: TraceResult
 
 
 @dataclass(frozen=True)
@@ -94,45 +76,6 @@ def ordered_path_operation_stages(
 
 
 @dataclass(frozen=True)
-class _RootAssembly:
-    """Transient fit records keyed internally until public addresses are final."""
-
-    regions: DrawingRegions
-    evidence: Mapping[int, tuple[AutomaticFitEvidence, ...]]
-
-
-@dataclass(frozen=True)
-class _SurfaceFit:
-    shape: Shape
-    corners: dict[str, object]
-    evidence: tuple[AutomaticFitEvidence, ...]
-
-
-def _bind_root_evidence(trace: TraceResult, assembled: _RootAssembly) -> RootRegionsResult:
-    regions = _normalize_drawing_addresses(assembled.regions)
-    evidence = []
-    for root in regions:
-        for leaf in root.leaves():
-            assert leaf.drawing_id is not None and leaf.current is not None
-            paths = tuple(d.strip() for d in re.findall(r"M[^M]*", leaf.current.params["d"]))
-            fits = assembled.evidence[leaf.id]
-            if len(paths) != len(fits) or any(not fit.matches_output(d) for d, fit in zip(paths, fits)):
-                raise ValueError("root fitting evidence does not match the retained leaf subpaths")
-            evidence.extend(
-                RootPathEvidence(leaf.drawing_id, f"{leaf.drawing_id}.p{index}", fitted)
-                for index, fitted in enumerate(fits)
-            )
-    normalized = normalize_retained_topology(regions, defer_overlaps=True)
-    owners = {
-        path_id: leaf.drawing_id for root in normalized for leaf in root.leaves()
-        for path_id in leaf.current.params.get("path_ids", ())
-    }
-    return RootRegionsResult(normalized, replace(trace, root_path_evidence=tuple(
-        replace(record, region_id=owners.get(record.path_id, record.region_id)) for record in evidence
-    )))
-
-
-@dataclass(frozen=True)
 class RenderedDrawing:
     """A transient SVG/report projection of one drawing-version's regions."""
 
@@ -147,531 +90,6 @@ class _Target:
     region: VectorRegion
     source_regions: frozenset[str]
     region_path: tuple[int, ...]
-
-
-def root_regions(
-    trace: TraceResult,
-    rgb: np.ndarray | None = None,
-    *,
-    material_rgb: np.ndarray | None = None,
-    min_region_fraction: float = 0.02,
-    allow_gradients: bool = True,
-    preserve_material_labels: bool | None = None,
-    on_decomposition_stage: DecompositionObserver | None = None,
-) -> RootRegionsResult:
-    """Create retained roots, optionally reducing one-shot surfaces into roots.
-
-    The raw trace deliberately preserves every palette fragment so path-command
-    provenance is available on demand.  Its regions are therefore not the
-    agent-facing roots.  When pixels are available, create those roots from the
-    same raw regions that the trace exposed.  Material masks are formed from
-    source-colour boundaries before their geometry and fills are fitted.
-    ``preserve_material_labels`` keeps a geometry guide's explicit palette
-    labels separate instead of treating similar colors as mergeable material.
-    """
-    if rgb is None:
-        return _bind_root_evidence(trace, _raw_root_regions(trace))
-    if not 0.0 <= min_region_fraction < 1.0:
-        raise ValueError("min_region_fraction must be at least 0 and less than 1")
-    if rgb.shape[:2] != (trace.height, trace.width):
-        raise ValueError("material-merge RGB dimensions must match the trace canvas")
-    if material_rgb is None and trace.material_pretrace is not None:
-        material_rgb = trace.material_pretrace.material_proxy
-    if preserve_material_labels is None:
-        preserve_material_labels = trace.material_pretrace is not None
-    segmentation_rgb = rgb if material_rgb is None else np.asarray(material_rgb, dtype=np.uint8)
-    if segmentation_rgb.shape != rgb.shape:
-        raise ValueError("material-trace RGB dimensions must match the source RGB")
-    # Raw trace paths remain the plan's stable provenance.  Geometry roots use
-    # the regular, AA-aware segmentation contract so a low-frequency AA shade
-    # cannot punch a false notch out of a retained surface.  Each root records
-    # the raw trace regions it covers.
-    geometry_options = Options(
-        epsilon=trace.options.simplify_tolerance,
-        max_error=trace.options.curve_tolerance,
-        cubic_paths=False,
-        aa_contours=trace.options.trace_level == "subpixel",
-        max_sampling_colors=trace.options.max_sampling_colors,
-        # The relative material threshold belongs after boundary slicing and
-        # compatible-material merging.  Keeping it out of seed segmentation
-        # prevents small source fragments from disappearing before they can
-        # become part of their intended material surface.
-        min_region_fraction=0.0,
-        min_region_size=trace.options.min_region_size,
-    )
-    _, _, seed_regions = _segment_image(segmentation_rgb, geometry_options)
-    if trace.geometry_regions:
-        # Background classification can reject a wholly transparent material
-        # (for example the canvas color inside a native-alpha cutout). It does
-        # not clip retained materials or set their subpixel contour positions.
-        foreground = np.logical_or.reduce([region.mask for region in trace.geometry_regions])
-        seed_regions = [region for region in seed_regions if np.any(region.mask & foreground)]
-    min_material_area = min_region_fraction * max(
-        (region.area for region in seed_regions),
-        default=0,
-    )
-    # Geometry is derived from the material polylines themselves. The separate
-    # foreground trace is diagnostic only: it must neither replace a material's
-    # subpixel exterior nor clip it back to a binary foreground contour.
-    surfaces: list[tuple[Region, tuple[Region, ...]]] = []
-    for component in decompose_components(seed_regions, (trace.height, trace.width)):
-        labelled = list(component)
-        groups = [(index,) for index in range(len(labelled))] if preserve_material_labels else material_groups(labelled, rgb)
-        for group in groups:
-            members = tuple(labelled[index] for index in group)
-            representative = max(members, key=lambda member: (member.area, -member.label))
-            mask = np.logical_or.reduce([member.mask for member in members])
-            surface = Region(representative.label, mask, representative.color_hex)
-            if surface.area >= min_material_area:
-                surfaces.append((surface, members))
-    if on_decomposition_stage is not None:
-        on_decomposition_stage("material_union", tuple(surface for surface, _members in surfaces), None)
-    filled_surfaces = tuple(
-        (surface, members, fit_fill(surface.mask, rgb, flat_hex=surface.color_hex, allow_gradients=allow_gradients))
-        for surface, members in surfaces
-    )
-    if on_decomposition_stage is not None:
-        on_decomposition_stage(
-            "apply_fills",
-            tuple(surface for surface, _members, _fill in filled_surfaces),
-            tuple(fill for _surface, _members, fill in filled_surfaces),
-        )
-
-    assembled: list[tuple[Region, np.ndarray, _SurfaceFit, Fill, tuple[str, ...], dict[str, object]]] = []
-    for surface, members, source_fill in filled_surfaces:
-        cleaned_mask, filled_hole_area = fill_small_compatible_holes(
-            surface.mask,
-            rgb,
-            max_area=trace.options.max_hole_area,
-        )
-        cleaned_surface = Region(
-            surface.label,
-            cleaned_mask,
-            surface.color_hex,
-            coverage=surface.coverage,
-        )
-        contours = _material_union_contours(
-            members,
-            added_pixels=cleaned_mask & ~surface.mask if filled_hole_area else None,
-        )
-        fitted_surface = _fit_contours_with_corners(contours, trace)
-        if fitted_surface is None:
-            continue
-        corners = fitted_surface.corners
-        source_regions = tuple(
-            region.id for region in trace.regions if np.any(cleaned_mask & region.mask)
-        )
-        if source_regions:
-            diagnostics: dict[str, object] = {
-                "surface_merge": {
-                    "sources": source_regions,
-                    "merged": len(source_regions) > 1,
-                      "geometry_source": "material_polyline_union",
-                },
-                "corners": corners,
-            }
-            if filled_hole_area:
-                diagnostics["hole_cleanup"] = {
-                    "filled_area": filled_hole_area,
-                    "max_hole_area": trace.options.max_hole_area,
-                }
-            fill = fit_fill(cleaned_mask, rgb, flat_hex=surface.color_hex, allow_gradients=allow_gradients) if filled_hole_area else source_fill
-            assembled.append((cleaned_surface, cleaned_mask, fitted_surface, fill, source_regions, diagnostics))
-    trace_order = {region.id: index for index, region in enumerate(trace.regions)}
-    # Geometry seeds can gain or lose a one-pixel AA fringe.  Ordering by that
-    # area would make otherwise stable drawing IDs swap between equivalent
-    # traces, so anchor each root to its earliest raw-trace provenance instead.
-    ordered = sorted(
-        assembled,
-        key=lambda item: (
-            min(trace_order[source] for source in item[4]),
-            -item[1].sum(),
-            item[0].label,
-            item[0].color_hex,
-        ),
-    )
-    return _bind_root_evidence(trace, _RootAssembly(tuple(
-        VectorRegion.from_shape(
-            id=index,
-            shape=fitted.shape,
-            fill=fill,
-            z=index - 1,
-            raster=mask,
-            source_label=surface.label,
-            color_hex=surface.color_hex,
-            drawing_id=f"r{index}",
-            source_regions=source_regions,
-            diagnostics=diagnostics,
-        )
-        for index, (surface, mask, fitted, fill, source_regions, diagnostics) in enumerate(ordered, start=1)
-    ), {index: item[2].evidence for index, item in enumerate(ordered, start=1)}))
-
-
-def _complete_material_masks(
-    baseline: np.ndarray,
-    masks: list[np.ndarray],
-) -> list[np.ndarray]:
-    """Assign AA/unlabelled baseline pixels to their nearest material surface."""
-    if not masks:
-        return []
-    owner = np.full(baseline.shape, -1, dtype=np.int32)
-    for index, mask in enumerate(masks):
-        owner[mask & baseline] = index
-    uncovered = baseline & (owner < 0)
-    if uncovered.any() and (owner >= 0).any():
-        _distance, indices = ndimage.distance_transform_edt(owner < 0, return_indices=True)
-        nearest = owner[tuple(indices[:, uncovered])]
-        owner[uncovered] = nearest
-    return [owner == index for index in range(len(masks))]
-
-
-def _geometry_root_regions(
-    trace: TraceResult,
-    rgb: np.ndarray,
-    geometry_options: Options,
-    *,
-    seed_regions: list[Region],
-    min_material_area: float,
-    allow_gradients: bool = True,
-    preserve_material_labels: bool = False,
-    on_decomposition_stage: DecompositionObserver | None = None,
-) -> _RootAssembly:
-    """Seed the editable region forest from trace-owned exterior geometry.
-
-    Material segmentation only partitions each trace-owned seed using source
-    seams: soft steps stay within one material while sharp steps remain an
-    interior boundary.  The seed is provenance, not a permanent clip: later
-    fitting and refinement may improve the exterior path.
-    """
-    roots: list[VectorRegion] = []
-    evidence: dict[int, tuple[AutomaticFitEvidence, ...]] = {}
-    assembled_materials: list[Region] = []
-    unioned_materials: list[Region] = []
-    applied_fills: list[tuple[Region, Fill]] = []
-    for index, geometry in enumerate(trace.geometry_regions, start=1):
-        root_sources = tuple(
-            region.id for region in trace.regions if np.any(geometry.mask & region.mask)
-        )
-        if not root_sources:
-            continue
-        baseline_shape = Shape(
-            "path",
-            {"d": geometry.trace_path.d, "fill_rule": geometry.trace_path.fill_rule},
-        )
-        clipped_seeds: list[Region] = []
-        for seed in seed_regions:
-            mask = seed.mask & geometry.mask
-            if mask.any():
-                clipped_seeds.append(Region(seed.label, mask, seed.color_hex, coverage=seed.coverage))
-        assembled_materials.extend(clipped_seeds)
-        merged_materials = (
-            clipped_seeds
-            if preserve_material_labels
-            else merge_material_regions(clipped_seeds, rgb)
-        )
-        materials = [
-            material for material in merged_materials
-            if material.area >= min_material_area
-        ]
-        unioned_materials.extend(materials)
-        filled_materials = tuple(
-            (member, fit_fill(member.mask, rgb, flat_hex=member.color_hex, allow_gradients=allow_gradients))
-            for member in materials
-        )
-        applied_fills.extend(filled_materials)
-        children: list[VectorRegion] = []
-        child_evidence: dict[int, tuple[AutomaticFitEvidence, ...]] = {}
-        for child_index, (member, source_fill) in enumerate(filled_materials, start=1):
-            # Material masks define geometry.  Do not assign their unlabelled
-            # AA fringe to a nearest neighbour before fitting: doing so moves
-            # sharp counters and exterior contours according to palette
-            # ownership rather than source boundary evidence.  Tiny enclosed
-            # islands are safe to repair locally because they cannot bridge a
-            # different material surface.
-            mask, filled_hole_area = fill_small_compatible_holes(
-                member.mask,
-                rgb,
-                max_area=trace.options.max_hole_area,
-            )
-            surface = Region(member.label, mask, member.color_hex)
-            fitted_surface = _surface_shape_with_corners(surface, trace)
-            if fitted_surface is None:
-                continue
-            shape, corners = fitted_surface.shape, fitted_surface.corners
-            child_evidence[index * 1000 + child_index] = fitted_surface.evidence
-            source_regions = tuple(
-                region.id for region in trace.regions if np.any(mask & region.mask)
-            )
-            if not source_regions:
-                source_regions = root_sources
-            children.append(
-                VectorRegion.from_shape(
-                    id=index * 1000 + child_index,
-                    shape=shape,
-                fill=fit_fill(mask, rgb, flat_hex=member.color_hex, allow_gradients=allow_gradients) if filled_hole_area else source_fill,
-                    z=child_index - 1,
-                    # Alpha/background geometry only establishes this initial
-                    # trace.  Subsequent optimizer passes receive a mask from
-                    # the fitted vector path, so they are free to improve it.
-                    raster=rasterize(to_polygon(shape), (trace.height, trace.width)),
-                    source_label=member.label,
-                    color_hex=member.color_hex,
-                    source_regions=source_regions,
-                    diagnostics={
-                        "material_surface": {
-                            "root": geometry.id,
-                            "edge_de": 0.06,
-                            "boundary_preserving": True,
-                            "filled_hole_area": filled_hole_area,
-                        },
-                        "corners": corners,
-                    },
-                )
-            )
-        if not children:
-            continue
-        baseline_diagnostics = {
-            "corners": {
-                **geometry.trace_path.corner_diagnostics,
-                "path": str(baseline_shape.params["d"]),
-            },
-            "geometry_seed": {
-                "trace_region": geometry.id,
-                "background": dict(trace.background),
-                "fill": "material_children_seeded",
-                "path": baseline_shape.params["d"],
-                "fill_rule": baseline_shape.params["fill_rule"],
-            }
-        }
-        # A single interior material is the baseline itself.  Keep it as an
-        # ordinary ``rN`` leaf so existing plans can address simple drawings
-        # without acquiring an artificial child suffix.
-        if len(children) == 1:
-            child = children[0]
-            roots.append(
-                VectorRegion.from_shape(
-                    id=index,
-                    shape=baseline_shape,
-                    fill=child.fill,
-                    z=index - 1,
-                    raster=rasterize(to_polygon(baseline_shape), (trace.height, trace.width)),
-                    footprint=to_polygon(baseline_shape),
-                    source_label=child.source_label,
-                    color_hex=child.color_hex,
-                    drawing_id=f"r{index}",
-                    source_regions=root_sources,
-                    diagnostics={**child.diagnostics, **baseline_diagnostics},
-                )
-            )
-            evidence[index] = geometry.trace_path.path_evidence
-            continue
-        evidence.update(child_evidence)
-        roots.append(
-                VectorRegion.branch(
-                id=index,
-                children=children,
-                z=index - 1,
-                footprint=to_polygon(baseline_shape),
-                source_label=None,
-                color_hex=None,
-                drawing_id=f"r{index}",
-                source_regions=root_sources,
-                diagnostics=baseline_diagnostics,
-            )
-        )
-    if on_decomposition_stage is not None:
-        on_decomposition_stage("boundary_assemble_material", tuple(assembled_materials), None)
-        on_decomposition_stage("material_union", tuple(unioned_materials), None)
-        on_decomposition_stage(
-            "apply_fills",
-            tuple(member for member, _fill in applied_fills),
-            tuple(fill for _member, fill in applied_fills),
-        )
-    return _RootAssembly(tuple(roots), evidence)
-
-
-def _raw_root_regions(trace: TraceResult) -> _RootAssembly:
-    roots = []
-    evidence = {}
-    for index, region in enumerate(trace.regions):
-        fitted = _fit_contours_with_corners(region.contours, trace)
-        if fitted is None:
-            raise ValueError("raw root fitting requires retained source contours")
-        # Preserve the no-RGB entry's explicit fill-rule serialization.
-        fitted.shape.params["fill_rule"] = "evenodd" if len(fitted.evidence) > 1 else "nonzero"
-        evidence[index + 1] = fitted.evidence
-        roots.append(VectorRegion.from_shape(
-            id=index + 1,
-            shape=fitted.shape,
-            fill=FlatFill(region.color),
-            z=index,
-            raster=region.mask,
-            source_label=region.source_label,
-            color_hex=region.color,
-            drawing_id=region.id,
-            source_regions=(region.id,),
-            diagnostics={"corners": fitted.corners},
-        ))
-    return _RootAssembly(tuple(roots), evidence)
-
-
-def _with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
-    """Copy *region* with its public, version-scoped drawing address."""
-    if region.drawing_id == address:
-        return region
-    if region.is_leaf:
-        assert region.current is not None
-        return VectorRegion(
-            id=region.id,
-            current=region.current,
-            fill=region.fill,
-            z=region.z,
-            footprint=region.footprint,
-            raster=region.raster,
-            original=region.original,
-            source_label=region.source_label,
-            color_hex=region.color_hex,
-            drawing_id=address,
-            source_regions=region.source_regions,
-            coverage=region.coverage,
-            diagnostics=region.diagnostics,
-        )
-    return VectorRegion.branch(
-        id=region.id,
-        children=region.children,
-        z=region.z,
-        raster=region.raster,
-        footprint=region.footprint,
-        fill=region.fill,
-        source_label=region.source_label,
-        color_hex=region.color_hex,
-        drawing_id=address,
-        source_regions=region.source_regions,
-        diagnostics=region.diagnostics,
-        original=region.original,
-    )
-
-
-def _normalize_drawing_addresses(regions: Sequence[VectorRegion]) -> DrawingRegions:
-    """Expose compact local child paths while preserving internal region IDs.
-
-    Optimizer-created child IDs are intentionally global (for example ``1001``)
-    and can grow with every split.  They are implementation details.  The
-    drawing protocol instead names a child by its one-based position in its
-    retained parent: ``r1-1``, ``r1-2``, and so on.  Addresses are normalized
-    only once a version is complete, so every plan still resolves against the
-    exact version it names.
-    """
-    def visit(region: VectorRegion, address: str) -> VectorRegion:
-        if region.is_branch:
-            used = {child.drawing_id for child in region.children if child.drawing_id}
-            children = []
-            next_index = 1
-            for child in region.children:
-                candidate = child.drawing_id
-                if not isinstance(candidate, str) or not candidate.startswith(f"{address}-"):
-                    while f"{address}-{next_index}" in used:
-                        next_index += 1
-                    candidate = f"{address}-{next_index}"
-                    used.add(candidate)
-                children.append(visit(child, candidate))
-            if any(a is not b for a, b in zip(children, region.children, strict=True)):
-                region = region.with_children(children)
-        return _with_drawing_address(region, address)
-
-    return tuple(visit(region, _root_label(region)) for region in regions)
-
-
-def _material_union_contours(
-    members: Sequence[Region], *, added_pixels: np.ndarray | None = None,
-) -> tuple[np.ndarray, ...]:
-    """Union coverage-aware material polylines before any curve fitting.
-
-    The material fields are sampled once. PathOps unions their polylines without
-    a raster round trip, retaining every exterior and hole. Existing compatible
-    hole cleanup may add interior pixels, but never replaces the source contour.
-    """
-    paths: list[SkPath] = []
-    contour_groups = [
-        tuple(region_contours(member.mask, coverage=member.coverage))
-        for member in members
-    ]
-    if added_pixels is not None and added_pixels.any():
-        contour_groups.append(tuple(region_contours(added_pixels)))
-    for material_contours in contour_groups:
-        if not material_contours:
-            continue
-        polyline = _polyline_trace_path(material_contours, region_id="material")
-        paths.append(SkPath.from_svg_d(polyline.d, fill_rule="evenodd"))
-    merged = unary_union(paths)
-    contours: list[np.ndarray] = []
-    for component in merged.geoms:
-        for ring in (component.exterior, *component.interiors):
-            points = np.asarray(ring.coords, dtype=float)
-            # PathOps may retain an explicit closing vertex as well as the
-            # closure marker. Remove exact duplicates, not geometric detail:
-            # every source LineCommand must have a nonzero-length edge.
-            if len(points):
-                points = points[np.r_[True, np.any(np.diff(points, axis=0) != 0.0, axis=1)]]
-            if len(points) >= 4:
-                contours.append(points)
-    return tuple(contours)
-
-
-def _surface_shape_with_corners(
-    surface: Region,
-    trace: TraceResult,
-) -> _SurfaceFit | None:
-    return _fit_contours_with_corners(region_contours(surface.mask, coverage=surface.coverage), trace)
-
-
-def _fit_contours_with_corners(contours: Sequence[np.ndarray], trace: TraceResult) -> _SurfaceFit | None:
-    contours = [contour for contour in contours if len(contour) >= 3]
-    if not contours:
-        return None
-    stages = [
-        fit_path_stages(
-            contour,
-            epsilon=trace.options.simplify_tolerance,
-            max_error=trace.options.curve_tolerance,
-            cubic=False,
-            progressive=trace.options.fit_strategy != "quadratic",
-            progressive_allow_lines=trace.options.fit_strategy == "progressive_allow_lines",
-            support_weighted_corners=trace.options.support_weighted_corners,
-            corner_rounding=trace.options.corner_rounding,
-            canvas_extent=float(max(trace.width, trace.height)),
-            # Root fitting follows the trace curve family, but it must not
-            # run a second command-reduction search over a mask that has just
-            # been material-merged.  This establishes the merged boundary.
-            prefer_simple_curves=False,
-        )
-        for contour in contours
-    ]
-    paths = [stage.atomic_d for stage in stages]
-    params: dict[str, object] = {"d": " ".join(paths)}
-    if len(paths) > 1:
-        params["fill_rule"] = "evenodd"
-    diagnostics = tuple(
-        path_corner_diagnostics(
-            path,
-            declared_corners=stage.corner_points,
-            declared_corner_spans=stage.corner_spans,
-        )
-        for path, stage in zip(paths, stages, strict=True)
-    )
-    corners: dict[str, object] = (
-        dict(diagnostics[0])
-        if len(diagnostics) == 1
-        else {"subpaths": diagnostics}
-    )
-    corners["path"] = str(params["d"])
-    return _SurfaceFit(Shape("path", params), corners, tuple(stage.baseline_evidence for stage in stages))
-
-
-def _surface_shape(surface: Region, trace: TraceResult) -> Shape | None:
-    """Return only geometry where callers do not retain a drawing region."""
-    fitted = _surface_shape_with_corners(surface, trace)
-    return fitted.shape if fitted is not None else None
 
 
 def render_drawing(trace: TraceResult, regions: Sequence[VectorRegion]) -> RenderedDrawing:
@@ -840,7 +258,7 @@ def stitch_regions_with_intent(
 ) -> RecordedRefinement:
     """Normalize initial seams and retain the accepted concrete constraints."""
     if not enabled:
-        return RecordedRefinement(_normalize_drawing_addresses(tuple(regions)), (), ())
+        return RecordedRefinement(normalize_drawing_addresses(tuple(regions)), (), ())
     recorded = _run_detection_recorded(
             regions,
             trace,
@@ -850,7 +268,7 @@ def stitch_regions_with_intent(
             max_error=trace.options.curve_tolerance,
             allow_underlap=False,
     )
-    return replace(recorded, regions=_normalize_drawing_addresses(recorded.regions))
+    return replace(recorded, regions=normalize_drawing_addresses(recorded.regions))
 
 
 def auto_refine(
@@ -914,7 +332,7 @@ def auto_refine_with_intent(
         if on_pass is not None:
             on_pass(
                 pass_name,
-                normalize_retained_topology(_normalize_drawing_addresses(tuple(
+                normalize_retained_topology(normalize_drawing_addresses(tuple(
                     _restore_root_metadata(region, before.get(region.id)) for region in current
                 ))),
             )
@@ -922,7 +340,7 @@ def auto_refine_with_intent(
     optimized = optimize_with_intent(
         list(regions), masks, _optimizer_passes(options), on_pass=_capture
     )
-    result = normalize_retained_topology(_normalize_drawing_addresses(
+    result = normalize_retained_topology(normalize_drawing_addresses(
         tuple(
             _restore_root_metadata(region, before.get(region.id))
             for region in optimized.objects
@@ -1089,7 +507,7 @@ def refine(
         for root in ordered.regions:
             for leaf in root.leaves():
                 regions = _replace_leaf(regions, leaf.id, lambda region, z=leaf.z: _with_z(region, z))
-    return normalize_retained_topology(_normalize_drawing_addresses(regions))
+    return normalize_retained_topology(normalize_drawing_addresses(regions))
 
 
 def _run_detection(
@@ -1303,7 +721,7 @@ def _drawing_groups(regions: Sequence[VectorRegion]) -> tuple[dict[str, object],
         for child, child_id in zip(region.children, children, strict=True):
             visit(child, child_id)
     for region in regions:
-        visit(region, _root_label(region))
+        visit(region, root_region_address(region))
     return tuple(groups)
 
 
@@ -1364,7 +782,7 @@ def _replace_leaf(
         )
         return region.with_children(children) if children != region.children else region
 
-    replaced = tuple(visit(region, _root_label(region), _root_label(region)) for region in regions)
+    replaced = tuple(visit(region, root_region_address(region), root_region_address(region)) for region in regions)
     if not changed:
         raise KeyError(target_id)
     return replaced
@@ -1601,7 +1019,7 @@ def _remove_leaves(regions: Sequence[VectorRegion], removed_ids: frozenset[str])
     return tuple(
         region
         for root in regions
-        if (region := visit(root, _root_label(root), _root_label(root))) is not None
+        if (region := visit(root, root_region_address(root), root_region_address(root))) is not None
     )
 
 
@@ -1611,12 +1029,6 @@ def _all_regions(regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
         all_regions.append(region)
         all_regions.extend(region.leaves()) if region.is_branch else None
     return tuple(all_regions)
-
-
-def _root_label(region: VectorRegion) -> str:
-    if type(region.drawing_id) is not str:
-        raise ValueError("drawing root is missing a stable drawing_id")
-    return region.drawing_id
 
 
 def _with_fill(region: VectorRegion, fill: Fill) -> VectorRegion:

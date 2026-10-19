@@ -30,7 +30,8 @@ from vectormark._fitcurve import cubic_inflects
 from vectormark.contour import region_contours
 from vectormark.drawing_adapter import drawing_from_vector_regions
 from vectormark.drawing_render import render_path_map
-from vectormark.drawing_refine import auto_refine, labeled_drawing_svg, render_drawing, root_regions, stitch_regions
+from vectormark.drawing_refine import auto_refine, labeled_drawing_svg, render_drawing, stitch_regions
+from vectormark.drawing_assembly import root_regions
 from vectormark.emit import render_svg_doc, resolve_fill
 from vectormark.fit import _fmt
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX

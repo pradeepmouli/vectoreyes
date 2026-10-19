@@ -8,7 +8,10 @@ import pickle
 import numpy as np
 import pytest
 
-from vectormark.drawing_refine import render_drawing, root_regions
+from vectormark.drawing_refine import render_drawing
+from vectormark.drawing_assembly import root_regions
+from vectormark.contour import region_contours
+import vectormark.drawing_assembly as assembly
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_engine import RasterImage
 from vectormark.drawing_recipe import (
@@ -20,7 +23,6 @@ from vectormark.drawing_replay import propose_effective_recipe
 from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
 from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.path_geometry import LineCommand, geometry_from_svg_d
-import vectormark.drawing_refine as drawing_refine
 import vectormark.fit as fit
 from vectormark.path_fit_evidence import automatic_fit_evidence
 
@@ -70,13 +72,13 @@ def test_boundary_evidence_is_actual_fit_input_not_retained_raster(monkeypatch):
                      .resize((64, 64), Image.Resampling.LANCZOS))
     trace = PythonTraceEngine().trace(rgb, replace(trace.options, trace_level="subpixel", max_sampling_colors=2))
     captured = []
-    original = drawing_refine._fit_contours_with_corners
+    original = assembly._fit_contours_with_corners
 
     def capture(contours, trace):
         captured.append(tuple(contour.copy() for contour in contours))
         return original(contours, trace)
 
-    monkeypatch.setattr(drawing_refine, "_fit_contours_with_corners", capture)
+    monkeypatch.setattr(assembly, "_fit_contours_with_corners", capture)
     result = root_regions(trace, rgb, min_region_fraction=0)
     leaves = [leaf for root in result.regions for leaf in root.leaves()]
     records = result.trace.root_path_evidence
@@ -94,7 +96,7 @@ def test_boundary_evidence_is_actual_fit_input_not_retained_raster(monkeypatch):
         assert len(matches) == 1
         expected = matches[0][0]
         np.testing.assert_array_equal([command.end for command in source.commands], expected)
-        raster_contour = drawing_refine.region_contours(leaf.raster)[0]
+        raster_contour = region_contours(leaf.raster)[0]
         differs |= not np.array_equal(expected, raster_contour)
         assert record.matches_output(leaf.current.params["d"], stage="root-pre-stitch", revision=record.fit.revision)
         assert not record.matches_output(leaf.current.params["d"], stage="optimized", revision=record.fit.revision)

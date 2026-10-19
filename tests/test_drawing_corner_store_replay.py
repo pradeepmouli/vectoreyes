@@ -19,7 +19,7 @@ from vectormark.drawing_recipe import (
     build_geometry_evidence,
     build_paint_evidence,
 )
-from vectormark.drawing_refine import root_regions
+from vectormark.drawing_assembly import root_regions
 from vectormark.drawing_replay import (
     extend_recipe_with_corner_edits,
     propose_effective_recipe,

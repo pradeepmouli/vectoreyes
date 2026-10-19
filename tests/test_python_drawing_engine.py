@@ -9,7 +9,8 @@ from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe, ResolveOriginalPaintOperation,
     build_geometry_evidence, build_paint_evidence, drawing_revision,
 )
-from vectormark.drawing_refine import root_regions, stitch_regions_with_intent
+from vectormark.drawing_refine import stitch_regions_with_intent
+from vectormark.drawing_assembly import root_regions
 from vectormark.drawing_replay import propose_effective_recipe
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_trace import PythonTraceEngine, TraceOptions

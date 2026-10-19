@@ -31,9 +31,9 @@ from vectormark.drawing_refine import (
     drawing_summary,
     labeled_drawing_svg,
     render_drawing,
-    root_regions,
     stitch_regions,
 )
+from vectormark.drawing_assembly import root_regions
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
 from vectormark.pipeline import _flatten_on_white

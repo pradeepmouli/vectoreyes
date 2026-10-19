@@ -657,3 +657,76 @@ def refresh_dependent_clones(
         return region.with_children(children) if children != region.children else region
 
     return [replace_paths(resolver.resolve(root), tuple(root.ancestry)) for root in action.roots]
+
+
+def root_region_address(region: VectorRegion) -> str:
+    if type(region.drawing_id) is not str:
+        raise ValueError("drawing root is missing a stable drawing_id")
+    return region.drawing_id
+
+
+def with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
+    """Copy *region* with its public, version-scoped drawing address."""
+    if region.drawing_id == address:
+        return region
+    if region.is_leaf:
+        assert region.current is not None
+        return VectorRegion(
+            id=region.id,
+            current=region.current,
+            fill=region.fill,
+            z=region.z,
+            footprint=region.footprint,
+            raster=region.raster,
+            original=region.original,
+            source_label=region.source_label,
+            color_hex=region.color_hex,
+            drawing_id=address,
+            source_regions=region.source_regions,
+            coverage=region.coverage,
+            diagnostics=region.diagnostics,
+        )
+    return VectorRegion.branch(
+        id=region.id,
+        children=region.children,
+        z=region.z,
+        raster=region.raster,
+        footprint=region.footprint,
+        fill=region.fill,
+        source_label=region.source_label,
+        color_hex=region.color_hex,
+        drawing_id=address,
+        source_regions=region.source_regions,
+        diagnostics=region.diagnostics,
+        original=region.original,
+    )
+
+
+def normalize_drawing_addresses(regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
+    """Expose compact local child paths while preserving internal region IDs.
+
+    Optimizer-created child IDs are intentionally global (for example ``1001``)
+    and can grow with every split.  They are implementation details.  The
+    drawing protocol instead names a child by its one-based position in its
+    retained parent: ``r1-1``, ``r1-2``, and so on.  Addresses are normalized
+    only once a version is complete, so every plan still resolves against the
+    exact version it names.
+    """
+    def visit(region: VectorRegion, address: str) -> VectorRegion:
+        if region.is_branch:
+            used = {child.drawing_id for child in region.children if child.drawing_id}
+            children = []
+            next_index = 1
+            for child in region.children:
+                candidate = child.drawing_id
+                if not isinstance(candidate, str) or not candidate.startswith(f"{address}-"):
+                    while f"{address}-{next_index}" in used:
+                        next_index += 1
+                    candidate = f"{address}-{next_index}"
+                    used.add(candidate)
+                children.append(visit(child, candidate))
+            if any(a is not b for a, b in zip(children, region.children, strict=True)):
+                region = region.with_children(children)
+        return with_drawing_address(region, address)
+
+    return tuple(visit(region, root_region_address(region)) for region in regions)
