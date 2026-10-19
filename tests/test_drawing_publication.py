@@ -96,3 +96,58 @@ def test_corner_publication_rejects_incompatible_downstream_geometry(shape, reas
     target = VectorRegion(id=1, current=shape, fill=None, drawing_id='r1')
     with pytest.raises(ValueError, match=reason):
         restore_corner_annotations((target,), target_region_id='r1', annotated=annotated())
+
+
+@pytest.mark.parametrize('branch', [False, True])
+def test_root_metadata_publication_keeps_selected_geometry_and_evidence(branch):
+    from vectormark.drawing_adapter import restore_working_root_metadata
+
+    original = VectorRegion(1, Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8}),
+        None, drawing_id='r7', source_regions=('material3',))
+    child = VectorRegion(2, Shape('circle', {'cx': 4, 'cy': 4, 'r': 3}),
+        FlatFill('#123456'), diagnostics={'selected': True})
+    selected = VectorRegion.branch(id=1, children=(child,)) if branch else child
+    result = restore_working_root_metadata(selected, original)
+    assert result.drawing_id == 'r7'
+    assert result.source_regions == ('material3',)
+    assert result.current is selected.current
+    assert result.children == selected.children
+    assert result.diagnostics == selected.diagnostics
+    assert np.array_equal(result.raster, selected.raster)
+    assert selected.drawing_id is None
+    assert restore_working_root_metadata(selected, None) is selected
+
+
+@pytest.mark.parametrize('explicit_addresses', [False, True])
+def test_working_evidence_uses_the_same_scoped_addresses_as_canonical_geometry(explicit_addresses):
+    from vectormark.drawing_adapter import working_region_evidence
+
+    shape = Shape('rect', {'x': 0, 'y': 0, 'w': 2, 'h': 2})
+    children = tuple(VectorRegion(1, shape, None,
+        drawing_id=f'r{index}-1' if explicit_addresses else None,
+        raster=np.full((3, 3), index == 1, dtype=bool),
+        coverage=np.full((3, 3), float(index == 1))) for index in (1, 2))
+    roots = tuple(VectorRegion.branch(id=index, drawing_id=f'r{index}', children=(child,))
+        for index, child in enumerate(children, 1))
+    evidence = working_region_evidence(roots, baseline=roots)
+    assert set(evidence) == {'r1', 'r1-1', 'r2', 'r2-1'}
+    for address in evidence:
+        assert evidence[address]['raster_source'] == address
+        assert evidence[address]['raster'] is None
+        assert evidence[address]['coverage_source'] == address
+        assert evidence[address]['coverage'] is None
+
+
+def test_canonical_child_publication_preserves_implicit_address_raster():
+    from vectormark.drawing_adapter import drawing_from_vector_regions, publish_region_update
+
+    shape = Shape('rect', {'x': 0, 'y': 0, 'w': 2, 'h': 2})
+    left = VectorRegion(1, shape, None, raster=np.ones((3, 3), dtype=bool))
+    right = VectorRegion(2, shape, None, raster=np.zeros((3, 3), dtype=bool))
+    root = VectorRegion.branch(id=10, drawing_id='r1', children=(left, right))
+    drawing = drawing_from_vector_regions('scope', width=3, height=3, regions=(root,))
+    selected = replace(drawing.region('r1-2'), z=5)
+    result = publish_region_update(selected, (root,))
+    assert np.array_equal(result[0].children[0].raster, left.raster)
+    assert np.array_equal(result[0].children[1].raster, right.raster)
+    assert result[0].children[1].z == 5

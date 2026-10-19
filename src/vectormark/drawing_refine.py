@@ -15,13 +15,12 @@ import numpy as np
 from .candidate import Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill, normalize_drawing_addresses, root_region_address
+from .drawing_adapter import apply_region_geometry, publish_region_update, publish_primitive_geometry, drawing_from_vector_regions, working_fill_from_spec as _fill, normalize_drawing_addresses, root_region_address, rebind_working_corner_provenance, restore_working_root_metadata
 from .drawing_fill import serialize_fill
 from .drawing_trace import TraceResult, svg_path_commands
 from .emit import render_svg_doc, resolve_fill, resolve_use_shape, shape_to_svg
 from .fit import Shape, _fmt
 from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath
-from .optimizer.corners import rebind_prefit_corner_diagnostics
 from .optimizer.gate import rasterize
 from .optimizer.automatic_replay import (
     AutomaticActionOutcome,
@@ -333,7 +332,7 @@ def auto_refine_with_intent(
             on_pass(
                 pass_name,
                 normalize_retained_topology(normalize_drawing_addresses(tuple(
-                    _restore_root_metadata(region, before.get(region.id)) for region in current
+                    restore_working_root_metadata(region, before.get(region.id)) for region in current
                 ))),
             )
 
@@ -342,7 +341,7 @@ def auto_refine_with_intent(
     )
     result = normalize_retained_topology(normalize_drawing_addresses(
         tuple(
-            _restore_root_metadata(region, before.get(region.id))
+            restore_working_root_metadata(region, before.get(region.id))
             for region in optimized.objects
         )
     ))
@@ -611,11 +610,11 @@ def run_detection_with_intent(
     masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
     optimized = optimize_with_intent(list(regions), masks, [pass_fn])
     restored = tuple(
-        _restore_root_metadata(region, before.get(region.id))
+        restore_working_root_metadata(region, before.get(region.id))
         for region in optimized.objects
     )
     result = normalize_retained_topology(
-        _rebind_corner_provenance(
+        rebind_working_corner_provenance(
             regions, restored, tolerance=max(1.0, epsilon * 2.0)
         )
     )
@@ -625,89 +624,6 @@ def run_detection_with_intent(
 # Transitional private alias for internal callers retained until Task 17C removes
 # the VectorRegion adapter boundary.
 _run_detection_recorded = run_detection_with_intent
-
-
-def _rebind_corner_provenance(
-    before: Sequence[VectorRegion],
-    after: Sequence[VectorRegion],
-    *,
-    tolerance: float,
-) -> DrawingRegions:
-    """Preserve trace-declared corners through a command-preserving rewrite."""
-    originals = {leaf.id: leaf for root in before for leaf in root.leaves()}
-
-    def visit(region: VectorRegion) -> VectorRegion:
-        if region.is_branch:
-            children = tuple(visit(child) for child in region.children)
-            # VectorRegion equality deliberately ignores diagnostics.  Corner
-            # provenance is a diagnostics-only update, so retain the rebuilt
-            # branch whenever any child instance changed.
-            return (
-                region.with_children(children)
-                if any(child is not original for child, original in zip(children, region.children, strict=True))
-                else region
-            )
-        assert region.current is not None
-        original = originals.get(region.id)
-        if (
-            original is None
-            or original.current is None
-            or original.current.kind != "path"
-            or region.current.kind != "path"
-        ):
-            return region
-        corners = original.diagnostics.get("corners")
-        if (
-            not isinstance(corners, Mapping)
-            or not corners.get("spans")
-            or corners.get("path") != str(original.current.params.get("d", ""))
-        ):
-            return region
-        rebound = rebind_prefit_corner_diagnostics(
-            str(region.current.params["d"]),
-            corners,
-            tolerance=tolerance,
-        )
-        return region.with_diagnostics({"corners": rebound})
-
-    return tuple(visit(region) for region in after)
-
-
-def _restore_root_metadata(region: VectorRegion, original: VectorRegion | None) -> VectorRegion:
-    """Optimizer passes preserve geometry IDs, while drawing IDs stay root-owned."""
-    if original is None or original.drawing_id is None:
-        return region
-    if region.is_leaf:
-        assert region.current is not None
-        return VectorRegion(
-            id=region.id,
-            current=region.current,
-            original=region.original,
-            fill=region.fill,
-            z=region.z,
-            footprint=region.footprint,
-            raster=region.raster,
-            source_label=region.source_label,
-            color_hex=region.color_hex,
-            drawing_id=original.drawing_id,
-            source_regions=original.source_regions,
-            coverage=region.coverage,
-            diagnostics=region.diagnostics,
-        )
-    return VectorRegion.branch(
-        id=region.id,
-        children=region.children,
-        z=region.z,
-        raster=region.raster,
-        footprint=region.footprint,
-        fill=region.fill,
-        source_label=region.source_label,
-        color_hex=region.color_hex,
-        drawing_id=original.drawing_id,
-        source_regions=original.source_regions,
-        diagnostics=region.diagnostics,
-        original=region.original,
-    )
 
 
 def _drawing_groups(regions: Sequence[VectorRegion]) -> tuple[dict[str, object], ...]:

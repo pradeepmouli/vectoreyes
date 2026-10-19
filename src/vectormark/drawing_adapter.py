@@ -270,15 +270,73 @@ def apply_region_geometry(
     return result
 
 
+def rebind_working_corner_provenance(
+    before: Sequence[VectorRegion],
+    after: Sequence[VectorRegion],
+    *,
+    tolerance: float,
+) -> tuple[VectorRegion, ...]:
+    """Carry declared corners across a rewrite, scoped by full tree ancestry."""
+    originals = index_region_paths(before)
+
+    def visit(region: VectorRegion, parent: tuple[int, ...] = ()) -> VectorRegion:
+        path = (*parent, region.id)
+        if region.is_branch:
+            children = tuple(visit(child, path) for child in region.children)
+            # Equality ignores diagnostics; annotation-only child changes still
+            # require publishing a rebuilt branch.
+            return (
+                region.with_children(children)
+                if any(child is not original for child, original in zip(children, region.children, strict=True))
+                else region
+            )
+        assert region.current is not None
+        original = originals.get(path)
+        if (
+            original is None
+            or original.current is None
+            or original.current.kind != "path"
+            or region.current.kind != "path"
+        ):
+            return region
+        corners = original.diagnostics.get("corners")
+        if (
+            not isinstance(corners, Mapping)
+            or not corners.get("spans")
+            or corners.get("path") != str(original.current.params.get("d", ""))
+        ):
+            return region
+        rebound = rebind_prefit_corner_diagnostics(
+            str(region.current.params["d"]), corners, tolerance=tolerance,
+        )
+        return region.with_diagnostics({"corners": rebound})
+
+    return tuple(visit(region) for region in after)
+
+
+def restore_working_root_metadata(region: VectorRegion, original: VectorRegion | None) -> VectorRegion:
+    """Publish selected geometry with its original root-owned drawing identity."""
+    if original is None or original.drawing_id is None:
+        return region
+    return replace(
+        region,
+        drawing_id=original.drawing_id,
+        source_regions=original.source_regions,
+    )
+
+
 def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequence[VectorRegion] = ()) -> dict[str, dict[str, object]]:
     """Retain only boundary evidence needed to project canonical selections."""
     result = {}
     indexed = index_region_paths(baseline)
     prior = {address: indexed[path] for path, address in vector_region_address_index(baseline).items()}
-    def visit(region: VectorRegion) -> None:
+    addresses = vector_region_address_index(regions)
+    def visit(region: VectorRegion, parent: tuple[int, ...] = ()) -> None:
+        path = (*parent, region.id)
+        address = addresses[path]
         coverage = region.coverage
         values = coverage.values if isinstance(coverage, CoverageField) else coverage
-        previous = prior.get(region.drawing_id)
+        previous = prior.get(address)
         borrow_raster = previous is not None and np.array_equal(previous.raster, region.raster)
         old_coverage = None if previous is None else previous.coverage
         old_values = old_coverage.values if isinstance(old_coverage, CoverageField) else old_coverage
@@ -286,22 +344,22 @@ def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequen
             values is None or (np.array_equal(values, old_values) and (
                 not isinstance(coverage, CoverageField) or (coverage.origin == old_coverage.origin
                     and coverage.canvas_shape == old_coverage.canvas_shape))))
-        result[region.drawing_id] = {
+        result[address] = {
             'id': region.id, 'raster_shape': region.raster.shape,
             'raster': None if borrow_raster else region.raster.tobytes(),
-            'raster_source': region.drawing_id if borrow_raster else None,
+            'raster_source': address if borrow_raster else None,
             'source_label': region.source_label, 'color_hex': region.color_hex,
             'original_kind': None if region.original is None else region.original.kind,
             'original_params': {} if region.original is None else region.original.params,
             'coverage': None if values is None or borrow_coverage else values.tobytes(),
-            'coverage_source': region.drawing_id if borrow_coverage else None,
+            'coverage_source': address if borrow_coverage else None,
             'coverage_shape': None if values is None else values.shape,
             'coverage_dtype': None if values is None else values.dtype.str,
             'coverage_origin': coverage.origin if isinstance(coverage, CoverageField) else None,
             'coverage_canvas': coverage.canvas_shape if isinstance(coverage, CoverageField) else None,
         }
         for child in region.children:
-            visit(child)
+            visit(child, path)
     for root in regions:
         visit(root)
     return result

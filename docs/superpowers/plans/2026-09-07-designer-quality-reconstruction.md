@@ -1063,6 +1063,33 @@ diff check pass. Existing root render hashes remain unchanged. Optional
 render-DeltaE scoring remains unavailable without resvg-py. No native rebuild,
 deployment, speedup or visual acceptance is claimed.
 
+#### Working-evidence projection audit — 2026-10-18
+
+Corner provenance rebinding and root identity restoration now belong to
+`drawing_adapter`, not refinement orchestration. Rebinding uses full tree
+ancestry rather than local leaf IDs, which can repeat across roots or nested
+branches. Regression tests demonstrate that identical paths with distinct
+declared corners previously inherited the wrong corner annotations.
+
+Working evidence now uses the same public address index as canonical geometry,
+including children whose public addresses are derived from their ancestry.
+Previously those children collided under a `None` key: even a z-order-only
+canonical update could replace a child's retained raster with its parent's.
+Address-scoped raster/coverage borrowing preserves the selected evidence without
+copying unchanged arrays. Root metadata publication changes only root identity
+and source references, retaining all other selected fields.
+
+These are publication/evidence fixes, not changes to fitting, corner detection,
+thresholds or SVG repair. Region merge/split execution still resides in
+refinement orchestration; that migration, the broader transient working-record
+reduction and parent whole-branch review remain open. Full verification follows; no native
+build, deployment or visual acceptance is claimed.
+
+Verification: **90 focused tests** and the fresh full **1,172-test suite** pass
+(953 warnings, 122.88s). Targeted unused-import/undefined-name lint, standalone
+adapter/refine/replay/engine/MCP imports and diff check pass. Optional
+render-DeltaE scoring remains unavailable without resvg-py.
+
 Use the existing contract direction:
 
 | Method | Input | Output |

@@ -158,7 +158,7 @@ def test_no_provenance_skip_survives_repeated_noop():
 
 def test_rebind_without_declarations_preserves_cleanup_diagnostics():
     from vectormark.candidate import FlatFill
-    from vectormark.drawing_refine import _rebind_corner_provenance
+    from vectormark.drawing_adapter import rebind_working_corner_provenance
     from vectormark.fit import Shape
     from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 
@@ -168,5 +168,34 @@ def test_rebind_without_declarations_preserves_cleanup_diagnostics():
         footprint=to_polygon(shape), diagnostics={"corners": path_corner_diagnostics(d)})
     cleanup = {"path": d, "spans": (), "skipped": ({"reason": "missing_or_stale_provenance"},)}
     after = before.with_diagnostics({"corners": cleanup})
-    result = _rebind_corner_provenance((before,), (after,), tolerance=1)
+    result = rebind_working_corner_provenance((before,), (after,), tolerance=1)
     assert result[0] is after
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_rebind_keeps_repeated_leaf_ids_scoped_to_their_ancestry(nested):
+    from vectormark.candidate import FlatFill
+    from vectormark.drawing_adapter import rebind_working_corner_provenance
+    from vectormark.fit import Shape
+    from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+
+    d = "M0 0 L10 0 L10 10 L0 10 Z"
+    shape = Shape("path", {"d": d})
+
+    def leaf(corner):
+        return VectorRegion(1, shape, FlatFill("#112233"), 0,
+            footprint=to_polygon(shape), diagnostics={"corners":
+                path_corner_diagnostics(d, declared_corners=(corner,))})
+
+    left, right = leaf((10, 0)), leaf((10, 10))
+    roots = tuple(VectorRegion.branch(id=index, children=(child,))
+        for index, child in ((10, left), (20, right)))
+    before = (VectorRegion.branch(id=30, children=roots),) if nested else roots
+    snapshot = copy.deepcopy(left.diagnostics["corners"])
+    result = rebind_working_corner_provenance(before, before, tolerance=1)
+    actual = result[0].children if nested else result
+    assert actual[0].children[0].diagnostics["corners"]["spans"] == left.diagnostics["corners"]["spans"]
+    assert actual[1].children[0].diagnostics["corners"]["spans"] == right.diagnostics["corners"]["spans"]
+    assert left.diagnostics["corners"] == snapshot
+    assert actual[0].children[0].current is left.current
+    assert actual[1].children[0].current is right.current
