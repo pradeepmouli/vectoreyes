@@ -2478,3 +2478,16 @@ Vbird runs preserve all four v0/v1 SVGs byte-for-byte (17.90s/78.01s, not contro
 benchmarks). Artifacts are separate under `native-canonical-retirement`; the
 verified wheel is installed only in the isolated test runtime. No live deployment,
 server restart, push or corpus overwrite is included.
+
+### Native evidence-receipt parity — 2026-10-20
+
+The four source/native feature-receipt failures were traced to scalar coercion,
+not different fitted curves. At the automatic-evidence boundary Python retained
+the caller's integer `canvas_extent=1254`, while Cython's `float` parameter changed
+it to `1254.0`; JSON therefore hashed different settings. The receipt-producing
+entry point now accepts `float | int`, preserving the caller's representation
+while numerical detection still consumes a floating-point value. The existing
+21-case feature tests pass in both runtimes without changing any baseline hashes.
+Full verification passes 1,324 tests in each runtime (983 warnings;
+121.00s source, 123.79s compiled). The verified wheel is installed only in the
+isolated test runtime. No server deployment is included.

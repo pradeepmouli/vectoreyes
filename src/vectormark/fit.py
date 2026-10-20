@@ -1784,10 +1784,15 @@ def _fit_path_d_with_evidence(
     progressive_allow_lines: bool = True,
     support_weighted_corners: bool = False,
     corner_rounding: bool = True,
-    canvas_extent: float = FIT_REFERENCE_CANVAS_EXTENT,
+    canvas_extent: float | int = FIT_REFERENCE_CANVAS_EXTENT,
     forced_corners: np.ndarray | None = None,
 ) -> _AutomaticPathFit:
-    """Orchestrate feature discovery, shared numerical fitting and evidence binding."""
+    """Orchestrate feature discovery, shared numerical fitting and evidence binding.
+
+    Keep the caller's canvas scalar in the settings receipt. A Cython ``float``
+    parameter coerces integral inputs before hashing, unlike Python execution.
+    The detector separately consumes its numerical floating-point projection.
+    """
     features = _detect_path_features(
         contour, epsilon=epsilon, progressive=progressive,
         support_weighted_corners=support_weighted_corners,
