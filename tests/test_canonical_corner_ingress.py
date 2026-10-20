@@ -5,10 +5,10 @@ import numpy as np
 import pytest
 
 from vectormark.candidate import FlatFill
-from vectormark.drawing_adapter import drawing_from_vector_regions
+from vectormark.drawing_adapter import drawing_from_region_samples
 from vectormark.fit import Shape
 from vectormark.corner_diagnostics import path_corner_diagnostics
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import (
     CornerAnchor,
     ExtremumAnchor,
@@ -81,8 +81,8 @@ def test_non_corner_anchor_variants_keep_their_contracts():
     assert JunctionAnchor("j", command, "other").reference_junction_id == "other"
 
 
-def _region(d: str, *, drawing_id: str, diagnostics: dict, region_id: int = 1) -> VectorRegion:
-    return VectorRegion.from_shape(
+def _region(d: str, *, drawing_id: str, diagnostics: dict, region_id: int = 1) -> RegionSample:
+    return RegionSample.from_shape(
         id=region_id,
         shape=Shape("path", {"d": d, "fill_rule": "evenodd"}),
         fill=FlatFill("#112233"),
@@ -99,7 +99,7 @@ def test_adapter_ingresses_prefit_corners_on_outer_and_cutout_without_mutation()
     corners = path_corner_diagnostics(d, declared_corner_spans=(((10, 0), (12, 2)),))
     region = _region(d, drawing_id="root-child", diagnostics={"corners": corners})
     snapshot = copy.deepcopy(region)
-    drawing = drawing_from_vector_regions("drawing", width=20, height=20, regions=(region,))
+    drawing = drawing_from_region_samples("drawing", width=20, height=20, regions=(region,))
     geometry = drawing.regions[0].geometry
     assert isinstance(geometry, PathGeometryWithCutouts)
     assert geometry.outer.to_svg_d() == geometry_from_svg_d(d, region_id="root-child", fill_rule="evenodd").outer.to_svg_d()
@@ -108,7 +108,7 @@ def test_adapter_ingresses_prefit_corners_on_outer_and_cutout_without_mutation()
     )
     assert geometry.cutouts[0].anchors == ()
     assert region == snapshot
-    assert drawing.regions[0].fill == drawing_from_vector_regions(
+    assert drawing.regions[0].fill == drawing_from_region_samples(
         "drawing", width=20, height=20, regions=(region,)
     ).regions[0].fill
 
@@ -118,13 +118,13 @@ def test_adapter_scopes_cutout_corner_and_preserves_stale_skip():
     corners = path_corner_diagnostics(d, declared_corner_spans=(((8, 2), (9, 3)),))
     corners["spans"] = [span for span in corners["spans"] if span["subpath"] == 1]
     region = _region(d, drawing_id="r", diagnostics={"corners": corners})
-    geometry = drawing_from_vector_regions("drawing", width=10, height=10, regions=(region,)).regions[0].geometry
+    geometry = drawing_from_region_samples("drawing", width=10, height=10, regions=(region,)).regions[0].geometry
     assert isinstance(geometry, PathGeometryWithCutouts)
     assert geometry.outer.anchors == ()
     assert geometry.cutouts[0].anchors[0].id == "r.p1.rounded_corner0"
 
     stale = _region(d, drawing_id="stale", diagnostics={"corners": {**corners, "path": "M0 0 L1 1 Z", "skipped": [{"reason": "prior"}]}})
-    output = drawing_from_vector_regions("drawing", width=10, height=10, regions=(stale,)).regions[0]
+    output = drawing_from_region_samples("drawing", width=10, height=10, regions=(stale,)).regions[0]
     assert isinstance(output.geometry, PathGeometryWithCutouts)
     assert all(not path.anchors for path in (output.geometry.outer, *output.geometry.cutouts))
     assert [item["reason"] for item in output.diagnostics["corners"]["skipped"]] == [
@@ -143,8 +143,8 @@ def test_adapter_uses_child_public_region_id_for_corner_addresses():
         )},
         region_id=2,
     )
-    root = VectorRegion.branch(id=1, children=(child,), drawing_id="root")
-    drawing = drawing_from_vector_regions("drawing", width=20, height=20, regions=(root,))
+    root = RegionSample.branch(id=1, children=(child,), drawing_id="root")
+    drawing = drawing_from_region_samples("drawing", width=20, height=20, regions=(root,))
     geometry = drawing.regions[0].children[0].geometry
     assert isinstance(geometry, PathGeometry)
     assert geometry.anchors[0].command_ids == ("root-2.p0.c1", "root-2.p0.c2")
@@ -157,7 +157,7 @@ def test_adapter_skips_overlapping_span_but_keeps_valid_corner():
         declared_corner_spans=(((0, 0), (4, 4)), ((3, 1), (5, 7))),
     )
     region = _region(d, drawing_id="r", diagnostics={"corners": corners})
-    output = drawing_from_vector_regions("drawing", width=10, height=10, regions=(region,)).regions[0]
+    output = drawing_from_region_samples("drawing", width=10, height=10, regions=(region,)).regions[0]
     assert isinstance(output.geometry, PathGeometry)
     assert [anchor.id for anchor in output.geometry.anchors] == ["r.p0.rounded_corner0"]
     assert output.diagnostics["corners"]["skipped"][-1]["reason"] == "overlapping_corner_ownership"
@@ -180,7 +180,7 @@ def test_adapter_skips_each_malformed_prefit_declaration_without_mutating_source
     region = _region(d, drawing_id="r", diagnostics={"corners": evidence})
     snapshot = copy.deepcopy(region.diagnostics)
 
-    output = drawing_from_vector_regions("drawing", width=20, height=20, regions=(region,)).regions[0]
+    output = drawing_from_region_samples("drawing", width=20, height=20, regions=(region,)).regions[0]
 
     assert isinstance(output.geometry, PathGeometry)
     assert [anchor.id for anchor in output.geometry.anchors] == ["r.p0.rounded_corner0"]

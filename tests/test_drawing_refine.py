@@ -1,6 +1,6 @@
 from dataclasses import asdict as _trace_options
 from vectormark.drawing_render import trace_summary as _canonical_trace
-from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
 from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 from pathlib import Path
 from dataclasses import replace
@@ -20,17 +20,17 @@ from vectormark.drawing_recipe import (
 )
 from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
 from vectormark.drawing_refine import refine
-from vectormark.optimizer.assembly_binding import assemble_working_roots
+from vectormark.refinement.assembly_binding import assemble_working_roots
 from vectormark.drawing_render import render_drawing as render_canonical_drawing
 from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.drawing_trace import PythonTraceEngine, TraceCommand, TraceOptions, TracePath, TraceRegion, TraceResult, svg_path_commands
 from vectormark.candidate import FlatFill, LinearGradientFill
 from vectormark.fill_fit import fit_fill
 from vectormark.paint_fitting import sampled_flat_hex
-from vectormark.optimizer import paint_binding as drawing_paint
+from vectormark.refinement import paint_binding as drawing_paint
 from vectormark.fit import Shape
-from vectormark.optimizer.gate import rasterize
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.gate import rasterize
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.skia_geometry import unary_union
 
 
@@ -174,7 +174,7 @@ def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(
     image = np.full((20, 48, 3), 255, dtype=np.uint8)
     for x in (*range(4, 20), *range(28, 44)):
         image[4:16, x] = (20 + 5 * x, 60, 220 - 4 * x)
-    left = VectorRegion.from_shape(
+    left = RegionSample.from_shape(
         id=1,
         shape=Shape("rect", {"x": 4.0, "y": 4.0, "w": 16.0, "h": 12.0}),
         fill=LinearGradientFill({"x1": 4, "y1": 0, "x2": 44, "y2": 0}, [(0.0, "#143CDC"), (1.0, "#E03C30")]),
@@ -182,7 +182,7 @@ def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(
         raster=np.zeros((20, 48), dtype=bool),
         color_hex="#143CDC",
     )
-    cutout = VectorRegion.from_shape(
+    cutout = RegionSample.from_shape(
         id=2,
         shape=Shape("rect", {"x": 20.0, "y": 4.0, "w": 8.0, "h": 12.0}),
         fill=FlatFill("#FFFFFF"),
@@ -190,7 +190,7 @@ def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(
         raster=np.zeros((20, 48), dtype=bool),
         color_hex="#FFFFFF",
     )
-    right = VectorRegion.from_shape(
+    right = RegionSample.from_shape(
         id=3,
         shape=Shape("rect", {"x": 28.0, "y": 4.0, "w": 16.0, "h": 12.0}),
         fill=FlatFill("#E03C30"),
@@ -199,10 +199,10 @@ def test_refill_all_regions_recovers_one_gradient_for_distinct_colored_siblings(
         color_hex="#E03C30",
     )
     if nested_local_ids:
-        left = VectorRegion.branch(id=11, children=(replace(left, id=1),))
-        cutout = VectorRegion.branch(id=12, children=(replace(cutout, id=1),))
-        right = VectorRegion.branch(id=13, children=(replace(right, id=1),))
-    root = VectorRegion.branch(id=10, children=(left, cutout, right), z=0, drawing_id="r1")
+        left = RegionSample.branch(id=11, children=(replace(left, id=1),))
+        cutout = RegionSample.branch(id=12, children=(replace(cutout, id=1),))
+        right = RegionSample.branch(id=13, children=(replace(right, id=1),))
+    root = RegionSample.branch(id=10, children=(left, cutout, right), z=0, drawing_id="r1")
 
     refilled = drawing_paint.refill_all_regions_from_source((root,), image)
     fills = [leaf.fill for leaf in refilled[0].leaves()]
@@ -225,15 +225,15 @@ def test_drawing_summary_exposes_commands_as_the_canonical_path_addresses():
 def test_region_map_labels_public_child_targets_not_only_the_enclosing_root():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     raster = np.ones((20, 20), dtype=bool)
-    left = VectorRegion.from_shape(
+    left = RegionSample.from_shape(
         id=1001, shape=Shape("rect", {"x": 0, "y": 0, "w": 10, "h": 10}), fill=FlatFill("#112233"),
         z=0, raster=raster, drawing_id="r1-1", source_regions=("r1",),
     )
-    right = VectorRegion.from_shape(
+    right = RegionSample.from_shape(
         id=1002, shape=Shape("rect", {"x": 10, "y": 0, "w": 10, "h": 10}), fill=FlatFill("#445566"),
         z=1, raster=raster, drawing_id="r1-2", source_regions=("r2",),
     )
-    root = VectorRegion.branch(id=1, children=(left, right), z=0, drawing_id="r1")
+    root = RegionSample.branch(id=1, children=(left, right), z=0, drawing_id="r1")
 
     region_map = _canonical_labels(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses((root,))))
 
@@ -247,15 +247,15 @@ def test_region_map_labels_public_child_targets_not_only_the_enclosing_root():
 def test_merge_one_semantic_root_unions_all_of_its_current_children():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     raster = np.ones((32, 64), dtype=bool)
-    left = VectorRegion.from_shape(
+    left = RegionSample.from_shape(
         id=1001, shape=Shape("rect", {"x": 4, "y": 8, "w": 20, "h": 16}), fill=FlatFill("#112233"),
         z=0, raster=raster, drawing_id="r1-1", source_regions=("r1",),
     )
-    right = VectorRegion.from_shape(
+    right = RegionSample.from_shape(
         id=1002, shape=Shape("rect", {"x": 36, "y": 8, "w": 20, "h": 16}), fill=FlatFill("#112233"),
         z=1, raster=raster, drawing_id="r1-2", source_regions=("r2",),
     )
-    root = VectorRegion.branch(
+    root = RegionSample.branch(
         id=1, children=(left, right), z=0, drawing_id="r1", source_regions=("r1", "r2")
     )
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
@@ -282,7 +282,7 @@ def test_explicit_split_creates_two_addressable_children_without_changing_footpr
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     raster = np.zeros((32, 64), dtype=bool)
     raster[8:24, 4:60] = True
-    source = VectorRegion.from_shape(
+    source = RegionSample.from_shape(
         id=1, shape=Shape("rect", {"x": 4, "y": 8, "w": 56, "h": 16}), fill=FlatFill("#FF6600"),
         z=0, raster=raster, drawing_id="orange", source_regions=("r1",),
     )
@@ -304,13 +304,13 @@ def test_merge_invalidates_its_inherited_fill_then_refills_from_the_cached_sourc
     rgb[8:24, 4:56] = (12, 120, 230)
     raster = np.zeros((32, 64), dtype=bool)
     raster[8:24, 4:24] = True
-    left = VectorRegion.from_shape(
+    left = RegionSample.from_shape(
         id=1, shape=Shape("rect", {"x": 4, "y": 8, "w": 20, "h": 16}), fill=FlatFill("#112233"),
         z=0, raster=raster, drawing_id="r1", source_regions=("r1",),
     )
     right_raster = np.zeros_like(raster)
     right_raster[8:24, 36:56] = True
-    right = VectorRegion.from_shape(
+    right = RegionSample.from_shape(
         id=2, shape=Shape("rect", {"x": 36, "y": 8, "w": 20, "h": 16}), fill=FlatFill("#445566"),
         z=1, raster=right_raster, drawing_id="r2", source_regions=("r2",),
     )
@@ -337,7 +337,7 @@ def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cach
     rgb[8:24, 4:60] = (12, 120, 230)
     raster = np.zeros((32, 64), dtype=bool)
     raster[8:24, 4:60] = True
-    source = VectorRegion.from_shape(
+    source = RegionSample.from_shape(
         id=1, shape=Shape("rect", {"x": 4, "y": 8, "w": 56, "h": 16}), fill=FlatFill("#FF6600"),
         z=0, raster=raster, drawing_id="orange", source_regions=("r1",),
     )
@@ -398,11 +398,11 @@ def test_merge_creates_one_native_target_with_combined_source_provenance():
 def test_merge_unions_adjacent_same_fill_geometry_before_svg_emission():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     raster = np.ones((20, 20), dtype=bool)
-    left = VectorRegion.from_shape(
+    left = RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": "M0 0 L10 0 L10 10 L0 10 Z"}), fill=FlatFill("#0064F0"),
         z=0, raster=raster, drawing_id="r1", source_regions=("r1",),
     )
-    right = VectorRegion.from_shape(
+    right = RegionSample.from_shape(
         id=2, shape=Shape("path", {"d": "M10 0 L20 0 L20 10 L10 10 Z"}), fill=FlatFill("#0064F0"),
         z=1, raster=raster, drawing_id="r2", source_regions=("r2",),
     )
@@ -421,12 +421,12 @@ def test_merge_unions_adjacent_same_fill_geometry_before_svg_emission():
 def test_merge_accepts_a_child_region_target_and_removes_it_from_its_parent_tree():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     raster = np.ones((20, 20), dtype=bool)
-    child = VectorRegion.from_shape(
+    child = RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": "M0 0 L10 0 L10 10 L0 10 Z"}), fill=FlatFill("#0064F0"),
         z=0, raster=raster, drawing_id="r1", source_regions=("r1",),
     )
-    branch = VectorRegion.branch(id=10, children=[child], drawing_id="r1", source_regions=("r1",))
-    other = VectorRegion.from_shape(
+    branch = RegionSample.branch(id=10, children=[child], drawing_id="r1", source_regions=("r1",))
+    other = RegionSample.from_shape(
         id=2, shape=Shape("path", {"d": "M10 0 L20 0 L20 10 L10 10 Z"}), fill=FlatFill("#0064F0"),
         z=1, raster=raster, drawing_id="r2", source_regions=("r2",),
     )
@@ -484,7 +484,7 @@ def test_path_geometry_preserves_compound_subpaths_and_evenodd_fill_rule():
         (TraceRegion("r1", 1, "#0064F0", np.ones((10, 10), dtype=bool), (), path, "pixel"),),
         "<svg/>",
     )
-    root = VectorRegion.from_shape(
+    root = RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": path.d, "fill_rule": "evenodd"}), fill=FlatFill("#0064F0"),
         z=0, raster=np.ones((10, 10), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
@@ -543,7 +543,7 @@ def test_path_match_length_uses_another_retained_segment_as_its_reference():
         (TraceRegion("r1", 1, "#0064F0", np.ones((12, 12), dtype=bool), (), path, "pixel"),),
         "<svg/>",
     )
-    root = VectorRegion.from_shape(
+    root = RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": path.d}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
@@ -584,7 +584,7 @@ def test_path_constraints_reconstruct_a_segment_from_a_retained_reference(path_o
         (TraceRegion("r1", 1, "#0064F0", np.ones((12, 12), dtype=bool), (), path, "pixel"),),
         "<svg/>",
     )
-    root = VectorRegion.from_shape(
+    root = RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": path.d}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
@@ -615,7 +615,7 @@ def test_path_remove_joins_the_surviving_segments():
         (TraceRegion("r1", 1, "#0064F0", np.ones((12, 12), dtype=bool), (), path, "pixel"),),
         "<svg/>",
     )
-    root = VectorRegion.from_shape(
+    root = RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": path.d}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
@@ -657,11 +657,11 @@ def test_path_remove_does_not_schedule_implicit_cleanup(monkeypatch):
 
 def test_align_centers_one_retained_region_on_another_along_selected_axes():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
-    left = VectorRegion.from_shape(
+    left = RegionSample.from_shape(
         id=1, shape=Shape("rect", {"x": 0, "y": 0, "w": 10, "h": 10}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((10, 10), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
-    right = VectorRegion.from_shape(
+    right = RegionSample.from_shape(
         id=2, shape=Shape("rect", {"x": 20, "y": 30, "w": 4, "h": 6}), fill=FlatFill("#F06400"), z=1,
         raster=np.ones((10, 10), dtype=bool), drawing_id="r2", source_regions=("r2",),
     )
@@ -792,7 +792,7 @@ def test_canonical_drawing_is_the_retained_version_and_svg_is_a_projection():
     )
 
 
-def test_refine_applies_an_explicit_clone_to_native_vector_regions():
+def test_refine_applies_an_explicit_clone_to_native_region_samples():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "assign_clone", "source": "r1", "target": "r2", "transforms": [{"tx": 32}]},
@@ -851,12 +851,12 @@ def test_detect_clones_and_set_symmetry_apply_the_existing_region_relationships(
 
 def test_branch_children_are_addressable_with_the_existing_hyphenated_convention():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
-    root = VectorRegion.branch(
+    root = RegionSample.branch(
         id=1,
         children=(
-            VectorRegion.from_shape(id=1, shape=Shape("circle", {"cx": 18, "cy": 24, "r": 6}),
+            RegionSample.from_shape(id=1, shape=Shape("circle", {"cx": 18, "cy": 24, "r": 6}),
                 fill=FlatFill("#0064f0"), z=0, raster=trace.regions[0].mask),
-            VectorRegion.from_shape(id=3, shape=Shape("circle", {"cx": 30, "cy": 24, "r": 6}),
+            RegionSample.from_shape(id=3, shape=Shape("circle", {"cx": 30, "cy": 24, "r": 6}),
                 fill=FlatFill("#0064f0"), z=1, raster=trace.regions[0].mask),
         ),
         drawing_id="r1",

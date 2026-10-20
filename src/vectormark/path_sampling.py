@@ -1,4 +1,4 @@
-"""Shared SVG command sampling; independent of optimizer region records."""
+"""Shared SVG command sampling; independent of refinement region records."""
 
 from __future__ import annotations
 
@@ -154,4 +154,3 @@ def _sample_subpath(
         elif kind == "Z":
             cur = start
     return pts
-

@@ -1,6 +1,6 @@
 """Retained self-symmetry execution and shared numeric reconstruction.
 
-Discovery and winner selection belong to optimizer passes. These operations
+Discovery and winner selection belong to refinement passes. These operations
 apply the selected fitter/axis through the existing topology/clone transaction.
 Working-region evidence remains a transitional adapter, not a second scene.
 """

@@ -524,7 +524,7 @@ def test_mcp_detect_symmetry_exposes_an_axis_for_a_follow_up_set_symmetry_plan()
 def _assert_full_square_target(svg: str) -> None:
     """A joined test-square target retains all four sides, not one mirror half."""
     from vectormark.fit import Shape
-    from vectormark.optimizer.vector_region import to_polygon
+    from vectormark.refinement.region_sample import to_polygon
 
     target = next(element for element in ElementTree.fromstring(svg).iter() if element.get("id") == "r1")
     assert target.tag.endswith("path")

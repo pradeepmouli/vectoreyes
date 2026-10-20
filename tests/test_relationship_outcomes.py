@@ -7,20 +7,20 @@ from vectormark.candidate import FlatFill
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_plan import DrawingPlan
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.refinement.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
 from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
 from vectormark.drawing_render import render_drawing
 from vectormark.drawing_trace import TraceOptions, TraceResult
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.drawing_engine import RasterImage
 
 
 def evidence_fixture():
     source = RasterImage(16, 16, 'rgb8', bytes([255]) * 16 * 16 * 3)
     trace = TraceResult(16, 16, TraceOptions(), (), '<svg/>')
-    roots = tuple(VectorRegion.from_shape(id=index, shape=Shape('rect', dict(x=x, y=1., w=4., h=4.)),
+    roots = tuple(RegionSample.from_shape(id=index, shape=Shape('rect', dict(x=x, y=1., w=4., h=4.)),
         fill=FlatFill('#112233'), z=index, raster=np.ones((16, 16), dtype=bool),
         drawing_id=f'r{index}', source_regions=(f'r{index}',)) for index, x in ((1, 1.), (2, 9.)))
     evidence = capture_working_geometry_evidence(kind='source', trace=trace, geometry_source=source, trace_roots=roots)
@@ -33,13 +33,13 @@ def evidence_fixture():
 def test_source_edit_refreshes_clone_footprint_before_later_partition_and_replay(nested, transforms, left):
     source = RasterImage(16, 16, 'rgb8', bytes([255]) * 16 * 16 * 3)
     trace = TraceResult(16, 16, TraceOptions(), (), '<svg/>')
-    roots = tuple(VectorRegion.from_shape(id=index,
+    roots = tuple(RegionSample.from_shape(id=index,
         shape=Shape('rect', dict(x=x, y=y, w=4., h=4.)), fill=FlatFill('#112233'),
         z=index, raster=np.ones((16, 16), dtype=bool), drawing_id=f'r{index}',
         source_regions=(f'r{index}',)) for index, x, y in ((1, 1., 1.), (2, 9., 1.), (3, 1., 9.)))
     source_id = 'r1-1' if nested else 'r1'
     if nested:
-        roots = (VectorRegion.branch(id=10, children=(replace(roots[0], drawing_id=source_id),), drawing_id='r1'), *roots[1:])
+        roots = (RegionSample.branch(id=10, children=(replace(roots[0], drawing_id=source_id),), drawing_id='r1'), *roots[1:])
     evidence = capture_working_geometry_evidence(kind='source', trace=trace, geometry_source=source, trace_roots=roots)
     paint = build_paint_evidence(source)
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
@@ -67,7 +67,7 @@ def test_source_edit_refreshes_clone_footprint_before_later_partition_and_replay
 def test_clone_geometry_is_refreshed_before_paint_invalidation():
     from vectormark.drawing_refine import refine
 
-    roots = tuple(VectorRegion.from_shape(id=index,
+    roots = tuple(RegionSample.from_shape(id=index,
         shape=Shape('rect', dict(x=x, y=y, w=4., h=4.)), fill=FlatFill('#112233'),
         z=index, raster=np.ones((16, 16), dtype=bool), drawing_id=f'r{index}')
         for index, x, y in ((1, 1., 1.), (2, 9., 1.), (3, 1., 9.)))
@@ -137,9 +137,9 @@ def test_selected_outcome_preserves_new_component_coverage():
     roots = working_regions_from_evidence(evidence)
     root = roots[0]
     coverage = CoverageField(np.full((16, 16), .5), (0, 0), (16, 16))
-    child = VectorRegion.from_shape(id=1, drawing_id='r1-1', shape=root.current,
+    child = RegionSample.from_shape(id=1, drawing_id='r1-1', shape=root.current,
         fill=root.fill, z=root.z, raster=root.raster, coverage=coverage, source_regions=('r1',))
-    branch = VectorRegion.branch(id=1, drawing_id='r1', children=(child,), source_regions=('r1',))
+    branch = RegionSample.branch(id=1, drawing_id='r1', children=(child,), source_regions=('r1',))
     operation = RecipeOperation('test.fit', 'agent', FitPathDrawingAction(op='fit_path', target='r1'), upstream.settings, ())
     _, projected = retain_working_operation_outcome(operation, roots,
         (branch, roots[1]), evidence=evidence, paint=paint, upstream=upstream)

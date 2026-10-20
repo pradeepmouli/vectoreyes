@@ -4,14 +4,14 @@ import pytest
 from vectormark.candidate import FlatFill
 from vectormark.drawing_actions import MergeAction, SplitAction
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
-from vectormark.drawing_adapter import drawing_from_vector_regions, publish_drawing_update
+from vectormark.refinement.region_sample import RegionSample
+from vectormark.drawing_adapter import drawing_from_region_samples, publish_drawing_update
 
 
 def leaf(identity, x, *, drawing_id=None, source="source"):
     raster = np.zeros((20, 40), dtype=bool)
     raster[2:12, int(x) : int(x) + 10] = True
-    return VectorRegion.from_shape(
+    return RegionSample.from_shape(
         id=identity,
         shape=Shape("rect", {"x": x, "y": 2, "w": 10, "h": 10}),
         fill=FlatFill("#123456"),
@@ -49,10 +49,10 @@ def test_partition_actions_consume_canonical_drawing_without_working_regions():
 
 
 def test_canonical_merge_publication_retains_union_of_source_observations():
-    from vectormark.drawing_adapter import drawing_from_vector_regions, publish_drawing_update
+    from vectormark.drawing_adapter import drawing_from_region_samples, publish_drawing_update
     from vectormark.drawing_partition import merge_regions
     left, right = leaf(1, 0, drawing_id='r1', source='a'), leaf(2, 10, drawing_id='r2', source='b')
-    drawing = drawing_from_vector_regions('merge', width=40, height=20, regions=(left, right))
+    drawing = drawing_from_region_samples('merge', width=40, height=20, regions=(left, right))
     result = publish_drawing_update(merge_regions(drawing,
         MergeAction(op='merge', id='band', regions=('r1', 'r2'))), (left, right))
     assert len(result) == 1 and result[0].drawing_id == 'band'
@@ -65,9 +65,9 @@ def test_merge_engine_removes_only_selected_scoped_children():
     from vectormark.drawing_partition import merge_regions
 
     selected, sibling = leaf(1, 0, source="a"), leaf(2, 20, source="b")
-    root = VectorRegion.branch(id=10, drawing_id="r1", children=(selected, sibling))
+    root = RegionSample.branch(id=10, drawing_id="r1", children=(selected, sibling))
     other = leaf(1, 10, drawing_id="r2", source="c")
-    drawing = drawing_from_vector_regions('partition', width=40, height=20, regions=(root, other))
+    drawing = drawing_from_region_samples('partition', width=40, height=20, regions=(root, other))
     result = publish_drawing_update(merge_regions(
         drawing, MergeAction(op="merge", id="merged", regions=("r1-1", "r2"))
     ), (root, other))
@@ -93,8 +93,8 @@ def test_split_engine_preserves_scope_union_and_source_evidence(divider):
     from vectormark.drawing_partition import split_region
 
     source, sibling = leaf(1, 0, source="a"), leaf(2, 20, source="b")
-    root = VectorRegion.branch(id=10, drawing_id="r1", children=(source, sibling))
-    drawing = drawing_from_vector_regions('partition', width=40, height=20, regions=(root,))
+    root = RegionSample.branch(id=10, drawing_id="r1", children=(source, sibling))
+    drawing = drawing_from_region_samples('partition', width=40, height=20, regions=(root,))
     result = publish_drawing_update(split_region(
         drawing, SplitAction(op="split", target="r1-1", divider=divider)
     ), (root,))
@@ -129,7 +129,7 @@ def test_split_engine_rejects_invalid_divider_without_mutating_input(divider, me
 
     source = leaf(1, 0, drawing_id="r1")
     shape = source.current
-    drawing = drawing_from_vector_regions('partition', width=40, height=20, regions=(source,))
+    drawing = drawing_from_region_samples('partition', width=40, height=20, regions=(source,))
     geometry = drawing.region('r1').geometry
     with pytest.raises(ValueError, match=message):
         split_region(drawing, SplitAction(op="split", target="r1", divider=divider))

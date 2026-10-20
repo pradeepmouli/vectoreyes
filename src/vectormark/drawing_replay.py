@@ -39,7 +39,7 @@ from .drawing_actions import (
     StitchAction,
     UpdateGeometryAction,
 )
-from .optimizer.replay_binding import (
+from .refinement.replay_binding import (
     capture_replay_state, working_regions_from_state,
 )
 from .replay_state import ReplayState, publish_drawing_state, retained_region_raster
@@ -87,14 +87,14 @@ from .path_fit_evidence import (
     FitPathCorrespondence,
     FitSpanCorrespondence,
 )
-from .optimizer.automatic_replay import (
+from .refinement.automatic_replay import (
     ApplySeamConstraintsOperation,
     NormalizeRetainedTopologyOperation,
     PathEndpointRef,
     ReplayBatch,
     bind_intent,
 )
-from .optimizer.topology_binding import normalize_working_topology
+from .refinement.topology_binding import normalize_working_topology
 from .path_sampling import _parse_subpaths
 from .drawing_seams import _command_id as seam_command_id
 from .drawing_seams import _path_id as seam_path_id
@@ -598,7 +598,7 @@ def _propose_public_operation(
             for root in state.drawing.regions for region in _walk_regions(root)):
         # The remaining self-symmetry preparation boundary owns scoped clone
         # remapping and its numeric receipts; do not silently skip it here.
-        from .optimizer.symmetry_materialize import materialize_self_symmetry
+        from .refinement.symmetry_materialize import materialize_self_symmetry
         state = capture_replay_state(normalize_working_topology(
             materialize_self_symmetry(working_regions_from_state(state))), paint.canvas)
     drawing = state.drawing
@@ -1750,7 +1750,7 @@ def _recipe_command_mapping(
         if isinstance(step, ReplayBatch):
             if has_public_fit:
                 # Lineage binds the preceding automatic output, not a later
-                # boolean or optimizer rewrite.
+                # boolean or refinement rewrite.
                 return None
             batches.append(step)
             continue

@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 
 from tests.test_canonical_automatic_replay import primitive_case
-from vectormark.optimizer.automatic_replay import input_revision
-from vectormark.optimizer.replay_binding import working_regions_from_state
+from vectormark.refinement.automatic_replay import input_revision
+from vectormark.refinement.replay_binding import working_regions_from_state
 from vectormark.replay_identity import canonical_input_revision
 
 
@@ -23,7 +23,7 @@ def test_canonical_input_identity_needs_no_working_region_projection(monkeypatch
     expected = input_revision(list(working_regions_from_state(state)))
     def forbidden(*args, **kwargs):
         raise AssertionError('receipt materialized working regions')
-    monkeypatch.setattr('vectormark.optimizer.replay_binding.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     assert canonical_input_revision(state) == expected
 
 

@@ -1,6 +1,6 @@
 """Recorded occlusion reconstruction and shared child/branch publication.
 
-Scene discovery stays in the optimizer; this module validates and applies the
+Scene discovery stays in the refinement; this module validates and applies the
 selected primitive/source/lens dependencies without detecting a different scene.
 """
 
@@ -18,7 +18,7 @@ from .path_geometry import (
     parse_svg_paths,
 )
 from .occlusion import intersection_lens_d
-from .optimizer.automatic_replay import (
+from .refinement.automatic_replay import (
     AnnulusPrimitive,
     CompletedOcclusionPrimitive,
     IntersectionLens,

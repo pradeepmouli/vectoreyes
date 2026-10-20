@@ -55,12 +55,12 @@ def test_replay_execution_retains_canonical_output_without_disposable_regions():
 def test_replay_input_identity_ignores_svg_spelling_but_not_geometry_or_paint():
     from vectormark.candidate import FlatFill as WorkingFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.replay_binding import capture_replay_state
+    from vectormark.refinement.replay_binding import capture_replay_state
     from vectormark.replay_identity import canonical_input_revision
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.region_sample import RegionSample
 
     mask = np.ones((8, 8), dtype=bool)
-    first = VectorRegion.from_shape(id=1, shape=Shape('path', {'d': 'M1 1 L6 1 L6 6 L1 6 Z'}),
+    first = RegionSample.from_shape(id=1, shape=Shape('path', {'d': 'M1 1 L6 1 L6 6 L1 6 Z'}),
         fill=WorkingFill('#123456'), z=0, raster=mask, drawing_id='r1')
     equivalent = replace(first, current=Shape('path', {'d': 'M 1.0 1.0 L 6.0 1.0 L 6.0 6.0 L 1.0 6.0 Z'}))
     changed = replace(first, current=Shape('path', {'d': 'M1 1 L7 1 L6 6 L1 6 Z'}))
@@ -74,11 +74,11 @@ def test_replay_input_identity_ignores_svg_spelling_but_not_geometry_or_paint():
 def test_replay_capture_detaches_cached_command_objects_from_working_inputs():
     from vectormark.candidate import FlatFill as WorkingFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.replay_binding import capture_replay_state
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.replay_binding import capture_replay_state
+    from vectormark.refinement.region_sample import RegionSample
 
     geometry = geometry_from_svg_d('M1 1 L6 1 L6 6 L1 6 Z', region_id='r1')
-    region = VectorRegion.from_shape(id=1, shape=Shape('path', {
+    region = RegionSample.from_shape(id=1, shape=Shape('path', {
         'd': geometry.to_svg_d(), 'canonical_path_geometry': geometry}),
         fill=WorkingFill('#123456'), z=0, raster=np.ones((8, 8), dtype=bool), drawing_id='r1')
     state = capture_replay_state((region,), Canvas(8, 8))

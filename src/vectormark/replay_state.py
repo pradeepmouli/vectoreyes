@@ -39,7 +39,7 @@ def publish_drawing_state(
     retained source rasters. Existing observations remain immutable.
     """
     from .geometry_native import region_path
-    from .optimizer.gate import rasterize
+    from .refinement.gate import rasterize
     from .path_topology import component_paths
     from .path_geometry import PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry
 

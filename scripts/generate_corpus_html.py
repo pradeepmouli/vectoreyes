@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict as _trace_asdict
 from vectormark.drawing_render import trace_summary as _canonical_trace
-from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
 from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 import argparse
 import base64
@@ -33,7 +33,7 @@ from PIL import Image
 
 from vectormark import Options, idealize
 from vectormark.drawing_refine import auto_refine, stitch_regions
-from vectormark.optimizer.assembly_binding import assemble_working_roots
+from vectormark.refinement.assembly_binding import assemble_working_roots
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
 from vectormark.pipeline import _flatten_on_white
@@ -76,7 +76,7 @@ def default_entries() -> list[CorpusEntry]:
     Prefer the local ignored URL manifest, then the local ignored drop-in corpus
     directory, then the legacy untracked real-logo corpus used for acceptance
     inspection. For each logo, render the current default pipeline and the
-    optimizer pipeline.
+    refinement pipeline.
     Fall back to a tiny synthetic set when the local corpus is unavailable.
     """
     entries = source_manifest_entries(DEFAULT_CORPUS_MANIFEST, DEFAULT_CORPUS_CACHE)
@@ -88,17 +88,17 @@ def default_entries() -> list[CorpusEntry]:
         if entries:
             return entries
 
-    from tests.optimizer.test_integration import _asymmetric_cloud_image, _disk_image
+    from tests.refinement.test_integration import _asymmetric_cloud_image, _disk_image
 
     entries = [
         CorpusEntry("disk", "current", _disk_image, Options()),
-        CorpusEntry("disk", "optimizer", _disk_image, Options(optimizer=True)),
+        CorpusEntry("disk", "refinement", _disk_image, Options(refinement=True)),
         CorpusEntry("asymmetric_cloud", "current", _asymmetric_cloud_image, Options()),
         CorpusEntry(
             "asymmetric_cloud",
-            "optimizer",
+            "refinement",
             _asymmetric_cloud_image,
-            Options(optimizer=True),
+            Options(refinement=True),
         )
     ]
     return entries
@@ -212,12 +212,12 @@ def source_manifest_entries(
             item["name"], item["url"], cache_dir, filename=item.get("filename"), refresh=refresh,
         )
         entries.append(CorpusEntry(item["name"], "current", factory, Options(), source_bytes))
-        entries.append(CorpusEntry(item["name"], "optimizer", factory, Options(optimizer=True), source_bytes))
+        entries.append(CorpusEntry(item["name"], "refinement", factory, Options(refinement=True), source_bytes))
     return entries
 
 
 def corpus_entries(corpus: Path) -> list[CorpusEntry]:
-    """Build paired current/optimizer entries from PNG files in a corpus directory."""
+    """Build paired current/refinement entries from PNG files in a corpus directory."""
     skip_prefixes = (
         "cap",
         "cmp_",
@@ -254,7 +254,7 @@ def corpus_entries(corpus: Path) -> list[CorpusEntry]:
         factory = _image_factory(path)
         source_bytes = _source_bytes_factory(path)
         entries.append(CorpusEntry(path.stem, "current", factory, Options(), source_bytes))
-        entries.append(CorpusEntry(path.stem, "optimizer", factory, Options(optimizer=True), source_bytes))
+        entries.append(CorpusEntry(path.stem, "refinement", factory, Options(refinement=True), source_bytes))
     return entries
 
 
@@ -330,7 +330,7 @@ def _load_cached_trace(path: Path, *, trace_options: dict[str, object]):
 
 
 def _load_or_create_trace(cache_path: Path, image: np.ndarray, options: Options):
-    from vectormark.optimizer.trace import trace_regions
+    from vectormark.refinement.trace import trace_regions
 
     trace_options = _trace_options(options)
     payload = _load_cached_trace(cache_path, trace_options=trace_options)
@@ -354,7 +354,7 @@ def _load_or_create_trace(cache_path: Path, image: np.ndarray, options: Options)
     return objects, masks
 
 
-def _idealize_optimizer_with_trace_cache(
+def _idealize_refinement_with_trace_cache(
     image: np.ndarray,
     *,
     options: Options,
@@ -362,13 +362,13 @@ def _idealize_optimizer_with_trace_cache(
     cache_dir: Path,
 ):
     from vectormark.emit import render_svg_doc
-    from vectormark.optimizer.framework import optimize
+    from vectormark.refinement.framework import select_refinements
     from vectormark.pipeline import (
         _condition_input,
-        _optimizer_passes,
-        _optimizer_report,
-        _prefer_optimizer_svg,
-        _render_optimizer_body,
+        _refinement_passes,
+        _refinement_report,
+        _prefer_refinement_svg,
+        _render_refinement_body,
         _set_svg_output_size,
     )
 
@@ -381,8 +381,8 @@ def _idealize_optimizer_with_trace_cache(
         working,
         options,
     )
-    optimized = optimize(objects, masks, _optimizer_passes(options))
-    trace_body, trace_defs = _render_optimizer_body(
+    optimized = select_refinements(objects, masks, _refinement_passes(options))
+    trace_body, trace_defs = _render_refinement_body(
         objects,
         flatten=options.flatten,
         epsilon=options.epsilon,
@@ -390,7 +390,7 @@ def _idealize_optimizer_with_trace_cache(
         cubic=options.cubic_paths,
     )
     trace_svg = render_svg_doc(w0, h0, trace_body, trace_defs)
-    optimized_body, optimized_defs = _render_optimizer_body(
+    optimized_body, optimized_defs = _render_refinement_body(
         optimized,
         flatten=options.flatten,
         epsilon=options.epsilon,
@@ -399,10 +399,10 @@ def _idealize_optimizer_with_trace_cache(
     )
     optimized_svg = render_svg_doc(w0, h0, optimized_body, optimized_defs)
     fallback_reason = None
-    if not _prefer_optimizer_svg(trace_svg, optimized_svg):
+    if not _prefer_refinement_svg(trace_svg, optimized_svg):
         fallback_reason = "optimized output has more path segments than trace baseline"
     svg = optimized_svg
-    report = _optimizer_report(optimized, options, fallback_reason=fallback_reason)
+    report = _refinement_report(optimized, options, fallback_reason=fallback_reason)
     if (working.shape[1], working.shape[0]) != (orig_w, orig_h):
         svg = _set_svg_output_size(svg, orig_w, orig_h)
     return svg, report
@@ -520,7 +520,7 @@ def _trace_drawing_auto_with_cache(
 
     # Cache only tracing and retained v0 geometry.  Auto refinement, final fill
     # fitting, SVG emission, and diagnostics are intentionally rerun so an
-    # optimizer or renderer change appears in the next corpus invocation.
+    # refinement or renderer change appears in the next corpus invocation.
     pass_snapshots: list[tuple[str, str, dict[str, Any]]] = []
     if debug_dir is not None:
         pass_snapshots.append(("trace_v0", _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(roots))).svg, dict(_canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(roots))).report)))
@@ -589,7 +589,7 @@ def _write_trace_auto_debug_report(
 ) -> None:
     """Write a self-contained trace-auto pass report without retracing.
 
-    The first artifacts retain v0 and every optimizer pass.  The final two
+    The first artifacts retain v0 and every refinement pass.  The final two
     artifacts mirror the MCP review panel's agent-facing evidence: an
     addressable region map and a source-to-final SVG difference map.
     """
@@ -701,7 +701,7 @@ def _gallery_options(
 
 
 def _sorted_entries(entries: Iterable[CorpusEntry]) -> list[CorpusEntry]:
-    mode_order = {"current": 0, "optimizer": 1, "trace_auto": 2}
+    mode_order = {"current": 0, "refinement": 1, "trace_auto": 2}
     return sorted(entries, key=lambda item: (item.name, mode_order.get(item.mode, 99)))
 
 
@@ -712,7 +712,7 @@ def _entries_for_workflow(entries: Iterable[CorpusEntry], workflow: str) -> list
         raise ValueError(f"unsupported corpus workflow: {workflow!r}")
     chosen: dict[str, CorpusEntry] = {}
     for entry in _sorted_entries(entries):
-        # The old corpus has a current/optimizer pair per source.  Drawing-auto
+        # The old corpus has a current/refinement pair per source.  Drawing-auto
         # has one stateful trace per source, so retain the current entry's trace
         # settings and its original-byte factory exactly once.
         if entry.name not in chosen or entry.mode == "current":
@@ -797,8 +797,8 @@ table {{ width: 100%; border-collapse: collapse; }} th,td {{ padding: 4px 6px; b
 </body></html>"""
     diagnostics = payload.get("diagnostics") or {}
     stats = diagnostics.get("stats") or {}
-    optimizer_regions = diagnostics.get("optimizer_regions") or []
-    optimizer_objects = diagnostics.get("optimizer_objects") or []
+    refinement_regions = diagnostics.get("refinement_regions") or []
+    refinement_objects = diagnostics.get("refinement_objects") or []
     legacy_regions = diagnostics.get("regions") or []
 
     stat_rows = [[key, value] for key, value in sorted(stats.items())]
@@ -811,7 +811,7 @@ table {{ width: 100%; border-collapse: collapse; }} th,td {{ padding: 4px 6px; b
             region.get("children"),
             json.dumps(region.get("diagnostics") or {}, sort_keys=True),
         ]
-        for region in optimizer_regions
+        for region in refinement_regions
     ]
     object_rows = [
         [
@@ -822,7 +822,7 @@ table {{ width: 100%; border-collapse: collapse; }} th,td {{ padding: 4px 6px; b
             obj.get("bounds"),
             obj.get("area"),
         ]
-        for obj in optimizer_objects
+        for obj in refinement_objects
     ]
     legacy_region_rows = [
         [
@@ -864,9 +864,9 @@ table {{ width: 100%; border-collapse: collapse; }} th,td {{ padding: 4px 6px; b
   {_summary_table(["metric", "value"], stat_rows)}
   <h3>Strategies</h3>
   {_summary_table(["strategy", "count"], strategy_rows)}
-  <h3>Optimizer Regions</h3>
+  <h3>Refinement Regions</h3>
   {_summary_table(["id", "z", "kind", "children", "diagnostics"], region_rows)}
-  <h3>Optimizer Objects</h3>
+  <h3>Refinement Objects</h3>
   {_summary_table(["id", "z", "shape", "fill", "bounds", "area"], object_rows)}
   <h3>Trace Regions</h3>
   {_summary_table(["id", "area", "color", "shape", "symmetry"], legacy_region_rows)}
@@ -1029,8 +1029,8 @@ def generate_corpus_html(
                 support_weighted_corners=trace_support_weighted_corners,
                 debug_dir=debug_dir / f"{_entry_id(entry)}-passes" if debug_reports else None,
             )
-        elif options.optimizer:
-            svg, report = _idealize_optimizer_with_trace_cache(
+        elif options.refinement:
+            svg, report = _idealize_refinement_with_trace_cache(
                 image,
                 options=options,
                 entry=entry,
@@ -1209,7 +1209,7 @@ def main() -> None:
         "--workflow",
         choices=("trace-auto", "oneshot"),
         default="trace-auto",
-        help="trace-auto uses the MCP trace_drawing(refine='auto') workflow; oneshot preserves the legacy current/optimizer gallery.",
+        help="trace-auto uses the MCP trace_drawing(refine='auto') workflow; oneshot preserves the legacy current/refinement gallery.",
     )
     parser.add_argument(
         "--trace-max-sampling-colors",

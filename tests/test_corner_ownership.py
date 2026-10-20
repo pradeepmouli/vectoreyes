@@ -130,16 +130,16 @@ def test_point_at_serialization_start_cannot_be_consumed_by_wrapped_corner():
     assert diagnostics["skipped"][0]["reason"] == "protected_point_inside_span"
 
 
-def test_optimizer_pass_preserves_provenance_across_repeated_calls():
+def test_refinement_pass_preserves_provenance_across_repeated_calls():
     from vectormark.candidate import FlatFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.passes.corners import corner_normalize_pass
-    from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+    from vectormark.refinement.passes.corners import corner_normalize_pass
+    from vectormark.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 L10 0 Q12 0 13 1 Q14 2 14 4 L0 12 Z"
     diagnostics = path_corner_diagnostics(d, declared_corner_spans=(((10, 0), (14, 4)),))
     shape = Shape("path", {"d": d})
-    obj = VectorRegion(id=1, current=shape, original=shape, footprint=to_polygon(shape),
+    obj = RegionSample(id=1, current=shape, original=shape, footprint=to_polygon(shape),
         fill=FlatFill("#112233"), z=0, diagnostics={"corners": diagnostics})
     first = corner_normalize_pass([obj], {}, max_error=1, enabled=True)[0].new_objects[0]
     second = corner_normalize_pass([first], {}, max_error=1, enabled=True)[0].new_objects[0]
@@ -160,11 +160,11 @@ def test_rebind_without_declarations_preserves_cleanup_diagnostics():
     from vectormark.candidate import FlatFill
     from vectormark.drawing_adapter import rebind_working_corner_provenance
     from vectormark.fit import Shape
-    from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+    from vectormark.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 Q5 0 10 10 L0 10 Z"
     shape = Shape("path", {"d": d})
-    before = VectorRegion(1, shape, FlatFill("#112233"), 0,
+    before = RegionSample(1, shape, FlatFill("#112233"), 0,
         footprint=to_polygon(shape), diagnostics={"corners": path_corner_diagnostics(d)})
     cleanup = {"path": d, "spans": (), "skipped": ({"reason": "missing_or_stale_provenance"},)}
     after = before.with_diagnostics({"corners": cleanup})
@@ -177,20 +177,20 @@ def test_rebind_keeps_repeated_leaf_ids_scoped_to_their_ancestry(nested):
     from vectormark.candidate import FlatFill
     from vectormark.drawing_adapter import rebind_working_corner_provenance
     from vectormark.fit import Shape
-    from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+    from vectormark.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 L10 0 L10 10 L0 10 Z"
     shape = Shape("path", {"d": d})
 
     def leaf(corner):
-        return VectorRegion(1, shape, FlatFill("#112233"), 0,
+        return RegionSample(1, shape, FlatFill("#112233"), 0,
             footprint=to_polygon(shape), diagnostics={"corners":
                 path_corner_diagnostics(d, declared_corners=(corner,))})
 
     left, right = leaf((10, 0)), leaf((10, 10))
-    roots = tuple(VectorRegion.branch(id=index, children=(child,))
+    roots = tuple(RegionSample.branch(id=index, children=(child,))
         for index, child in ((10, left), (20, right)))
-    before = (VectorRegion.branch(id=30, children=roots),) if nested else roots
+    before = (RegionSample.branch(id=30, children=roots),) if nested else roots
     snapshot = copy.deepcopy(left.diagnostics["corners"])
     result = rebind_working_corner_provenance(before, before, tolerance=1)
     actual = result[0].children if nested else result

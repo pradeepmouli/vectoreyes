@@ -47,7 +47,7 @@ packaged guidance is exposed, never the operator's personal skills directory.
 The Pydantic action and output models remain authoritative for tool schemas.
 
 1. **`trace_drawing(image, options)`** creates a live drawing. With
-   `refine="auto"`, `outputs` contains pre-optimizer `v0` and optimized `v1`.
+   `refine="auto"`, `outputs` contains pre-refinement `v0` and optimized `v1`.
    With `refine="none"` (the default), it contains only `v0`. Both modes support
    subsequent refinement. Each output is an immutable canonical `Drawing`;
    `v1` is replayed from retained source evidence and concrete accepted actions,
@@ -306,7 +306,7 @@ retracing) has individual booleans for `occlusion`, `split_compound`,
 All default to true; omitted fields keep those defaults. The canonical order
 is unchanged. These controls affect only automatic refinement, not explicit
 plan actions. `corner_normalize` remains a separate opt-in control (false).
-`initial_stitch` defaults to true and controls the pre-optimizer v0 stitch.
+`initial_stitch` defaults to true and controls the pre-refinement v0 stitch.
 Final source-fill resolution is mandatory, not a switchable geometry pass.
 Overlapping compound contours do not abort tracing. They remain addressable as
 `compound_path` geometry, with their original path IDs, commands and fill rule.

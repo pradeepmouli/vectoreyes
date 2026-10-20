@@ -19,15 +19,15 @@ from vectormark.drawing_recipe import (
     VersionPathSelection,
     build_paint_evidence,
 )
-from vectormark.optimizer.assembly_binding import assemble_working_roots
-from vectormark.optimizer.replay_binding import replay_working_regions
+from vectormark.refinement.assembly_binding import assemble_working_roots
+from vectormark.refinement.replay_binding import replay_working_regions
 from vectormark.drawing_replay import (
     extend_recipe_with_corner_edits,
     propose_effective_recipe,
     )
 from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
-from vectormark.optimizer.automatic_replay import input_revision
+from vectormark.refinement.automatic_replay import input_revision
 from vectormark.path_geometry import CornerAnchor, PathGeometry, PathGeometryWithCutouts
 
 

@@ -13,11 +13,11 @@ import numpy as np
 
 from vectormark.candidate import FlatFill
 from vectormark.drawing_actions import ActionSettings, DrawingPlan
-from vectormark.drawing_adapter import drawing_from_vector_regions
+from vectormark.drawing_adapter import drawing_from_region_samples
 from vectormark.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.optimizer.replay_binding import capture_replay_state
-from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.refinement.replay_binding import capture_replay_state
+from vectormark.refinement.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
     RecipeOperation,
@@ -31,7 +31,7 @@ from vectormark.drawing_replay import (
     propose_effective_recipe,
 )
 from vectormark.drawing_refine import refine
-from vectormark.optimizer.paint_binding import refill_changed_regions_from_source
+from vectormark.refinement.paint_binding import refill_changed_regions_from_source
 from vectormark.drawing_render import drawing_summary
 from vectormark.drawing_state import DrawingStore
 from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
@@ -43,18 +43,18 @@ from vectormark.mcp_server import (
     refine_drawing,
     trace_drawing,
 )
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     ApplySeamConstraintsOperation,
     AxisSeamConstraint,
     PathOpsUnderlapConstraint,
     ReplayBatch,
 )
 from vectormark.corner_diagnostics import path_corner_diagnostics
-from vectormark.optimizer.framework import optimize_with_intent
-from vectormark.optimizer.gate import rasterize
-from vectormark.optimizer.passes.compound import split_compound_pass
-from vectormark.optimizer.passes.seams import seams_pass
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement.framework import select_refinements_with_intent
+from vectormark.refinement.gate import rasterize
+from vectormark.refinement.passes.compound import split_compound_pass
+from vectormark.refinement.passes.seams import seams_pass
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 from vectormark.path_fit_evidence import automatic_fit_evidence
 from vectormark.path_geometry import CloneGeometry
 from vectormark.skia_geometry import SkPath
@@ -175,7 +175,7 @@ def _retained_path_region(
         settings=(1.0, 1.0),
     )
     shape = Shape("path", {"d": d})
-    region = VectorRegion(
+    region = RegionSample(
         obj_id,
         shape,
         FlatFill("#123456"),
@@ -209,7 +209,7 @@ def _seam_recipe_execution(regions, root_paths, masks):
         trace_roots=retained_regions,
     )
     paint = build_paint_evidence(source)
-    optimized = optimize_with_intent(list(working_regions_from_evidence(evidence)), masks, [seams_pass])
+    optimized = select_refinements_with_intent(list(working_regions_from_evidence(evidence)), masks, [seams_pass])
     recipe = EffectiveDrawingRecipe(
         evidence.revision,
         evidence.engine_revision,
@@ -231,7 +231,7 @@ def _direct_plan_drawing(drawing_id, evidence, paint, plan):
         plan,
         rgb=raster_pixels(paint.source),
     )
-    return drawing_from_vector_regions(
+    return drawing_from_region_samples(
         drawing_id,
         width=paint.canvas.width,
         height=paint.canvas.height,
@@ -254,7 +254,7 @@ def _sequential_update_drawing(drawing_id, evidence, paint, plan):
     regions = refill_changed_regions_from_source(
         working_regions_from_evidence(evidence), regions, raster_pixels(paint.source)
     )
-    return drawing_from_vector_regions(
+    return drawing_from_region_samples(
         drawing_id,
         width=paint.canvas.width,
         height=paint.canvas.height,
@@ -314,7 +314,7 @@ def test_single_region_public_action_replays_from_retained_evidence(
     if action["op"] == "detect_primitives":
         assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
         monkeypatch.setattr(
-            "vectormark.optimizer.passes.primitives.recognize_primitive_geometry",
+            "vectormark.refinement.passes.primitives.recognize_primitive_geometry",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("primitive detection ran during recipe replay")
             ),
@@ -322,7 +322,7 @@ def test_single_region_public_action_replays_from_retained_evidence(
     if action["op"] == "detect_symmetry":
         assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
         monkeypatch.setattr(
-            "vectormark.optimizer.passes.symmetry._best_self_reconstruction",
+            "vectormark.refinement.passes.symmetry._best_self_reconstruction",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("symmetry selection ran during recipe replay")
             ),
@@ -503,7 +503,7 @@ def test_detect_clones_replays_accepted_concrete_action_without_detection(monkey
     )
     assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
     monkeypatch.setattr(
-        "vectormark.optimizer.passes.clones.clones_pass",
+        "vectormark.refinement.passes.clones.clones_pass",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("clone detection ran during recipe replay")
         ),
@@ -512,9 +512,9 @@ def test_detect_clones_replays_accepted_concrete_action_without_detection(monkey
 
 
 def test_stitch_replays_accepted_constraints_without_pair_discovery(monkeypatch):
-    def region(region_id: int, d: str, z: float) -> VectorRegion:
+    def region(region_id: int, d: str, z: float) -> RegionSample:
         shape = Shape("path", {"d": d})
-        return VectorRegion(
+        return RegionSample(
             region_id,
             shape,
             FlatFill(f"#{region_id:06x}"),
@@ -545,7 +545,7 @@ def test_stitch_replays_accepted_constraints_without_pair_discovery(monkeypatch)
         drawing_id="drw_stitch", evidence=evidence, paint=paint, recipe=recipe
     ).drawing
     monkeypatch.setattr(
-        "vectormark.optimizer.passes.seams._candidate_for_pair",
+        "vectormark.refinement.passes.seams._candidate_for_pair",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("seam pair discovery ran during recipe replay")
         ),
@@ -570,7 +570,7 @@ def test_pathops_seam_report_keeps_only_exact_commands_and_unaffected_sibling():
         "M100 1 L100 100 L1 100 Z",
         z=1,
     )
-    branch = VectorRegion.branch(
+    branch = RegionSample.branch(
         id=20,
         children=[under, top],
         z=0,
@@ -761,7 +761,7 @@ def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
             "path_ids": ("r1.p0", "r1.p1"),
         },
     )
-    source_region = VectorRegion.from_shape(
+    source_region = RegionSample.from_shape(
         id=1,
         shape=shape,
         fill=FlatFill("#123456"),
@@ -770,7 +770,7 @@ def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
         drawing_id="r1",
         source_regions=("r1",),
     )
-    optimized = optimize_with_intent(
+    optimized = select_refinements_with_intent(
         [source_region], {1: source_region.raster}, [split_compound_pass]
     )
     pixels = np.full((24, 24, 3), 255, np.uint8)
@@ -796,7 +796,7 @@ def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
         steps=optimized.batches,
     )
     regions = tuple(optimized.objects)
-    drawing = drawing_from_vector_regions(
+    drawing = drawing_from_region_samples(
         "drw_topology_receipt",
         width=24,
         height=24,
@@ -843,7 +843,7 @@ def test_update_geometry_preserves_cleanup_positions_repetitions_and_settings():
         "L247 417.5 Z"
     )
     shape = Shape("path", {"d": d})
-    source = VectorRegion(
+    source = RegionSample(
         1,
         shape,
         FlatFill("#123456"),
@@ -983,7 +983,7 @@ def test_nested_path_action_replay_binds_every_command_reference(
     path_actions, expected_roles
 ):
     shape = Shape("path", {"d": "M0 0 L6 0 L6 3 L0 3 Z"})
-    source = VectorRegion(
+    source = RegionSample(
         1,
         shape,
         FlatFill("#123456"),
@@ -1006,7 +1006,7 @@ def test_nested_path_action_replay_binds_every_command_reference(
     })
     if any(item["op"] in {"break", "reverse", "mirror"} for item in path_actions):
         from vectormark.drawing_replay import bind_recipe_operation
-        from vectormark.optimizer.replay_binding import capture_replay_state
+        from vectormark.refinement.replay_binding import capture_replay_state
         from vectormark.drawing import Canvas
 
         operation = bind_recipe_operation(
@@ -1057,7 +1057,7 @@ def test_public_corner_normalization_replays_retained_declaration_without_detect
     declaration = path_corner_diagnostics(
         d, declared_corner_spans=(((10, 0), (14, 4)),)
     )
-    source = VectorRegion(
+    source = RegionSample(
         1,
         shape,
         FlatFill("#123456"),

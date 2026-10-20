@@ -7,7 +7,7 @@ import pytest
 
 from vectormark.fit import Shape, recognize_primitive
 from vectormark.primitive_fitting import _polygon_exterior_points
-from vectormark.optimizer.vector_region import to_polygon
+from vectormark.refinement.region_sample import to_polygon
 
 
 def _ellipse_points():

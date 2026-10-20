@@ -1,6 +1,6 @@
 """Private root replay evidence must precede fitting and survive retention."""
 
-from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
 from vectormark.drawing_render import render_drawing as _canonical_render
 from dataclasses import FrozenInstanceError, replace
 import hashlib
@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 
 
-from vectormark.optimizer.assembly_binding import assemble_working_roots
+from vectormark.refinement.assembly_binding import assemble_working_roots
 from vectormark.contour import region_contours
 import vectormark.drawing_assembly as assembly
 from vectormark.drawing_actions import ActionSettings

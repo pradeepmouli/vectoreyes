@@ -1,5 +1,5 @@
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     ApplySeamConstraintsOperation, AxisSeamConstraint, PassInputRegionRef,
 )
 from vectormark.skia_geometry import SkPath

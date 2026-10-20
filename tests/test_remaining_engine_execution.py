@@ -2,7 +2,7 @@ import pytest
 
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     DependentCloneRefresh,
     NormalizeCornersOperation,
     NormalizeRetainedTopologyOperation,
@@ -10,11 +10,11 @@ from vectormark.optimizer.automatic_replay import (
     RefreshDependentClonesOperation,
     SmoothPathOperation,
 )
-from vectormark.optimizer.symmetry_materialize import (
+from vectormark.refinement.symmetry_materialize import (
     index_region_paths,
     resolve_source_path,
 )
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 
 
 class Resolver:
@@ -27,10 +27,10 @@ class Resolver:
 
 def test_engine_smoothing_respects_budget_and_preserves_source():
     from vectormark.drawing_adapter import bind_path_input
-    from vectormark.optimizer.automatic_replay import apply_smoothing_choice
+    from vectormark.refinement.automatic_replay import apply_smoothing_choice
 
     shape = Shape("path", {"d": "M0 0 Q2 9.8 10 10 Q18 9.8 20 0 L0 0 Z"})
-    target = VectorRegion(1, shape, FlatFill("#123456"), footprint=to_polygon(shape))
+    target = RegionSample(1, shape, FlatFill("#123456"), footprint=to_polygon(shape))
     ref = PassInputRegionRef("", "", (1,))
     bindings = bind_path_input(target)
     (changed,) = apply_smoothing_choice(SmoothPathOperation(ref, 1.1), bindings)
@@ -42,7 +42,7 @@ def test_engine_smoothing_respects_budget_and_preserves_source():
 
 
 def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_receipt():
-    from vectormark.optimizer.topology_binding import (
+    from vectormark.refinement.topology_binding import (
         apply_retained_topology,
         normalize_working_topology,
         topology_path_correspondence,
@@ -55,7 +55,7 @@ def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_rece
             "path_ids": ("r1.p0", "r1.p1"),
         },
     )
-    target = VectorRegion(1, shape, FlatFill("#123456"), drawing_id="r1")
+    target = RegionSample(1, shape, FlatFill("#123456"), drawing_id="r1")
     normalized = normalize_working_topology([target], allow_external=True)
     receipt = topology_path_correspondence([target], normalized)
     action = NormalizeRetainedTopologyOperation(
@@ -76,11 +76,11 @@ def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_rece
 
 def test_engine_corner_normalization_preserves_authoritative_empty_declaration():
     from vectormark.drawing_adapter import bind_path_input
-    from vectormark.optimizer.automatic_replay import apply_corner_normalization_choice
+    from vectormark.refinement.automatic_replay import apply_corner_normalization_choice
     from vectormark.corner_diagnostics import path_corner_diagnostics
 
     shape = Shape("path", {"d": "M0 0 L12 0 L12 12 L0 12 Z"})
-    target = VectorRegion(1, shape, FlatFill("#123456"))
+    target = RegionSample(1, shape, FlatFill("#123456"))
     declaration = path_corner_diagnostics(shape.params["d"])
     action = NormalizeCornersOperation(
         PassInputRegionRef("", "", (1,)), 1.0, declaration
@@ -101,10 +101,10 @@ def test_engine_corner_normalization_preserves_authoritative_empty_declaration()
 def test_engine_refreshes_cross_scope_clone_without_mutating_source_or_parent():
     from vectormark.drawing_adapter import refresh_dependent_clones
 
-    source = VectorRegion(
+    source = RegionSample(
         10, Shape("rect", {"x": 0, "y": 0, "w": 4, "h": 6}), FlatFill("#123456")
     )
-    clone = VectorRegion(
+    clone = RegionSample(
         20,
         Shape("use", {"href_obj_id": 99, "transform": (1.0, 0.0, 0.0, 1.0, 5.0, 0.0)}),
         FlatFill("#abcdef"),
@@ -112,8 +112,8 @@ def test_engine_refreshes_cross_scope_clone_without_mutating_source_or_parent():
         diagnostics={"clone": {"source_id": 99}},
     )
     roots = [
-        VectorRegion.branch(id=1, children=(source,)),
-        VectorRegion.branch(id=2, children=(clone,)),
+        RegionSample.branch(id=1, children=(source,)),
+        RegionSample.branch(id=2, children=(clone,)),
     ]
     refs = tuple(PassInputRegionRef("", "", (i,)) for i in (1, 2))
     action = RefreshDependentClonesOperation(

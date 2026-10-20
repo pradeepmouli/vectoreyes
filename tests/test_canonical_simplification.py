@@ -30,7 +30,7 @@ def test_simplification_cannot_erase_an_explicit_point_corner():
     changed = simplify_paths((path,), epsilon=1, max_error=1, samples=16,
                              linelet_only=True, max_boundary_error=1)
 
-    # The ordinary candidate removes this endpoint; an optimizer must not
+    # The ordinary candidate removes this endpoint; an refinement must not
     # silently remove the declaration to gain a lower command count.
     assert changed is None
     assert path.anchors == (corner,)
@@ -50,13 +50,13 @@ def test_simplification_reuses_retained_endpoint_ids_for_surviving_corner():
     assert changed[0].endpoint("r1.p0.c3") == (242, 400.5)
 
 
-def test_optimizer_publication_keeps_selected_ids_without_an_input_cache():
+def test_refinement_publication_keeps_selected_ids_without_an_input_cache():
     from vectormark.candidate import FlatFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.passes.simplify import simplify_pass
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.passes.simplify import simplify_pass
+    from vectormark.refinement.region_sample import RegionSample
 
-    target = VectorRegion(1, Shape('path', {'d': D}), FlatFill('#123456'))
+    target = RegionSample(1, Shape('path', {'d': D}), FlatFill('#123456'))
     (proposal,) = simplify_pass([target], {}, epsilon=1, max_error=1, linelet_only=True,
                                max_boundary_error=1)
     geometry = proposal.new_objects[0].current.params['canonical_path_geometry']

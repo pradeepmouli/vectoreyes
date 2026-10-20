@@ -105,7 +105,7 @@ def polyline_boundary_distance(
     until the 1-Lipschitz distance-to-boundary function can vary by at most
     ``precision`` between a sample and any intervening point.  The returned
     value adds that bound, so acceptance cannot hide an unsampled polyline
-    defect.  ``max_samples_per_ring`` retains the optimizer simplifier's older
+    defect.  ``max_samples_per_ring`` retains the refinement simplifier's older
     bounded vertex-only approximation when explicitly requested.
     """
     try:

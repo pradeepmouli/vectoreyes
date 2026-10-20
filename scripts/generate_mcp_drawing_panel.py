@@ -4,7 +4,7 @@
 This deliberately calls the same ``trace_drawing`` and artifact handlers that
 an agent uses, rather than the one-shot CLI pipeline.  It makes it easy to
 compare the source, retained v0 roots, auto-refined child version, and labeled
-targets when changing drawing-state or optimizer behavior.
+targets when changing drawing-state or refinement behavior.
 
 Example:
     uv run python scripts/generate_mcp_drawing_panel.py corpus/input/vbird.png \\
@@ -13,7 +13,7 @@ Example:
 
 from __future__ import annotations
 
-from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
 from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 import argparse
 import base64
@@ -30,10 +30,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 from vectormark._fitcurve import cubic_inflects
 from vectormark.contour import region_contours
-from vectormark.drawing_adapter import drawing_from_vector_regions
+from vectormark.drawing_adapter import drawing_from_region_samples
 from vectormark.drawing_render import render_path_map
 from vectormark.drawing_refine import auto_refine, stitch_regions
-from vectormark.optimizer.assembly_binding import assemble_working_roots
+from vectormark.refinement.assembly_binding import assemble_working_roots
 from vectormark.emit import render_svg_doc, resolve_fill
 from vectormark.fit import _fmt
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
@@ -338,9 +338,9 @@ def _write_pass_index(
         for name, label, filename, svg, report in snapshots
     )
     output.write_text(f'''<!doctype html>
-<title>VectorMark MCP optimizer pass review</title>
+<title>VectorMark MCP refinement pass review</title>
 <style>body{{font-family:system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}.artifact{{display:block}}object{{width:100%;aspect-ratio:1;background:#fff;pointer-events:none}}summary{{cursor:pointer;font-size:13px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
-<h1>VectorMark MCP optimizer pass review</h1><main>{cards}</main>''')
+<h1>VectorMark MCP refinement pass review</h1><main>{cards}</main>''')
 
 
 def _trace_stage_svg(trace, stage: str, *, geometry: bool = False) -> str:
@@ -418,7 +418,7 @@ def main() -> None:
     # Keep the assembled, pre-stitch roots distinct from retained v0.  The
     # stage names deliberately describe drawing representations rather than
     # implementation helpers, so a reviewer can localize a regression without
-    # needing to know the optimizer internals.
+    # needing to know the refinement internals.
     decomposition_snapshots: list[tuple[str, str, dict[str, object] | None]] = []
 
     def capture_decomposition_stage(name, regions, fills) -> None:
@@ -488,7 +488,7 @@ def main() -> None:
     if not args.v0_only:
         output.with_suffix(".auto.svg").write_text(auto_svg)
     output.with_suffix(".labels.svg").write_text(labels_svg)
-    paths_svg = render_path_map(drawing_from_vector_regions(
+    paths_svg = render_path_map(drawing_from_region_samples(
         "path-map", width=trace.width, height=trace.height, regions=auto,
     ))
     output.with_suffix(".paths.svg").write_text(paths_svg)

@@ -38,7 +38,7 @@ from .drawing_engine import RasterImage
 from .drawing_trace import GeometryTraceRegion, RootPathEvidence, TraceRegion, TraceResult
 from .immutable_value import freeze_value
 from .material_pretrace import GradientSupport, MaterialPretraceResult
-from .optimizer.automatic_replay import ReplayBatch
+from .refinement.automatic_replay import ReplayBatch
 from .path_fit_evidence import FitPathCorrespondence
 from .path_geometry import (
     AffineTransform,
@@ -266,7 +266,7 @@ def _snapshot_trace(trace: TraceResult) -> TraceResult:
 
 
 def snapshot_geometry_evidence(evidence: GeometryEvidence) -> GeometryEvidence:
-    """Detach every mutable trace/optimizer input while preserving its identity."""
+    """Detach every mutable trace/refinement input while preserving its identity."""
     trace = _snapshot_trace(evidence.trace)
     snapshot = GeometryEvidence(
         revision=evidence.revision,

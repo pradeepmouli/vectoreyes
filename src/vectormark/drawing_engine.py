@@ -1,6 +1,6 @@
 """Typed engine boundary for tracing and deterministic geometry operations.
 
-The optimizer chooses *which* operation to run over a ``Drawing``.  This
+The refinement chooses *which* operation to run over a ``Drawing``.  This
 module defines the engine operations that execute those choices.
 ``PythonDrawingEngine`` is the concrete entry point; a native implementation
 can replace its capabilities without changing drawing, plan, or MCP contracts.
@@ -235,7 +235,7 @@ class DrawingActionResult(Generic[EvidenceT]):
 
 
 class DrawingEngine(Protocol[EvidenceT]):
-    """Deterministic pre-optimizer and geometry-operation implementation."""
+    """Deterministic pre-refinement and geometry-operation implementation."""
 
     def trace_drawing(self, request: TraceDrawingRequest) -> TraceDrawingResult[EvidenceT]:
         """Trace source pixels through root fit and initial stitch into v0."""

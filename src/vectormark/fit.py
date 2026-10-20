@@ -62,7 +62,7 @@ class PathFitStages:
     residual-gated looser candidate selected by ``prefer_simple_curves``.
     ``atomic_d`` is the final local line/curve cleanup. Keeping these values
     separate makes tracing observable without changing the public ``fit_path``
-    result or silently folding an optimizer decision into the raw trace.
+    result or silently folding an refinement decision into the raw trace.
     """
 
     baseline_d: str
@@ -1959,7 +1959,7 @@ def _simpler_curve_candidate(
     forced_corners: np.ndarray | None,
 ) -> str:
     # Trace fitting is deliberately faithful: tangent cleanup is a downstream
-    # optimizer pass, not a candidate-ranking transform.  Applying it here
+    # refinement pass, not a candidate-ranking transform.  Applying it here
     # can pass an area-residual gate while visibly distorting a circle or a
     # shallow rounded corner before the drawing has stable regions to inspect.
     candidates = [baseline_d]

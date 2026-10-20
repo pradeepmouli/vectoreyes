@@ -64,7 +64,7 @@ class Options:
                                         # (LANCZOS) before segmentation; None = off (default).
                                         # Set e.g. working_max_dim=768 for noisy AI-raster inputs
                                         # where high resolution amplifies quantization noise.
-    optimizer: bool = False             # experimental geometry optimizer path; default off.
+    refinement: bool = False             # experimental geometry refinement path; default off.
     corner_normalize: bool = False      # canonicalize recognised rounded corners to Q/point.
     refinement_passes: RefinementPasses = dataclasses.field(default_factory=RefinementPasses)
 
@@ -730,7 +730,7 @@ def _idealize_rectified(arr: np.ndarray, opt: Options, rho: float, w0: int, h0: 
     return doc, cands, axes, sym_diags, diag_extra
 
 
-def _render_optimizer_body(
+def _render_refinement_body(
     objects,
     *,
     flatten: bool = False,
@@ -739,14 +739,14 @@ def _render_optimizer_body(
     cubic: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Serialize optimized objects, resolving object-id based <use> references."""
-    from .optimizer.vector_region import VectorRegion
-    from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
+    from .refinement.region_sample import RegionSample
+    from .refinement.symmetry_materialize import index_region_paths, resolve_source_path
 
     defs: list[str] = []
     fill_cache: dict[str, str] = {}
     body: list[str] = []
 
-    def _child_label(parent_label: str, child: VectorRegion) -> str:
+    def _child_label(parent_label: str, child: RegionSample) -> str:
         return f"{parent_label}-{int(child.id)}"
 
     def _resolved_fill(fill_obj: Fill) -> str:
@@ -766,10 +766,10 @@ def _render_optimizer_body(
         return Shape("use", params)
 
 
-    def _render_items(regions: list[VectorRegion]):
+    def _render_items(regions: list[RegionSample]):
         items = []
 
-        def visit(region: VectorRegion, label: str, scope_ids: dict[int, str], scope_objects: dict[int, VectorRegion], path: tuple[int, ...]) -> None:
+        def visit(region: RegionSample, label: str, scope_ids: dict[int, str], scope_objects: dict[int, RegionSample], path: tuple[int, ...]) -> None:
             symmetry = region.diagnostics.get("symmetry")
             if isinstance(symmetry, Mapping) and not symmetry.get('materialized') and (
                 (region.is_branch and symmetry.get("mode") == "self")
@@ -812,7 +812,7 @@ def _render_optimizer_body(
     # ``<use>``; otherwise the source element's explicit ``fill`` wins over a
     # clone instance's fill attribute.
     clone_definition_ids: dict[tuple[int, str], str] = {}
-    clone_sources: dict[tuple[int, str], VectorRegion] = {}
+    clone_sources: dict[tuple[int, str], RegionSample] = {}
     for obj, _elem_id, scope_ids, scope_objects in render_items:
         if obj.current is None or obj.current.kind != "use":
             continue
@@ -874,9 +874,9 @@ def _render_optimizer_body(
     return body, defs
 
 
-def _optimizer_passes(opt: Options):
-    """Pass order for the experimental geometry optimizer."""
-    from .optimizer.passes import (
+def _refinement_passes(opt: Options):
+    """Pass order for the experimental geometry refinement."""
+    from .refinement.passes import (
         clones_pass,
         corner_normalize_pass,
         occlusion_pass,
@@ -1016,14 +1016,14 @@ def _svg_path_segment_count(svg: str) -> int:
     return sum(len(_SVG_PATH_COMMAND_RE.findall(d)) for d in _SVG_PATH_D_RE.findall(svg))
 
 
-def _prefer_optimizer_svg(trace_svg: str, optimized_svg: str) -> bool:
-    """Use optimizer output; structural counts are diagnostics, not gates."""
+def _prefer_refinement_svg(trace_svg: str, optimized_svg: str) -> bool:
+    """Use refinement output; structural counts are diagnostics, not gates."""
     del trace_svg, optimized_svg
     return True
 
 
-def _optimizer_report(objects, opt: Options, *, fallback_reason: str | None = None) -> IdealizeReport:
-    from .optimizer.vector_region import leaves
+def _refinement_report(objects, opt: Options, *, fallback_reason: str | None = None) -> IdealizeReport:
+    from .refinement.region_sample import leaves
 
     strategies: dict[str, int] = {}
     gradients = 0
@@ -1040,7 +1040,7 @@ def _optimizer_report(objects, opt: Options, *, fallback_reason: str | None = No
         })
     for obj in sorted(flat_objects, key=lambda item: (float(item.z), int(item.id))):
         assert obj.current is not None
-        strategy = f"optimizer_{obj.current.kind}"
+        strategy = f"refinement_{obj.current.kind}"
         strategies[strategy] = strategies.get(strategy, 0) + 1
         if isinstance(obj.fill, (LinearGradientFill, RadialGradientFill)):
             gradients += 1
@@ -1065,9 +1065,9 @@ def _optimizer_report(objects, opt: Options, *, fallback_reason: str | None = No
         },
         "axes": [],
         "regions": [],
-        "optimizer_regions": region_diags,
-        "optimizer_objects": object_diags,
-        "optimizer_fallback": fallback_reason,
+        "refinement_regions": region_diags,
+        "refinement_objects": object_diags,
+        "refinement_fallback": fallback_reason,
     })
     return IdealizeReport(
         types.MappingProxyType(dict(strategies)),
@@ -1079,18 +1079,18 @@ def _optimizer_report(objects, opt: Options, *, fallback_reason: str | None = No
     )
 
 
-def _idealize_optimizer(arr: np.ndarray, opt: Options, width: int, height: int) -> tuple[str, IdealizeReport]:
-    """Experimental trace-vectorize + geometry-optimizer pipeline."""
-    from .optimizer.framework import optimize
-    from .optimizer.trace import trace_regions
+def _idealize_refinement(arr: np.ndarray, opt: Options, width: int, height: int) -> tuple[str, IdealizeReport]:
+    """Experimental trace-vectorize + geometry-refinement pipeline."""
+    from .refinement.framework import select_refinements
+    from .refinement.trace import trace_regions
 
     objects, masks = trace_regions(arr, opt)
-    optimized = optimize(
+    optimized = select_refinements(
         objects,
         masks,
-        _optimizer_passes(opt),
+        _refinement_passes(opt),
     )
-    trace_body, trace_defs = _render_optimizer_body(
+    trace_body, trace_defs = _render_refinement_body(
         objects,
         flatten=opt.flatten,
         epsilon=opt.epsilon,
@@ -1098,7 +1098,7 @@ def _idealize_optimizer(arr: np.ndarray, opt: Options, width: int, height: int) 
         cubic=opt.cubic_paths,
     )
     trace_svg = render_svg_doc(width, height, trace_body, trace_defs)
-    optimized_body, optimized_defs = _render_optimizer_body(
+    optimized_body, optimized_defs = _render_refinement_body(
         optimized,
         flatten=opt.flatten,
         epsilon=opt.epsilon,
@@ -1107,9 +1107,9 @@ def _idealize_optimizer(arr: np.ndarray, opt: Options, width: int, height: int) 
     )
     optimized_svg = render_svg_doc(width, height, optimized_body, optimized_defs)
     fallback_reason = None
-    if not _prefer_optimizer_svg(trace_svg, optimized_svg):
+    if not _prefer_refinement_svg(trace_svg, optimized_svg):
         fallback_reason = "optimized output has more path segments than trace baseline"
-    return optimized_svg, _optimizer_report(optimized, opt, fallback_reason=fallback_reason)
+    return optimized_svg, _refinement_report(optimized, opt, fallback_reason=fallback_reason)
 
 
 def _flatten_on_white(im: Image.Image) -> np.ndarray:
@@ -1162,8 +1162,8 @@ def idealize(image, *, options: Options | None = None, report: bool = False) -> 
     arr = _condition_input(arr, opt.working_max_dim)
     h0, w0 = arr.shape[:2]
 
-    if opt.optimizer:
-        svg, opt_report = _idealize_optimizer(arr, opt, w0, h0)
+    if opt.refinement:
+        svg, opt_report = _idealize_refinement(arr, opt, w0, h0)
         if (arr.shape[1], arr.shape[0]) != (orig_w, orig_h):
             svg = _set_svg_output_size(svg, orig_w, orig_h)
         return (svg, opt_report) if report else svg

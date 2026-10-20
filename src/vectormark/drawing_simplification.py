@@ -1,6 +1,6 @@
 """Shared simplification execution and bounded path reconstruction.
 
-Optimizer passes discover scene scope and coverage. Numeric fitting, topology
+Refinement passes discover scene scope and coverage. Numeric fitting, topology
 checks and acceptance policy live here for both proposals and retained replay.
 Public kernels consume typed paths; numeric policy operates on path data only.
 """

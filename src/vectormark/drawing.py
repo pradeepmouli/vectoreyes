@@ -1,7 +1,7 @@
 """Immutable scene values shared by tracing, refinement, and SVG emission.
 
 ``Drawing`` deliberately contains no version graph, source raster, temporary
-footprint, or optimizer buffers.  Those belong respectively to persistence,
+footprint, or refinement buffers.  Those belong respectively to persistence,
 trace provenance, and engine working state.  A drawing is the vector scene
 that can be rendered, refined, and persisted as a version snapshot.
 """

@@ -6,37 +6,37 @@ from tests.test_canonical_automatic_replay import primitive_case
 from vectormark.candidate import FlatFill
 from vectormark.drawing import Canvas
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     AssignCloneOperation, AutomaticIntent, AutomaticOperationRecord,
     DeclareIntrinsicSymmetryOperation, NamedRegionOutput, OperationOutputRegionRef,
     replay_batches,
 )
-from vectormark.optimizer.framework import optimize_with_intent
-from vectormark.optimizer.passes.clones import clones_pass
-from vectormark.optimizer.replay_binding import capture_replay_state, working_regions_from_state
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.framework import select_refinements_with_intent
+from vectormark.refinement.passes.clones import clones_pass
+from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.replay_identity import canonical_input_revision
 
 
 def forbid_working_execution(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('canonical transaction used working execution')
-    monkeypatch.setattr('vectormark.optimizer.automatic_replay._execute_intent', forbidden)
-    monkeypatch.setattr('vectormark.optimizer.replay_binding.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.automatic_replay._execute_intent', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
 
 
 def test_symbolic_clone_publication_keeps_independent_paint_and_source_mask(monkeypatch):
     from vectormark.drawing_automatic import replay_automatic_batches
-    from vectormark.optimizer.gate import rasterize
-    from vectormark.optimizer.vector_region import to_polygon
+    from vectormark.refinement.gate import rasterize
+    from vectormark.refinement.region_sample import to_polygon
     def square(identity, x, color):
         shape = Shape('path', {'d': f'M{x} 10 L{x + 12} 10 L{x + 12} 22 L{x} 22 Z'})
-        return VectorRegion.from_shape(id=identity, drawing_id=f'r{identity}', shape=shape,
+        return RegionSample.from_shape(id=identity, drawing_id=f'r{identity}', shape=shape,
             fill=FlatFill(color), z=0, raster=rasterize(to_polygon(shape), (48, 80)))
     state = capture_replay_state((square(1, 10, '#112233'), square(2, 50, '#abcdef')), Canvas(80, 48))
     objects = list(working_regions_from_state(state))
     masks = {obj.id: obj.raster for obj in objects}
-    recorded = optimize_with_intent(objects, masks, [clones_pass])
+    recorded = select_refinements_with_intent(objects, masks, [clones_pass])
     action = recorded.batches[0].operations[0].intent.action
     assert isinstance(action, AssignCloneOperation) and action.symbolic
     expected = capture_replay_state(replay_batches(objects, recorded.batches, masks=masks), state.drawing.canvas)

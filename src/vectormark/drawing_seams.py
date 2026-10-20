@@ -1,6 +1,6 @@
 """Retained seam execution and shared endpoint/boundary operations.
 
-Pair/cluster discovery stays in the optimizer. Execution consumes recorded
+Pair/cluster discovery stays in the refinement. Execution consumes recorded
 constraints and validates exact path/command correspondence. Working-region
 projection remains the existing engine adapter, not a second scene.
 """
@@ -14,7 +14,7 @@ from ._fitcurve import cbezier, cubic_inflects, fit_quadratic_beziers
 from .fit import Shape, _curve_controls_are_straight, _fmt
 from .emit import shape_to_path_d
 from .skia_geometry import SkPath
-from .optimizer.automatic_replay import (
+from .refinement.automatic_replay import (
     ApplySeamConstraintsOperation,
     EndpointAssignment,
     EndpointConstraintStage,

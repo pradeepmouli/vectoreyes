@@ -1,10 +1,10 @@
 import numpy as np
 
-from vectormark.optimizer import paint_binding as paint
+from vectormark.refinement import paint_binding as paint
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.gate import rasterize
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement.gate import rasterize
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 
 
 def forest(*, fills=(None, None)):
@@ -12,7 +12,7 @@ def forest(*, fills=(None, None)):
     for root_id, x, fill in zip((10, 20), (1, 11), fills, strict=True):
         shape = Shape("rect", dict(x=x, y=1, w=7, h=7))
         footprint = to_polygon(shape)
-        leaf = VectorRegion(
+        leaf = RegionSample(
             1,
             shape,
             fill,
@@ -20,7 +20,7 @@ def forest(*, fills=(None, None)):
             raster=rasterize(footprint, (10, 20)),
             drawing_id=f"r{root_id}-1",
         )
-        roots.append(VectorRegion.branch(id=root_id, children=(leaf,), drawing_id=f'r{root_id}'))
+        roots.append(RegionSample.branch(id=root_id, children=(leaf,), drawing_id=f'r{root_id}'))
     return tuple(roots)
 
 

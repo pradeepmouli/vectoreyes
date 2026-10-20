@@ -6,20 +6,20 @@ import numpy as np
 
 from vectormark.drawing import Canvas
 from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_adapter import drawing_from_vector_regions
+from vectormark.drawing_adapter import drawing_from_region_samples
 from vectormark.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.refinement.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
     build_paint_evidence,
     )
 from vectormark.drawing_replay import propose_effective_recipe
 from vectormark.drawing_trace import TraceOptions, TraceResult
-from vectormark.optimizer.automatic_replay import FitPrimitiveOperation
-from vectormark.optimizer.framework import optimize_with_intent
-from vectormark.optimizer.passes.primitives import primitives_pass
-from vectormark.optimizer.trace import trace_regions
+from vectormark.refinement.automatic_replay import FitPrimitiveOperation
+from vectormark.refinement.framework import select_refinements_with_intent
+from vectormark.refinement.passes.primitives import primitives_pass
+from vectormark.refinement.trace import trace_regions
 from vectormark.pipeline import Options
 
 
@@ -52,7 +52,7 @@ def test_effective_auto_recipe_replays_from_evidence_without_detector(monkeypatc
         trace_roots=roots,
     )
     paint = build_paint_evidence(source)
-    optimized = optimize_with_intent(list(working_regions_from_evidence(evidence)), masks, [primitives_pass])
+    optimized = select_refinements_with_intent(list(working_regions_from_evidence(evidence)), masks, [primitives_pass])
     assert len(optimized.batches[0].operations) == 1
     assert isinstance(optimized.batches[0].operations[0].intent.action, FitPrimitiveOperation)
     recipe = EffectiveDrawingRecipe(
@@ -63,7 +63,7 @@ def test_effective_auto_recipe_replays_from_evidence_without_detector(monkeypatc
         ),
         steps=optimized.batches,
     )
-    expected = drawing_from_vector_regions(
+    expected = drawing_from_region_samples(
         "drw_recipe",
         width=Canvas(120, 120).width,
         height=Canvas(120, 120).height,
@@ -71,7 +71,7 @@ def test_effective_auto_recipe_replays_from_evidence_without_detector(monkeypatc
     )
 
     monkeypatch.setattr(
-        "vectormark.optimizer.passes.primitives.recognize_primitive_geometry",
+        "vectormark.refinement.passes.primitives.recognize_primitive_geometry",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("semantic primitive detector ran during replay")
         ),

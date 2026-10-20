@@ -92,17 +92,17 @@ def test_canonical_normalization_requires_explicit_external_dependency_permissio
 
 def test_working_publication_expands_multi_transform_clone_over_selected_components():
     from vectormark.candidate import FlatFill as WorkingFill
-    from vectormark.optimizer.topology_binding import normalize_working_topology
+    from vectormark.refinement.topology_binding import normalize_working_topology
     from vectormark.fit import Shape
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.region_sample import RegionSample
     from vectormark.skia_geometry import unary_union
 
     source, _ = source_region()
-    working = VectorRegion(1, Shape('path', {'d': source.geometry.to_svg_d(), 'fill_rule': 'evenodd'}),
+    working = RegionSample(1, Shape('path', {'d': source.geometry.to_svg_d(), 'fill_rule': 'evenodd'}),
         WorkingFill('#123456'), drawing_id='r1')
     transforms = (AffineTransform(1, 0, 0, 1, 40, 0), AffineTransform(1, 0, 0, 1, 60, 0))
     footprint = unary_union([working.footprint.affine_transform((1, 0, 0, 1, x, 0)) for x in (40, 60)])
-    clone = VectorRegion(2, Shape('path', {'d': footprint.to_svg_d(),
+    clone = RegionSample(2, Shape('path', {'d': footprint.to_svg_d(),
         'canonical_clone_geometry': CloneGeometry('r1', transforms)}), WorkingFill('#abcdef'),
         footprint=footprint, drawing_id='copy')
 

@@ -2444,3 +2444,37 @@ pass. Structural self-symmetry, seam/topology and
 dependent-reference refresh transaction families, plus proposal discovery, still
 retain an explicit numerical boundary; this is not whole-model retirement.
 No commit, live deployment or corpus overwrite is included.
+
+### Remaining automatic transactions and terminology retirement — 2026-10-20
+
+Checkpoint `27ec035` commits the accumulated engine, evaluation, plugin and
+approved reference-artwork work. The subsequent retirement batch moves recorded
+self-symmetry, seam constraints, retained topology and dependent-clone refresh
+transactions onto canonical Drawing/ReplayState publication. The whole-scene
+numeric replay fallback is deleted. Independent geometry operations remain owned
+by DrawingEngine; automatic refinement selects proposals and their order.
+
+The former `optimizer` package is now `refinement`, including active imports,
+option/report names, scripts and tests. `VectorRegion` is now `RegionSample`, an
+explicitly disposable numerical record for discovery/scoring and interoperability,
+not a second retained drawing model. This naming cleanup does not claim those
+remaining numerical projection boundaries have disappeared. No unreleased API
+compatibility aliases are retained. Historical plan sections above are unchanged.
+
+Eleven exact-receipt regression cases prohibit working-scene replay and cover
+seams, direct/nested dependent clones, self-symmetry, single-/multi-transform clone
+component expansion, hole-first paths, stale correspondence and diagnostic-only
+corner retirement. Shared helpers own topology correspondence and retired-feature
+mapping. A fresh-context reviewer found the hole-first and retired-feature cases;
+both are now regression-tested and independently verified.
+
+Final verification: 1,324 source tests pass (983 warnings, 125.80s). The frozen
+compiled wheel has 1,320 passes and exactly the same four known 2/3 × rounded/serif
+feature-fingerprint failures (983 warnings, 122.32s); all printed fingerprint
+tokens match the earlier native baseline exactly. Six changed modules are
+confirmed native extensions. UI build, packaged-skill consistency, focused lint
+and staged whitespace checks pass. Exact-settings in-process FastMCP Radish and
+Vbird runs preserve all four v0/v1 SVGs byte-for-byte (17.90s/78.01s, not controlled
+benchmarks). Artifacts are separate under `native-canonical-retirement`; the
+verified wheel is installed only in the isolated test runtime. No live deployment,
+server restart, push or corpus overwrite is included.

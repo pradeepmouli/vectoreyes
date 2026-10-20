@@ -83,7 +83,7 @@ def _bind_root_evidence(
     trace: TraceResult, assembled: _RootAssembly
 ) -> RootDrawingResult:
     from .geometry_native import region_path
-    from .optimizer.gate import rasterize
+    from .refinement.gate import rasterize
 
     regions = []
     evidence = []

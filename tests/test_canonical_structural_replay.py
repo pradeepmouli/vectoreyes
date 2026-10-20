@@ -6,22 +6,22 @@ from vectormark.candidate import FlatFill
 from vectormark.drawing import Canvas
 from vectormark.drawing_automatic import replay_automatic_batches
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     AnnulusPrimitive, AssignCloneOperation, AutomaticIntent, AutomaticOperationRecord,
     CompletedOcclusionPrimitive, MirrorRegionOperation, NamedRegionOutput,
     PassInputRegionRef, ReconstructOcclusionOperation, ReplayBatch,
     SimplifyLineletOperation, bind_intent, replay_batches,
 )
-from vectormark.optimizer.gate import rasterize
-from vectormark.optimizer.replay_binding import capture_replay_state, working_regions_from_state
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement.gate import rasterize
+from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 from vectormark.path_geometry import PathGeometryWithCutouts
 from vectormark.quality import GeometryAssessment, GeometryPolicy
 from vectormark.replay_identity import canonical_input_revision
 
 
 def leaf(identity, shape, color):
-    return VectorRegion(identity, shape, FlatFill(color), drawing_id=f'r{identity}',
+    return RegionSample(identity, shape, FlatFill(color), drawing_id=f'r{identity}',
         raster=rasterize(to_polygon(shape), (440, 300)))
 
 
@@ -128,7 +128,7 @@ from dataclasses import replace
 
 
 def test_generated_named_child_can_be_the_source_of_an_inline_copy(monkeypatch):
-    from vectormark.optimizer.automatic_replay import OperationOutputRegionRef
+    from vectormark.refinement.automatic_replay import OperationOutputRegionRef
     state = capture_replay_state((leaf(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}), '#123456'),
         leaf(2, Shape('rect', {'x': 80, 'y': 0, 'w': 10, 'h': 10}), '#abcdef')),
         Canvas(300, 440))
@@ -157,7 +157,7 @@ def test_inline_copy_of_a_clone_keeps_the_instance_projection_policy(monkeypatch
     source = leaf(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}), '#123456')
     matrix = (1, 0, 0, 1, 40, 0)
     footprint = source.footprint.affine_transform(matrix)
-    instance = VectorRegion(2, Shape('use', {'href_obj_id': 1, 'transform': matrix}),
+    instance = RegionSample(2, Shape('use', {'href_obj_id': 1, 'transform': matrix}),
         FlatFill('#445566'), drawing_id='r2', footprint=footprint,
         raster=rasterize(footprint, (440, 300)))
     target = leaf(3, Shape('rect', {'x': 90, 'y': 0, 'w': 10, 'h': 10}), '#abcdef')
@@ -174,7 +174,7 @@ def test_inline_copy_of_a_clone_keeps_the_instance_projection_policy(monkeypatch
 
 
 def test_later_pass_input_replacement_restores_its_snapshot_observations(monkeypatch):
-    from vectormark.optimizer.automatic_replay import FitPrimitiveOperation
+    from vectormark.refinement.automatic_replay import FitPrimitiveOperation
     from vectormark.path_geometry import CirclePrimitive, PrimitiveGeometry
     state = capture_replay_state((leaf(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}), '#123456'),), Canvas(300, 440))
     ref = PassInputRegionRef('', '', (1,))

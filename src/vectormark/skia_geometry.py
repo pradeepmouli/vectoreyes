@@ -1,7 +1,7 @@
 """Skia-backed replacement for shapely.geometry.{Polygon, MultiPolygon}.
 
 Provides :class:`SkPath` — a drop-in for the Shapely Polygon / MultiPolygon
-types used throughout the vectormark optimizer — backed by ``skia-python`` path
+types used throughout the vectormark refinement — backed by ``skia-python`` path
 operations (Simplify, Op, OpBuilder).  Geometric properties that Skia does not
 expose directly (area, centroid, perimeter, OBB) are computed analytically on
 the linearised path.
@@ -758,7 +758,7 @@ class SkPath:
         """Return the path plus a round-joined exterior stroke of ``distance``.
 
         This is intentionally distinct from the Shapely-compatible ``buffer``
-        shim above. Optimizer construction passes use it to create a temporary
+        shim above. Refinement construction passes use it to create a temporary
         overlap before a Skia boolean operation; callers should not treat it as
         a general-purpose offset-curve implementation.
         """

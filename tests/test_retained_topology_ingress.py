@@ -2,7 +2,7 @@
 
 from dataclasses import asdict as _trace_options
 from vectormark.drawing_render import trace_summary as _canonical_trace
-from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
 from vectormark.drawing_render import render_drawing as _canonical_render
 import numpy as np
 import pytest
@@ -12,12 +12,12 @@ from vectormark.candidate import FlatFill
 from vectormark.drawing_plan import parse_plan
 from vectormark.drawing_trace import TraceOptions, TraceResult
 from vectormark.fit import Shape
-from vectormark.optimizer.passes.compound import split_compound_pass
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.passes.compound import split_compound_pass
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
 from vectormark.path_geometry import parse_svg_paths, ArcCommand, CubicCommand
 from vectormark.path_topology import classify_filled_paths, component_paths
-from vectormark.optimizer.topology_binding import normalize_working_topology
+from vectormark.refinement.topology_binding import normalize_working_topology
 
 
 OUTER = "M0 0 L12 0 L12 12 L0 12 Z"
@@ -26,7 +26,7 @@ DISCONNECTED = "M0 0 L8 0 L8 8 L0 8 Z M12 0 L20 0 L20 8 L12 8 Z"
 
 
 def _region(d, *, fill_rule="evenodd"):
-    return VectorRegion.from_shape(
+    return RegionSample.from_shape(
         id=1, shape=Shape("path", {"d": d, "fill_rule": fill_rule}),
         fill=FlatFill("#123456"), z=0, raster=np.zeros((24, 48), bool),
         drawing_id="r1", source_regions=("r1",),
@@ -46,7 +46,7 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
 
     source = RasterImage(48, 24, 'rgb8', bytes([255]) * 48 * 24 * 3)
     root = _region('M0 0 L10 0 L10 10 L0 10 Z M2 2 L4 2 L4 4 L2 4 Z')
-    reference = VectorRegion.from_shape(id=2,
+    reference = RegionSample.from_shape(id=2,
         shape=Shape('path', {'d': 'M20 0 L20 10 L24 3 L24 1 Z'}),
         fill=FlatFill('#123456'), z=1, raster=np.zeros((24, 48), bool), drawing_id='r2')
     evidence = capture_working_geometry_evidence(kind='source', trace=_trace(), geometry_source=source, trace_roots=(root, reference))
@@ -62,7 +62,7 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
     ]})
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     replay = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
-    from vectormark.optimizer.replay_binding import working_regions_from_state
+    from vectormark.refinement.replay_binding import working_regions_from_state
     actual = next(region for region in working_regions_from_state(replay) if region.drawing_id == 'r1')
     assert actual.is_branch and len(actual.children) == 2
     for child in actual.children:
@@ -179,11 +179,11 @@ def test_single_path_command_contract_preserves_retraces_but_not_wrong_fill_rule
 
 
 def test_groups_are_reported_separately_and_typed_mcp_models_accept_them():
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.drawing_adapter import drawing_from_region_samples
     from vectormark.drawing_render import render_drawing as render_canonical_drawing
     from vectormark.mcp_server import DrawingReportOutput, TraceSummaryOutput
     regions = normalize_working_topology((_region(DISCONNECTED),))
-    drawing = drawing_from_vector_regions(
+    drawing = drawing_from_region_samples(
         "drawing", width=48, height=24, regions=regions
     )
     report = render_canonical_drawing(drawing).report
@@ -200,14 +200,14 @@ def test_groups_are_reported_separately_and_typed_mcp_models_accept_them():
 
 
 def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
-    from vectormark.optimizer.symmetry_materialize import index_region_paths, resolve_source_path
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.refinement.symmetry_materialize import index_region_paths, resolve_source_path
+    from vectormark.drawing_adapter import drawing_from_region_samples
     from vectormark.path_geometry import CloneGeometry
     from vectormark.candidate import LinearGradientFill
     from tests._render import render_svg
     source = _region(DISCONNECTED)
     fill = LinearGradientFill({"x1": 0, "y1": 0, "x2": 20, "y2": 0}, [(0, "#ff0000"), (1, "#0000ff")])
-    clone = VectorRegion(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 22, 0)}),
+    clone = RegionSample(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 22, 0)}),
                          fill, 1, source.footprint, raster=source.raster, drawing_id="r2", diagnostics={"clone": {"source": "r1"}})
     before = (source, clone)
     # Independent unsplit reference; canonical regions require normalized components.
@@ -223,7 +223,7 @@ def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
     for ordinal, leaf in enumerate(result[1].children, start=1):
         assert resolve_source_path(index, (2, ordinal), leaf.current.params) == (1, ordinal)
         assert leaf.fill is fill
-    canonical = drawing_from_vector_regions("drawing", width=48, height=24, regions=result)
+    canonical = drawing_from_region_samples("drawing", width=48, height=24, regions=result)
     assert canonical.region("r2-2").geometry == CloneGeometry("r1-2", canonical.region("r2-2").geometry.transforms)
     actual = _canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result))).svg
     np.testing.assert_array_equal(render_svg(actual, 48, 24), render_svg(expected, 48, 24))
@@ -233,11 +233,11 @@ def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
 
 
 def test_component_command_ids_drive_actual_manual_lookup_and_summary():
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.drawing_adapter import drawing_from_region_samples
     result = normalize_working_topology((_region(DISCONNECTED),))
     summary = _canonical_trace(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result)), _trace_options((_trace()).options))
     assert summary["regions"][1]["geometry"]["commands"][1]["id"] == "r1.p1.c1"
-    assert drawing_from_vector_regions("drawing", width=48, height=24, regions=result).region("r1-2").geometry.path.commands[1].id == "r1.p1.c1"
+    assert drawing_from_region_samples("drawing", width=48, height=24, regions=result).region("r1-2").geometry.path.commands[1].id == "r1.p1.c1"
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing", "base_version": "v0",
                       "ops": [{"op": "update_geometry", "target": "r1-2", "ops": [
                           {"op": "align", "target": "r1.p1.c1", "reference": "r1.p0.c1", "axes": ["y"]},
@@ -249,12 +249,12 @@ def test_component_command_ids_drive_actual_manual_lookup_and_summary():
 
 def test_hole_first_prefit_corners_remain_owned_by_original_paths():
     from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.drawing_adapter import drawing_from_region_samples
     d = f"{HOLE} {OUTER} M20 0 L24 0 L24 4 L20 4 Z"
     evidence = path_corner_diagnostics(d, declared_corners=((4, 4), (0, 0), (20, 0)))
     source = _region(d).with_diagnostics({"corners": evidence})
     result = normalize_working_topology((source,))
-    drawing = drawing_from_vector_regions("drawing", width=48, height=24, regions=result)
+    drawing = drawing_from_region_samples("drawing", width=48, height=24, regions=result)
     geometry = drawing.region("r1-2").geometry
     assert geometry.outer.path.id == "r1.p1"
     assert geometry.outer.anchors[0].entry_command_id.startswith("r1.p1.")
@@ -265,14 +265,14 @@ def test_hole_first_prefit_corners_remain_owned_by_original_paths():
 
 def test_nested_root_producer_diagnostics_keep_declarations_on_component_children():
     from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.drawing_adapter import drawing_from_region_samples
     parts = (HOLE, OUTER, "M20 0 L24 0 L24 4 L20 4 Z")
     evidence = {"path": " ".join(parts), "subpaths": tuple(
         path_corner_diagnostics(d, declared_corners=(point,))
         for d, point in zip(parts, ((4, 4), (0, 0), (20, 0)), strict=True)
     )}
     result = normalize_working_topology((_region(evidence["path"]).with_diagnostics({"corners": evidence}),))
-    drawing = drawing_from_vector_regions("drawing", width=48, height=24, regions=result)
+    drawing = drawing_from_region_samples("drawing", width=48, height=24, regions=result)
     assert drawing.region("r1-2").geometry.outer.anchors[0].entry_command_id == "r1.p1.c0"
     assert drawing.region("r1-2").geometry.cutouts[0].anchors[0].entry_command_id == "r1.p0.c0"
     assert drawing.region("r1-3").geometry.anchors[0].entry_command_id == "r1.p2.c0"
@@ -301,7 +301,7 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
         contours=contours, trace_path=TracePath(DISCONNECTED, "evenodd", ()),
         effective_trace_level="pixel",
     ),))
-    from vectormark.optimizer.assembly_binding import assemble_working_roots
+    from vectormark.refinement.assembly_binding import assemble_working_roots
     result = assemble_working_roots(trace)
     assert result.regions[0].is_branch
     records = result.trace.root_path_evidence
@@ -315,7 +315,7 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
 
 def test_auto_callback_and_stitch_publish_identical_target_trees(monkeypatch):
     import vectormark.pipeline as pipeline
-    monkeypatch.setattr(pipeline, "_optimizer_passes", lambda options: [split_compound_pass])
+    monkeypatch.setattr(pipeline, "_refinement_passes", lambda options: [split_compound_pass])
     source = _region(DISCONNECTED)
     callbacks = []
     result = drawing_refine.auto_refine(_trace(), (source,), on_pass=lambda name, regions: callbacks.append(regions))
@@ -365,7 +365,7 @@ def test_component_holes_remain_transparent_on_contrasting_backgrounds():
 def test_snapshot_preserves_branch_original_and_detaches_its_params():
     from vectormark.drawing_engine import RasterImage
     from tests._working_evidence import capture_working_geometry_evidence
-    from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+    from vectormark.refinement.assembly_binding import working_regions_from_evidence
     source = _region(DISCONNECTED)
     normalized = normalize_working_topology((source,))
     evidence = capture_working_geometry_evidence(

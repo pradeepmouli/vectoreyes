@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 
 from vectormark.geometry_native import region_path
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     AnnulusPrimitive, CompletedOcclusionPrimitive, IntersectionLens,
     PassInputRegionRef, ReconstructOcclusionOperation, RetainedOcclusionSource,
 )
@@ -75,19 +75,19 @@ def test_canonical_occlusion_retained_source_keeps_disconnected_components():
 
 def test_automatic_occlusion_publication_keeps_annulus_as_editable_cutout():
     from vectormark.candidate import FlatFill
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.drawing_adapter import drawing_from_region_samples
     from vectormark.fit import Shape
-    from vectormark.optimizer.automatic_replay import apply_occlusion_choice
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.automatic_replay import apply_occlusion_choice
+    from vectormark.refinement.region_sample import RegionSample
 
     ref = PassInputRegionRef('', '', (1,))
-    source = VectorRegion(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}),
+    source = RegionSample(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}),
         FlatFill('#123456'), raster=np.ones((32, 32), bool), drawing_id='r1')
     action = ReconstructOcclusionOperation((ref,), 1, 0, (32, 32), (
         CompletedOcclusionPrimitive(ref, 'ring', 2, AnnulusPrimitive((16, 16), 10, 5), 0),))
 
     (branch,) = apply_occlusion_choice(action, {ref: source}.__getitem__)
-    drawing = drawing_from_vector_regions('result', width=32, height=32, regions=(branch,))
+    drawing = drawing_from_region_samples('result', width=32, height=32, regions=(branch,))
 
     assert isinstance(drawing.regions[0].children[0].geometry, PathGeometryWithCutouts)
     assert branch.children[0].fill.hex == '#123456'
@@ -113,13 +113,13 @@ def test_generated_occlusion_diagnostics_remain_structured_in_report():
 def test_occlusion_replay_accepts_named_output_with_scoped_ancestry():
     from vectormark.candidate import FlatFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.automatic_replay import (
+    from vectormark.refinement.automatic_replay import (
         OperationOutputRegionRef, apply_occlusion_choice,
     )
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.region_sample import RegionSample
 
     ref = OperationOutputRegionRef('earlier', 'leaf', (7,))
-    source = VectorRegion(7, Shape('circle', {'cx': 8, 'cy': 8, 'r': 5}),
+    source = RegionSample(7, Shape('circle', {'cx': 8, 'cy': 8, 'r': 5}),
         FlatFill('#123456'), raster=np.ones((16, 16), bool))
     action = ReconstructOcclusionOperation((ref,), 7, 0, (16, 16), (
         CompletedOcclusionPrimitive(ref, 'disk', 2, PrimitiveGeometry(CirclePrimitive((8, 8), 5)), 0),))

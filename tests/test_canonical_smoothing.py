@@ -5,8 +5,8 @@ import numpy as np
 from vectormark.candidate import FlatFill
 from vectormark.drawing import DrawingRegion
 from vectormark.fit import Shape
-from vectormark.optimizer.passes.smooth import smooth_pass
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.passes.smooth import smooth_pass
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import (
     CornerAnchor, PathGeometryWithCutouts, parse_svg_paths,
 )
@@ -19,7 +19,7 @@ SMOOTHED = "M0 0 Q2 10 10 10 Q18 10 20 0 L0 0 Z"
 def test_smoothing_publishes_updated_canonical_cache_not_only_svg_text():
     (geometry,) = parse_svg_paths(D, region_id="r7")
     shape = Shape("path", {"d": D, "canonical_path_geometry": geometry, "note": "retain"})
-    target = VectorRegion(7, shape, FlatFill("#123456"))
+    target = RegionSample(7, shape, FlatFill("#123456"))
 
     (proposal,) = smooth_pass([target], {}, max_error=1.1)
     (changed,) = proposal.new_objects
@@ -72,14 +72,14 @@ def test_canonical_smoothing_keeps_cutout_membership_and_unmodified_paths():
 
 
 def test_smoothing_replay_retains_published_canonical_geometry():
-    from vectormark.optimizer.automatic_replay import replay_batches
-    from vectormark.optimizer.framework import optimize_with_intent
+    from vectormark.refinement.automatic_replay import replay_batches
+    from vectormark.refinement.framework import select_refinements_with_intent
 
     (geometry,) = parse_svg_paths(D, region_id="r7")
     shape = Shape("path", {"d": D, "canonical_path_geometry": geometry})
-    target = VectorRegion(7, shape, FlatFill("#123456"))
+    target = RegionSample(7, shape, FlatFill("#123456"))
     masks = {7: np.ones((24, 24), dtype=bool)}
-    optimized = optimize_with_intent([target], masks,
+    optimized = select_refinements_with_intent([target], masks,
         [lambda objects, masks: smooth_pass(objects, masks, max_error=1.1)])
     replayed = replay_batches([target], optimized.batches, masks=masks)
 
@@ -89,7 +89,7 @@ def test_smoothing_replay_retains_published_canonical_geometry():
 
 def test_smoothing_accepts_disconnected_intermediate_paths_without_repartitioning():
     d = D + " M30 0 L34 0 L34 4 L30 4 Z"
-    target = VectorRegion(7, Shape("path", {"d": d}), FlatFill("#123456"))
+    target = RegionSample(7, Shape("path", {"d": d}), FlatFill("#123456"))
 
     (proposal,) = smooth_pass([target], {}, max_error=1.1)
     (changed,) = proposal.new_objects

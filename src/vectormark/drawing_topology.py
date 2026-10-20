@@ -11,6 +11,42 @@ from .path_geometry import CloneGeometry, CompoundPathGeometry, PathGeometry, Pa
 from .path_topology import classify_filled_paths, component_paths
 
 
+def match_topology_paths(inputs, outputs):
+    """Validate retained ownership from representation-independent path records."""
+    from .refinement.automatic_replay import TopologyPathCorrespondence, PassInputRegionRef
+    records = []
+    for path_id, input_values in inputs.items():
+        output_values = outputs.get(path_id, [])
+        if not output_values:
+            continue
+        if len(input_values) != 1 or len(output_values) != 1:
+            raise ValueError('retained topology path ownership is ambiguous')
+        input_ancestry, input_index, input_revision, input_count = input_values[0]
+        output_ancestry, output_index, output_revision, output_count = output_values[0]
+        if input_revision != output_revision or input_count != output_count:
+            raise ValueError('retained topology rewrote a surviving path')
+        records.append(TopologyPathCorrespondence(
+            target=PassInputRegionRef('', '', input_ancestry),
+            input_subpath_index=input_index, input_path_id=path_id,
+            input_path_revision=input_revision, output_ancestry=output_ancestry,
+            output_subpath_index=output_index, output_path_id=path_id,
+            output_path_revision=output_revision, command_count=input_count))
+    return tuple(records)
+
+
+def retired_corner_features(source_text, evidence, identities, retired):
+    """Retire observed features with their source paths, including diagnostic-only declarations."""
+    from .corner_diagnostics import source_ordered_corner_diagnostics
+    if not isinstance(evidence, Mapping):
+        return ()
+    evidence = source_ordered_corner_diagnostics(source_text, evidence)
+    return tuple(
+        f"{identities[int(span['subpath'])]}.{str(span['corner_id']).split('.', 1)[-1]}"
+        for span in (evidence.get('spans') or ()) if isinstance(span, Mapping)
+        and type(span.get('subpath')) is int and 0 <= span['subpath'] < len(identities)
+        and identities[span['subpath']] in retired and 'corner_id' in span)
+
+
 def expand_clone_components(region: DrawingRegion, source: DrawingRegion) -> DrawingRegion:
     """Expand a clone over already selected component slots without fitting."""
     if not isinstance(region.geometry, CloneGeometry) or not source.is_branch:

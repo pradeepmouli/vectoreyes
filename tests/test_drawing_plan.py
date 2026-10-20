@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 from vectormark.candidate import FlatFill
-from vectormark.drawing_adapter import drawing_from_vector_regions
+from vectormark.drawing_adapter import drawing_from_region_samples
 from vectormark.drawing_trace import (
     TraceCommand,
     TraceOptions,
@@ -13,7 +13,7 @@ from vectormark.drawing_trace import (
     TraceResult,
 )
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 
 
 def _trace() -> TraceResult:
@@ -61,9 +61,9 @@ def _two_region_trace() -> TraceResult:
     return TraceResult(1, 1, TraceOptions(), (r1, r2), "<svg/>")
 
 
-def _scene(*target_ids: str) -> tuple[VectorRegion, ...]:
+def _scene(*target_ids: str) -> tuple[RegionSample, ...]:
     return tuple(
-        VectorRegion.from_shape(
+        RegionSample.from_shape(
             id=index + 1,
             shape=Shape("path", {"d": "M 0 0 Q 1 0 2 0 Q 3 0 4 0 Q 5 0 6 0 Z"}),
             fill=FlatFill("#112233"),
@@ -76,9 +76,9 @@ def _scene(*target_ids: str) -> tuple[VectorRegion, ...]:
     )
 
 
-def _grouped_scene(*source_regions: str) -> tuple[VectorRegion, ...]:
+def _grouped_scene(*source_regions: str) -> tuple[RegionSample, ...]:
     return (
-        VectorRegion.from_shape(
+        RegionSample.from_shape(
             id=1,
             shape=Shape("path", {"d": "M 0 0 Q 1 0 2 0 Q 3 0 4 0 Q 5 0 6 0 Z"}),
             fill=FlatFill("#112233"),
@@ -90,12 +90,12 @@ def _grouped_scene(*source_regions: str) -> tuple[VectorRegion, ...]:
     )
 
 
-def _validate_plan(plan, trace: TraceResult, regions: tuple[VectorRegion, ...]) -> None:
+def _validate_plan(plan, trace: TraceResult, regions: tuple[RegionSample, ...]) -> None:
     from vectormark.drawing_plan import validate_plan
 
     validate_plan(
         plan,
-        drawing_from_vector_regions(
+        drawing_from_region_samples(
             "drw_x",
             width=trace.width,
             height=trace.height,
@@ -281,7 +281,7 @@ def test_path_geometry_rejects_segment_owned_by_another_region():
 def test_path_geometry_uses_retained_target_commands_not_raw_trace_provenance():
     from vectormark.drawing_plan import parse_plan, validate_plan
 
-    retained = VectorRegion.from_shape(
+    retained = RegionSample.from_shape(
         id=1,
         shape=Shape("path", {"d": "M0 0 L8 0 L8 8 L0 8 Z M2 2 L6 2 L6 6 L2 6 Z", "fill_rule": "evenodd"}),
         fill=FlatFill("#112233"),

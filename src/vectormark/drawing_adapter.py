@@ -1,6 +1,6 @@
-"""Temporary adapter from the Python optimizer's records to canonical drawings.
+"""Temporary adapter from the Python refinement's records to canonical drawings.
 
-The native/public contract is :class:`Drawing`. ``VectorRegion`` remains the
+The native/public contract is :class:`Drawing`. ``RegionSample`` remains the
 Python engine's working record while it still owns raster masks and Skia
 footprints. This module is the only sanctioned projection across that seam.
 """
@@ -14,7 +14,7 @@ from types import MappingProxyType
 import numpy as np
 
 if TYPE_CHECKING:
-    from .optimizer.automatic_replay import RefreshDependentClonesOperation, RegionResolver
+    from .refinement.automatic_replay import RefreshDependentClonesOperation, RegionResolver
 
 from .candidate import (
     FlatFill as LegacyFlatFill,
@@ -43,10 +43,10 @@ from .path_geometry import (
 from .corner_diagnostics import rebind_prefit_corner_diagnostics
 from . import corner_provenance
 from .paint_fitting import canonical_fill as _fill
-from .optimizer.vector_region import VectorRegion
+from .refinement.region_sample import RegionSample
 from .types import CoverageField
 from .skia_geometry import SkPath
-from .optimizer.symmetry_materialize import index_region_paths, resolve_source_path
+from .refinement.symmetry_materialize import index_region_paths, resolve_source_path
 
 
 @dataclass(frozen=True)
@@ -55,7 +55,7 @@ class WorkingLeafTarget:
 
     id: str
     root_id: str
-    region: VectorRegion
+    region: RegionSample
     source_regions: frozenset[str]
     region_path: tuple[int, ...]
 
@@ -65,16 +65,16 @@ class BoundRegionInputs:
     """One operation's canonical inputs and separately retained observations."""
 
     drawing: Drawing
-    working: Mapping[str, VectorRegion]
+    working: Mapping[str, RegionSample]
     paths: Mapping[str, tuple[int, ...]]
     shapes: Mapping[str, Shape]
 
     def publish(self, selected: DrawingRegion, *, symbolic: bool = True,
                 diagnostics: Mapping[str, object] | None = None,
                 footprint: SkPath | None = None,
-                shape_metadata: Mapping[str, object] | None = None) -> VectorRegion:
+                shape_metadata: Mapping[str, object] | None = None) -> RegionSample:
         from .geometry_native import affine_tuple
-        from .optimizer.symmetry_materialize import relative_source_path
+        from .refinement.symmetry_materialize import relative_source_path
 
         target = self.working[selected.id]
         geometry = selected.geometry
@@ -102,13 +102,13 @@ class BoundRegionInputs:
 class BoundPathInput:
     """Canonical command inputs before filled-component publication."""
 
-    target: VectorRegion
+    target: RegionSample
     paths: tuple[PathGeometry, ...]
 
     def publish(self, paths: Sequence[PathGeometry], *, preserve_subpaths: bool = True,
-                path_text: str | None = None) -> VectorRegion:
+                path_text: str | None = None) -> RegionSample:
         from .path_topology import component_paths, replace_component_paths
-        from .optimizer.vector_region import to_polygon
+        from .refinement.region_sample import to_polygon
         from .path_geometry import command_token
 
         paths = tuple(paths)
@@ -164,7 +164,7 @@ def _project_cached_paths(geometry, d: str, *, region_id: str, path_ids=None) ->
     return tuple(paths)
 
 
-def bind_path_input(target: VectorRegion) -> BoundPathInput:
+def bind_path_input(target: RegionSample) -> BoundPathInput:
     """Select exact commands without forcing intermediate paths into regions."""
     if not target.is_leaf or target.current.kind != 'path':
         raise ValueError('path input binding requires a retained path leaf')
@@ -176,7 +176,7 @@ def bind_path_input(target: VectorRegion) -> BoundPathInput:
     return BoundPathInput(target, paths)
 
 
-def resolved_input_shape(region: VectorRegion) -> Shape:
+def resolved_input_shape(region: RegionSample) -> Shape:
     """Bind retained instance geometry for an operation that consumes its shape."""
     shape = region.current
     if shape is None:
@@ -192,7 +192,7 @@ def resolved_instance_shape(shape: Shape, footprint: SkPath) -> Shape:
 
 
 def bind_region_inputs(
-    regions: Mapping[str, VectorRegion], *, paths: Mapping[str, tuple[int, ...]] | None = None,
+    regions: Mapping[str, RegionSample], *, paths: Mapping[str, tuple[int, ...]] | None = None,
 ) -> BoundRegionInputs:
     """Bind selected leaves without exposing private IDs as canonical handles.
 
@@ -212,8 +212,8 @@ def bind_region_inputs(
         shape = resolved_input_shape(region)
         shapes[key] = shape
         prepared.append(replace(region, id=number, drawing_id=key, current=shape))
-    drawing = drawing_from_vector_regions('automatic-inputs', width=1, height=1, regions=prepared)
-    from .optimizer.symmetry_materialize import UnboundCloneSourceError
+    drawing = drawing_from_region_samples('automatic-inputs', width=1, height=1, regions=prepared)
+    from .refinement.symmetry_materialize import UnboundCloneSourceError
     native = {addresses[key]: region for key, region in regions.items()}
     keys = {path: key for key, path in addresses.items()}
     selected = []
@@ -234,11 +234,11 @@ def bind_region_inputs(
         MappingProxyType(addresses), MappingProxyType(shapes))
 
 
-def working_leaf_targets(regions: Sequence[VectorRegion]) -> dict[str, WorkingLeafTarget]:
+def working_leaf_targets(regions: Sequence[RegionSample]) -> dict[str, WorkingLeafTarget]:
     """Derive public target handles from the region tree; do not persist an index."""
     result: dict[str, WorkingLeafTarget] = {}
 
-    def visit(region: VectorRegion, root_label: str, legacy_label: str, path: tuple[int, ...]) -> None:
+    def visit(region: RegionSample, root_label: str, legacy_label: str, path: tuple[int, ...]) -> None:
         if region.is_leaf:
             label = _public_region_id(region, root_label, legacy_label)
             if label in result:
@@ -261,12 +261,12 @@ def working_leaf_targets(regions: Sequence[VectorRegion]) -> dict[str, WorkingLe
 
 
 def replace_working_region(
-    regions: Sequence[VectorRegion], target_region_id: str,
-    replacement: Callable[[VectorRegion], VectorRegion],
-) -> tuple[VectorRegion, ...]:
+    regions: Sequence[RegionSample], target_region_id: str,
+    replacement: Callable[[RegionSample], RegionSample],
+) -> tuple[RegionSample, ...]:
     """Replace exactly one addressed working node without changing siblings."""
     matched = 0
-    def visit(region: VectorRegion) -> VectorRegion:
+    def visit(region: RegionSample) -> RegionSample:
         nonlocal matched
         if region.drawing_id == target_region_id:
             matched += 1
@@ -312,8 +312,8 @@ def shape_from_primitive_geometry(geometry: PrimitiveGeometry) -> Shape:
     raise TypeError(f"unsupported typed primitive: {type(primitive).__name__}")
 
 
-def publish_seam_shape(obj: VectorRegion, shape: Shape, other_id: int, candidate, *, selected: str) -> VectorRegion:
-    from .optimizer.vector_region import to_polygon
+def publish_seam_shape(obj: RegionSample, shape: Shape, other_id: int, candidate, *, selected: str) -> RegionSample:
+    from .refinement.region_sample import to_polygon
 
     return obj.with_current(shape, footprint=to_polygon(shape), diagnostics={'seams': {
         'accepted': True, 'paired_with': int(other_id), 'selected': selected,
@@ -321,7 +321,7 @@ def publish_seam_shape(obj: VectorRegion, shape: Shape, other_id: int, candidate
         'seam': candidate.seam}})
 
 
-def replace_private_leaves(root: VectorRegion, replacements: Mapping[int, VectorRegion]) -> VectorRegion:
+def replace_private_leaves(root: RegionSample, replacements: Mapping[int, RegionSample]) -> RegionSample:
     """Publish addressed leaf edits without replacing the retained exterior."""
     if root.is_leaf:
         return replacements.get(int(root.id), root)
@@ -330,8 +330,8 @@ def replace_private_leaves(root: VectorRegion, replacements: Mapping[int, Vector
 
 
 def publish_collapsed_region(
-    selected: DrawingRegion, target: VectorRegion, *, footprint: SkPath,
-) -> VectorRegion:
+    selected: DrawingRegion, target: RegionSample, *, footprint: SkPath,
+) -> RegionSample:
     """Retain observations while publishing a selected single painted union."""
     if selected.is_branch:
         identities = {selected.id: target.id}
@@ -362,15 +362,15 @@ def publish_collapsed_region(
 
 
 def publish_selected_leaf(
-    selected: DrawingRegion, target: VectorRegion, *,
+    selected: DrawingRegion, target: RegionSample, *,
     shape_metadata: Mapping[str, object] | None = None,
-) -> VectorRegion:
+) -> RegionSample:
     """Publish concrete canonical leaf geometry, retaining working paint/evidence.
 
     This boundary does not fit geometry or assign public IDs. Paint, source
     observations and private numeric identity belong to the retained target.
     """
-    from .optimizer.vector_region import to_polygon
+    from .refinement.region_sample import to_polygon
     if not selected.is_leaf or not target.is_leaf:
         raise ValueError('selected geometry publication requires leaf targets')
     shape = shape_from_region_geometry(selected, shape_metadata or {})
@@ -408,15 +408,15 @@ def transform_working_shape(
 
 
 def rebind_working_corner_provenance(
-    before: Sequence[VectorRegion],
-    after: Sequence[VectorRegion],
+    before: Sequence[RegionSample],
+    after: Sequence[RegionSample],
     *,
     tolerance: float,
-) -> tuple[VectorRegion, ...]:
+) -> tuple[RegionSample, ...]:
     """Carry declared corners across a rewrite, scoped by full tree ancestry."""
     originals = index_region_paths(before)
 
-    def visit(region: VectorRegion, parent: tuple[int, ...] = ()) -> VectorRegion:
+    def visit(region: RegionSample, parent: tuple[int, ...] = ()) -> RegionSample:
         path = (*parent, region.id)
         if region.is_branch:
             children = tuple(visit(child, path) for child in region.children)
@@ -451,7 +451,7 @@ def rebind_working_corner_provenance(
     return tuple(visit(region) for region in after)
 
 
-def restore_working_root_metadata(region: VectorRegion, original: VectorRegion | None) -> VectorRegion:
+def restore_working_root_metadata(region: RegionSample, original: RegionSample | None) -> RegionSample:
     """Publish selected geometry with its original root-owned drawing identity."""
     if original is None or original.drawing_id is None:
         return region
@@ -462,13 +462,13 @@ def restore_working_root_metadata(region: VectorRegion, original: VectorRegion |
     )
 
 
-def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequence[VectorRegion] = ()) -> dict[str, dict[str, object]]:
+def working_region_evidence(regions: Sequence[RegionSample], *, baseline: Sequence[RegionSample] = ()) -> dict[str, dict[str, object]]:
     """Retain only boundary evidence needed to project canonical selections."""
     result = {}
     indexed = index_region_paths(baseline)
-    prior = {address: indexed[path] for path, address in vector_region_address_index(baseline).items()}
-    addresses = vector_region_address_index(regions)
-    def visit(region: VectorRegion, parent: tuple[int, ...] = ()) -> None:
+    prior = {address: indexed[path] for path, address in region_sample_address_index(baseline).items()}
+    addresses = region_sample_address_index(regions)
+    def visit(region: RegionSample, parent: tuple[int, ...] = ()) -> None:
         path = (*parent, region.id)
         address = addresses[path]
         coverage = region.coverage
@@ -505,10 +505,10 @@ def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequen
     return result
 
 
-def working_shape_metadata(regions: Sequence[VectorRegion], selected: Sequence[DrawingRegion]) -> dict[str, dict[str, object]]:
+def working_shape_metadata(regions: Sequence[RegionSample], selected: Sequence[DrawingRegion]) -> dict[str, dict[str, object]]:
     """Retain kernel annotations, never a second copy of canonical geometry."""
     indexed = index_region_paths(regions)
-    native = {address: indexed[path] for path, address in vector_region_address_index(regions).items()}
+    native = {address: indexed[path] for path, address in region_sample_address_index(regions).items()}
     metadata = {}
     for root in selected:
         for leaf in root.leaves():
@@ -527,7 +527,7 @@ def current_shape_for_region(
 ) -> Shape:
     """Project selected geometry once for numeric consumers and input receipts."""
     from .geometry_native import region_path, affine_tuple
-    from .optimizer.symmetry_materialize import relative_source_path
+    from .refinement.symmetry_materialize import relative_source_path
     geometry = region.geometry
     if not isinstance(geometry, CloneGeometry):
         return shape_from_region_geometry(region, metadata)
@@ -541,23 +541,23 @@ def current_shape_for_region(
 
 
 def restore_selected_roots(
-    selected: Sequence[DrawingRegion], root_order: Sequence[str], regions: Sequence[VectorRegion], *,
+    selected: Sequence[DrawingRegion], root_order: Sequence[str], regions: Sequence[RegionSample], *,
     shape_metadata: Mapping[str, Mapping[str, object]], region_evidence: Mapping[str, Mapping[str, object]],
-) -> tuple[VectorRegion, ...]:
+) -> tuple[RegionSample, ...]:
     """Project an already selected root delta without topology/fitting decisions."""
     from .geometry_native import region_path
     from .drawing_fill import serialize_fill
     from .skia_geometry import unary_union
-    from .optimizer.vector_region import to_polygon
+    from .refinement.region_sample import to_polygon
     existing = {root.drawing_id: root for root in regions}
     changed = {root.id: root for root in selected}
-    canonical = (drawing_from_vector_regions('selected-input', width=1, height=1, regions=regions)
+    canonical = (drawing_from_region_samples('selected-input', width=1, height=1, regions=regions)
         if regions else None)
     previous_metadata = working_shape_metadata(regions, canonical.regions) if canonical is not None else {}
     all_roots = tuple(changed[identity] if identity in changed else canonical.region(identity)
         for identity in root_order)
     previous = index_region_paths(regions)
-    addresses = vector_region_address_index(regions)
+    addresses = region_sample_address_index(regions)
     paths_by_address = {address: path for path, address in addresses.items()}
     by_id = {}
     native_paths = {}
@@ -574,7 +574,7 @@ def restore_selected_roots(
     for root in all_roots:
         index(root)
     prior = {address: previous[path] for address, path in paths_by_address.items()}
-    def convert(region: DrawingRegion) -> VectorRegion:
+    def convert(region: DrawingRegion) -> RegionSample:
         info = region_evidence[region.id]
         baseline = prior.get(region.id)
         if (region.is_leaf and baseline is not None
@@ -608,7 +608,7 @@ def restore_selected_roots(
                 coverage = CoverageField(coverage, info['coverage_origin'], info['coverage_canvas'])
         raster = (prior[info['raster_source']].raster if info.get('raster_source') is not None
             else np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape']))
-        return VectorRegion(int(info['id']), shape, fill,
+        return RegionSample(int(info['id']), shape, fill,
             region.z, footprint=footprint, raster=raster,
             original=original, children=children, source_label=info['source_label'], color_hex=info['color_hex'],
             drawing_id=region.id, source_regions=region.source_region_ids,
@@ -616,18 +616,18 @@ def restore_selected_roots(
     return tuple(convert(changed[identity]) if identity in changed else existing[identity] for identity in root_order)
 
 
-def publish_region_update(selected: DrawingRegion, regions: Sequence[VectorRegion], *,
+def publish_region_update(selected: DrawingRegion, regions: Sequence[RegionSample], *,
     shape_metadata: Mapping[str, Mapping[str, object]] | None = None,
-) -> tuple[VectorRegion, ...]:
+) -> tuple[RegionSample, ...]:
     """Project a canonical region update without repeating its geometry decision."""
     from .drawing_relationships import replace_region
-    current = drawing_from_vector_regions('relationship', width=1, height=1, regions=regions)
+    current = drawing_from_region_samples('relationship', width=1, height=1, regions=regions)
     return _publish_drawing_delta(current, replace_region(current, selected), regions, shape_metadata or {})
 
 
-def publish_drawing_update(updated: Drawing, regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
+def publish_drawing_update(updated: Drawing, regions: Sequence[RegionSample]) -> tuple[RegionSample, ...]:
     """Publish canonical structural changes with their retained observations."""
-    current = drawing_from_vector_regions(updated.drawing_id, width=updated.canvas.width,
+    current = drawing_from_region_samples(updated.drawing_id, width=updated.canvas.width,
         height=updated.canvas.height, regions=regions)
     return _publish_drawing_delta(current, updated, regions, {})
 
@@ -638,8 +638,8 @@ def generated_tree_observations(
     parent_ancestry: tuple[int, ...] = (),
 ):
     """Capture generated observations without allocating working regions."""
-    from .optimizer.gate import rasterize
-    from .optimizer.vector_region import to_polygon
+    from .refinement.gate import rasterize
+    from .refinement.region_sample import to_polygon
     from .drawing_fill import serialize_fill
 
     observations, metadata = {}, {}
@@ -674,7 +674,7 @@ def generated_tree_observations(
 def publish_generated_tree(
     selected: DrawingRegion, *, identities: Mapping[str, int], raster_shape: tuple[int, int],
     retained_rasters: Mapping[str, np.ndarray] | None = None,
-) -> VectorRegion:
+) -> RegionSample:
     """Project generated selections for remaining numerical proposal consumers."""
     observations, metadata = generated_tree_observations(selected, identities=identities,
         raster_shape=raster_shape, retained_rasters=retained_rasters)
@@ -684,9 +684,9 @@ def publish_generated_tree(
 
 
 def _publish_drawing_delta(
-    current: Drawing, updated: Drawing, regions: Sequence[VectorRegion],
+    current: Drawing, updated: Drawing, regions: Sequence[RegionSample],
     shape_metadata: Mapping[str, Mapping[str, object]],
-) -> tuple[VectorRegion, ...]:
+) -> tuple[RegionSample, ...]:
     from .replay_state import ReplayState, publish_drawing_state
     state = publish_drawing_state(ReplayState(current,
         working_shape_metadata(regions, current.regions), working_region_evidence(regions)),
@@ -702,14 +702,14 @@ def _publish_drawing_delta(
         shape_metadata=state.shape_metadata, region_evidence=evidence)
 
 
-def vector_region_address_index(
-    regions: Sequence[VectorRegion],
+def region_sample_address_index(
+    regions: Sequence[RegionSample],
 ) -> dict[tuple[int, ...], str]:
     """Return the public region ID owned by every engine-tree ancestry."""
     addresses: dict[tuple[int, ...], str] = {}
 
     def index(
-        region: VectorRegion,
+        region: RegionSample,
         root_id: str,
         legacy_id: str,
         path: tuple[int, ...],
@@ -725,18 +725,18 @@ def vector_region_address_index(
     return addresses
 
 
-def drawing_from_vector_regions(
+def drawing_from_region_samples(
     drawing_id: str,
     *,
     width: float,
     height: float,
-    regions: Sequence[VectorRegion],
+    regions: Sequence[RegionSample],
 ) -> Drawing:
     """Project Python-engine working regions into the canonical scene model."""
-    region_addresses = vector_region_address_index(regions)
+    region_addresses = region_sample_address_index(regions)
     reference_index = index_region_paths(regions)
 
-    def clone_geometry(region: VectorRegion, path: tuple[int, ...]) -> CloneGeometry:
+    def clone_geometry(region: RegionSample, path: tuple[int, ...]) -> CloneGeometry:
         assert region.current is not None and region.current.kind == "use"
         source_path = resolve_source_path(reference_index, path, region.current.params)
         transform = AffineTransform(
@@ -765,7 +765,7 @@ def drawing_from_vector_regions(
             )
         raise ValueError("clone source requires retained concrete geometry")
 
-    def convert(region: VectorRegion, root_id: str, legacy_id: str, path: tuple[int, ...]) -> DrawingRegion:
+    def convert(region: RegionSample, root_id: str, legacy_id: str, path: tuple[int, ...]) -> DrawingRegion:
         region_id = region_addresses[path]
         diagnostics = dict(region.diagnostics)
         common = {
@@ -820,7 +820,7 @@ def drawing_from_vector_regions(
     )
 
 
-def _public_region_id(region: VectorRegion, root_id: str, legacy_id: str) -> str:
+def _public_region_id(region: RegionSample, root_id: str, legacy_id: str) -> str:
     candidate = region.drawing_id
     if isinstance(candidate, str) and (
         candidate.startswith(f"{root_id}-") or (candidate == root_id and legacy_id == root_id)
@@ -875,10 +875,10 @@ def working_fill_from_spec(spec: Mapping[str, object]):
 
 def refresh_dependent_clones(
     action: RefreshDependentClonesOperation, resolver: RegionResolver,
-) -> list[VectorRegion]:
+) -> list[RegionSample]:
     """Refresh the recorded clones and publish their containing roots atomically."""
-    from .optimizer.automatic_replay import apply_clone_reference_update
-    replacements_by_path: dict[tuple[int, ...], VectorRegion] = {}
+    from .refinement.automatic_replay import apply_clone_reference_update
+    replacements_by_path: dict[tuple[int, ...], RegionSample] = {}
     for refresh in action.clones:
         clone = resolver.resolve(refresh.clone)
         source = resolver.resolve(refresh.source)
@@ -890,7 +890,7 @@ def refresh_dependent_clones(
             previous_source_path=refresh.previous_source_path,
         )
 
-    def replace_paths(region: VectorRegion, path: tuple[int, ...]) -> VectorRegion:
+    def replace_paths(region: RegionSample, path: tuple[int, ...]) -> RegionSample:
         if path in replacements_by_path:
             return replacements_by_path[path]
         if region.is_leaf:
@@ -901,19 +901,19 @@ def refresh_dependent_clones(
     return [replace_paths(resolver.resolve(root), tuple(root.ancestry)) for root in action.roots]
 
 
-def root_region_address(region: VectorRegion) -> str:
+def root_region_address(region: RegionSample) -> str:
     if type(region.drawing_id) is not str:
         raise ValueError("drawing root is missing a stable drawing_id")
     return region.drawing_id
 
 
-def with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
+def with_drawing_address(region: RegionSample, address: str) -> RegionSample:
     """Copy *region* with its public, version-scoped drawing address."""
     if region.drawing_id == address:
         return region
     if region.is_leaf:
         assert region.current is not None
-        return VectorRegion(
+        return RegionSample(
             id=region.id,
             current=region.current,
             fill=region.fill,
@@ -928,7 +928,7 @@ def with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
             coverage=region.coverage,
             diagnostics=region.diagnostics,
         )
-    return VectorRegion.branch(
+    return RegionSample.branch(
         id=region.id,
         children=region.children,
         z=region.z,
@@ -944,17 +944,17 @@ def with_drawing_address(region: VectorRegion, address: str) -> VectorRegion:
     )
 
 
-def normalize_drawing_addresses(regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
+def normalize_drawing_addresses(regions: Sequence[RegionSample]) -> tuple[RegionSample, ...]:
     """Expose compact local child paths while preserving internal region IDs.
 
-    Optimizer-created child IDs are intentionally global (for example ``1001``)
+    Refinement-created child IDs are intentionally global (for example ``1001``)
     and can grow with every split.  They are implementation details.  The
     drawing protocol instead names a child by its one-based position in its
     retained parent: ``r1-1``, ``r1-2``, and so on.  Addresses are normalized
     only once a version is complete, so every plan still resolves against the
     exact version it names.
     """
-    def visit(region: VectorRegion, address: str) -> VectorRegion:
+    def visit(region: RegionSample, address: str) -> RegionSample:
         if region.is_branch:
             used = {child.drawing_id for child in region.children if child.drawing_id}
             children = []

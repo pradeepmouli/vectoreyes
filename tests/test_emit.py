@@ -6,14 +6,14 @@ from vectormark.fit import Shape
 from vectormark.types import Axis
 from vectormark.candidate import FlatFill
 from vectormark.emit import (
-    optimizer_objects_to_svg,
+    refinement_objects_to_svg,
     resolve_use_shape,
     shape_to_svg,
     shape_to_path_d,
     mirror_use,
     render_svg_doc,
 )
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from tests._render import render_svg
 
 
@@ -89,14 +89,14 @@ def test_resolve_use_shape_maps_object_id_to_emitted_id():
     assert "href_obj_id" not in shape.params
 
 
-def test_optimizer_objects_to_svg_resolves_object_id_hrefs():
-    source = VectorRegion(
+def test_refinement_objects_to_svg_resolves_object_id_hrefs():
+    source = RegionSample(
         10,
         Shape("rect", {"x": 0.0, "y": 0.0, "w": 5.0, "h": 5.0}),
         FlatFill("#111111"),
         0,
     )
-    clone = VectorRegion(
+    clone = RegionSample(
         20,
         Shape("use", {"href_obj_id": 10, "transform": (1.0, 0.0, 0.0, 1.0, 8.0, 0.0), "fill": "#222222"}),
         FlatFill("#222222"),
@@ -104,7 +104,7 @@ def test_optimizer_objects_to_svg_resolves_object_id_hrefs():
         footprint=source.footprint,
     )
 
-    body = optimizer_objects_to_svg([clone, source])
+    body = refinement_objects_to_svg([clone, source])
 
     assert body[0].startswith('<rect id="s0"')
     assert body[1].startswith('<use id="s1"')

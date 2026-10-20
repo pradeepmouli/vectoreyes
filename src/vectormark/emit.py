@@ -60,7 +60,7 @@ def shape_to_svg(shape: Shape, fill: str | None, elem_id: str) -> str:
 
 
 def resolve_use_shape(shape: Shape, id_map: dict[int, str]) -> Shape:
-    """Resolve optimizer object-id references in Shape(\"use\") to emitted SVG ids."""
+    """Resolve refinement object-id references in Shape(\"use\") to emitted SVG ids."""
     if shape.kind != "use" or "href_obj_id" not in shape.params:
         return shape
     obj_id = int(shape.params["href_obj_id"])
@@ -72,9 +72,9 @@ def resolve_use_shape(shape: Shape, id_map: dict[int, str]) -> Shape:
     return Shape("use", params)
 
 
-def optimizer_objects_to_svg(objects, fills: dict[int, str] | None = None) -> list[str]:
-    """Serialize optimizer objects with object-id based <use> references resolved."""
-    from .optimizer.vector_region import leaves
+def refinement_objects_to_svg(objects, fills: dict[int, str] | None = None) -> list[str]:
+    """Serialize refinement objects with object-id based <use> references resolved."""
+    from .refinement.region_sample import leaves
 
     objects = leaves(objects)
     ordered = sorted(objects, key=lambda obj: (float(obj.z), int(obj.id)))

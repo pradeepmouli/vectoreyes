@@ -246,7 +246,7 @@ def test_fit_path_cubic_option_emits_inflection_guarded_cubics_for_smooth_runs()
 
 
 def test_fit_path_does_not_introduce_medium_line_facets_on_smooth_leaf():
-    from vectormark.optimizer.vector_region import flatten_points
+    from vectormark.refinement.region_sample import flatten_points
 
     source = Shape(
         "path",
@@ -273,7 +273,7 @@ def test_fit_path_does_not_introduce_medium_line_facets_on_smooth_leaf():
 
 
 def test_fit_path_smooths_quadratic_joins_on_smooth_leaf():
-    from vectormark.optimizer.vector_region import flatten_points
+    from vectormark.refinement.region_sample import flatten_points
 
     source = Shape(
         "path",

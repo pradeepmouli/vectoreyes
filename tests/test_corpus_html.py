@@ -6,8 +6,8 @@ from scripts.generate_corpus_html import CorpusEntry, generate_corpus_html
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
 from vectormark import Options
-from vectormark.optimizer import trace as trace_module
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement import trace as trace_module
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 
 
 def _tiny_disk():
@@ -23,37 +23,37 @@ def test_generate_corpus_html_writes_render_svg_and_diagnostics(tmp_path):
         [
             CorpusEntry(
                 "tiny_disk",
-                "optimizer",
+                "refinement",
                 _tiny_disk,
-                Options(optimizer=True),
+                Options(refinement=True),
             )
         ],
     )
 
     html = index.read_text()
-    svg = (index.parent / "svg" / "optimizer-tiny_disk.svg").read_text()
-    png = index.parent / "rendered-input" / "optimizer-tiny_disk.png"
-    raw = index.parent / "raw" / "optimizer-tiny_disk.svg.txt"
-    diagnostics = index.parent / "diagnostics" / "optimizer-tiny_disk.json"
-    diagnostics_summary = index.parent / "diagnostic-summary" / "optimizer-tiny_disk.html"
-    options = index.parent / "options" / "optimizer-tiny_disk.json"
+    svg = (index.parent / "svg" / "refinement-tiny_disk.svg").read_text()
+    png = index.parent / "rendered-input" / "refinement-tiny_disk.png"
+    raw = index.parent / "raw" / "refinement-tiny_disk.svg.txt"
+    diagnostics = index.parent / "diagnostics" / "refinement-tiny_disk.json"
+    diagnostics_summary = index.parent / "diagnostic-summary" / "refinement-tiny_disk.html"
+    options = index.parent / "options" / "refinement-tiny_disk.json"
 
-    assert "optimizer / tiny_disk" in html
-    assert '<img src="rendered-input/optimizer-tiny_disk.png"' in html
-    assert '<object data="svg/optimizer-tiny_disk.svg"' in html
+    assert "refinement / tiny_disk" in html
+    assert '<img src="rendered-input/refinement-tiny_disk.png"' in html
+    assert '<object data="svg/refinement-tiny_disk.svg"' in html
     assert "<summary>SVG</summary>" in html
     assert "<summary>Diagnostics</summary>" in html
-    assert 'src="raw/optimizer-tiny_disk.svg.txt"' in html
-    assert 'src="diagnostic-summary/optimizer-tiny_disk.html"' in html
-    assert 'src="diagnostics/optimizer-tiny_disk.json"' in html
-    assert 'src="options/optimizer-tiny_disk.json"' in html
+    assert 'src="raw/refinement-tiny_disk.svg.txt"' in html
+    assert 'src="diagnostic-summary/refinement-tiny_disk.html"' in html
+    assert 'src="diagnostics/refinement-tiny_disk.json"' in html
+    assert 'src="options/refinement-tiny_disk.json"' in html
     assert png.exists()
     assert svg.startswith("<svg ")
     assert raw.read_text() == svg
     assert '"elements"' in diagnostics.read_text()
-    assert "Optimizer Objects" in diagnostics_summary.read_text()
+    assert "Refinement Objects" in diagnostics_summary.read_text()
     assert "<td>circle</td>" in diagnostics_summary.read_text()
-    assert '"optimizer": true' in options.read_text()
+    assert '"refinement": true' in options.read_text()
     assert '"epsilon": 1.0' in options.read_text()
     assert '"max_error": 1.0' in options.read_text()
 
@@ -61,11 +61,11 @@ def test_generate_corpus_html_writes_render_svg_and_diagnostics(tmp_path):
 def test_generate_corpus_html_can_opt_into_cubic_paths(tmp_path):
     index = generate_corpus_html(
         tmp_path / "corpus",
-        [CorpusEntry("tiny_disk", "optimizer", _tiny_disk, Options(optimizer=True))],
+        [CorpusEntry("tiny_disk", "refinement", _tiny_disk, Options(refinement=True))],
         cubic_paths=True,
     )
 
-    options = index.parent / "options" / "optimizer-tiny_disk.json"
+    options = index.parent / "options" / "refinement-tiny_disk.json"
 
     assert '"cubic_paths": true' in options.read_text()
 
@@ -125,25 +125,25 @@ def test_trace_auto_cache_reuses_trace_roots_but_reruns_auto_refinement(tmp_path
 def test_generate_corpus_html_can_override_corpus_tolerances(tmp_path):
     index = generate_corpus_html(
         tmp_path / "corpus",
-        [CorpusEntry("tiny_disk", "optimizer", _tiny_disk, Options(optimizer=True))],
+        [CorpusEntry("tiny_disk", "refinement", _tiny_disk, Options(refinement=True))],
         epsilon=0.75,
         max_error=0.5,
     )
 
-    options = (index.parent / "options" / "optimizer-tiny_disk.json").read_text()
+    options = (index.parent / "options" / "refinement-tiny_disk.json").read_text()
 
     assert '"epsilon": 0.75' in options
     assert '"max_error": 0.5' in options
 
 
-def test_generate_corpus_html_reuses_optimizer_trace_cache(tmp_path, monkeypatch):
+def test_generate_corpus_html_reuses_refinement_trace_cache(tmp_path, monkeypatch):
     trace_calls = 0
 
     def _fake_trace_regions(arr, opt):
         nonlocal trace_calls
         trace_calls += 1
         shape = Shape("circle", {"cx": 24.0, "cy": 24.0, "r": 12.0})
-        region = VectorRegion(
+        region = RegionSample(
             0,
             shape,
             FlatFill("#c81e1e"),
@@ -155,7 +155,7 @@ def test_generate_corpus_html_reuses_optimizer_trace_cache(tmp_path, monkeypatch
 
     monkeypatch.setattr(trace_module, "trace_regions", _fake_trace_regions)
     output = tmp_path / "corpus"
-    entries = [CorpusEntry("tiny_disk", "optimizer", _tiny_disk, Options(optimizer=True))]
+    entries = [CorpusEntry("tiny_disk", "refinement", _tiny_disk, Options(refinement=True))]
 
     generate_corpus_html(output, entries)
     generate_corpus_html(output, entries, only=["tiny_disk"])
@@ -171,7 +171,7 @@ def test_generate_corpus_html_retraces_when_trace_options_change(tmp_path, monke
         nonlocal trace_calls
         trace_calls += 1
         shape = Shape("circle", {"cx": 24.0, "cy": 24.0, "r": 12.0})
-        region = VectorRegion(
+        region = RegionSample(
             0,
             shape,
             FlatFill("#c81e1e"),
@@ -183,7 +183,7 @@ def test_generate_corpus_html_retraces_when_trace_options_change(tmp_path, monke
 
     monkeypatch.setattr(trace_module, "trace_regions", _fake_trace_regions)
     output = tmp_path / "corpus"
-    entries = [CorpusEntry("tiny_disk", "optimizer", _tiny_disk, Options(optimizer=True))]
+    entries = [CorpusEntry("tiny_disk", "refinement", _tiny_disk, Options(refinement=True))]
 
     generate_corpus_html(output, entries)
     generate_corpus_html(output, entries, epsilon=0.75)
@@ -252,7 +252,7 @@ def test_default_entries_use_corpus_input_and_include_vbird(tmp_path, monkeypatc
     assert [entry.name for entry in entries].count("vbird") == 2
     assert "legacy_only" not in {entry.name for entry in entries}
     assert "cmp_icloud" not in {entry.name for entry in entries}
-    assert {entry.mode for entry in entries if entry.name == "vbird"} == {"current", "optimizer"}
+    assert {entry.mode for entry in entries if entry.name == "vbird"} == {"current", "refinement"}
 
 
 def test_generate_corpus_html_only_updates_sidecars_when_manifest_is_unchanged(tmp_path):
@@ -297,4 +297,4 @@ def test_corpus_output_does_not_write_generated_inputs_into_source_input_dir(tmp
     assert (corpus / "index.html").exists()
     assert (corpus / "rendered-input" / "current-appstore.png").exists()
     assert not (source / "current-appstore.png").exists()
-    assert not (source / "optimizer-appstore.png").exists()
+    assert not (source / "refinement-appstore.png").exists()

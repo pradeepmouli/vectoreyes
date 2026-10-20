@@ -5,12 +5,12 @@ import pytest
 
 from vectormark.drawing_actions import DrawingPlan
 from vectormark.drawing_engine import TraceDrawingRequest, RasterImage
-from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.refinement.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe, ResolveOriginalPaintOperation,
     build_paint_evidence, drawing_revision, )
 from vectormark.drawing_refine import stitch_regions_with_intent
-from vectormark.optimizer.assembly_binding import assemble_working_roots
+from vectormark.refinement.assembly_binding import assemble_working_roots
 from vectormark.drawing_replay import propose_effective_recipe
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
@@ -24,9 +24,9 @@ def source():
 
 
 def test_automatic_refinement_records_before_final_output_palette():
-    from vectormark.optimizer.replay_binding import replay_working_regions
+    from vectormark.refinement.replay_binding import replay_working_regions
     from vectormark.output_settings import DrawingOutputSettings
-    from vectormark.optimizer.automatic_replay import input_revision
+    from vectormark.refinement.automatic_replay import input_revision
 
     _, raster = source()
     engine = PythonDrawingEngine()

@@ -22,7 +22,7 @@ from .drawing_engine import (
     DrawingActionRequest, DrawingActionResult, FitPathRequest, FitPathResult,
     PathActionRequest, PathActionResult, RasterImage, TraceDrawingRequest, TraceDrawingResult,
 )
-from .optimizer.assembly_binding import working_regions_from_evidence
+from .refinement.assembly_binding import working_regions_from_evidence
 from .drawing_recipe import (
     EffectiveDrawingRecipe, GeometryEvidence, PaintEvidence, ReplayRecord, ResolvedCornerEdit,
     ResolveOriginalPaintOperation, build_geometry_evidence, build_paint_evidence,
@@ -30,7 +30,7 @@ from .drawing_recipe import (
 from .drawing_refine import auto_refine_with_intent, stitch_regions_with_intent
 from .drawing_render import trace_summary
 from .drawing_assembly import assemble_drawing_roots
-from .optimizer.replay_binding import replay_working_regions
+from .refinement.replay_binding import replay_working_regions
 from .drawing_replay import (
     extend_recipe_with_plan, propose_effective_recipe, raster_pixels, )
 from .drawing_trace import PythonTraceEngine, TraceOptions, TraceResult
@@ -195,7 +195,7 @@ class PythonDrawingEngine:
         self, drawing: Drawing, evidence: PythonEngineEvidence, *,
         corner_normalize: bool = False, refinement_passes: RefinementPasses | None = None,
     ) -> DrawingActionResult[PythonEngineEvidence]:
-        """Orchestrate existing optimizer passes and retain their accepted operations."""
+        """Orchestrate existing refinement passes and retain their accepted operations."""
         validate_replay_record(drawing=drawing, evidence=evidence.geometry,
             paint=evidence.paint, recipe=evidence.recipe, replay=evidence.replay)
         # Appended steps replay before the final output-palette projection.

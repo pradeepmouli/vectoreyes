@@ -3,13 +3,13 @@ import pytest
 from vectormark.candidate import FlatFill
 from vectormark.drawing_adapter import bind_path_input
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import parse_svg_paths
 
 
 def test_path_projection_rejects_stale_numeric_geometry_despite_format_normalization():
     (geometry,) = parse_svg_paths('M0 0 Q2 4 4 0 L0 0 Z', region_id='r1')
-    target = VectorRegion(1, Shape('path', {'d': 'M0.0 0.0 Q2.0 4.0 4.0 0.0 L0.0 0.0 Z',
+    target = RegionSample(1, Shape('path', {'d': 'M0.0 0.0 Q2.0 4.0 4.0 0.0 L0.0 0.0 Z',
         'canonical_path_geometry': geometry}), FlatFill('#123456'))
 
     assert bind_path_input(target).paths == (geometry,)

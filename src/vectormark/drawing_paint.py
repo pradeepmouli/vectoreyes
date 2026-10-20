@@ -12,7 +12,7 @@ from .color import extract_palette
 from .drawing import Drawing, DrawingRegion, _walk_regions
 from .drawing_fill import Fill, FlatFill, LinearGradientFill, RadialGradientFill
 from .geometry_native import region_path
-from .optimizer.gate import rasterize
+from .refinement.gate import rasterize
 from .output_settings import DrawingOutputSettings
 
 

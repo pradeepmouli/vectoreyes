@@ -50,17 +50,17 @@ def test_corner_publication_keeps_hole_first_source_order_distinct_from_filled_r
     from vectormark.corner_diagnostics import path_corner_diagnostics
     from vectormark.drawing_adapter import bind_path_input
     from vectormark.fit import Shape
-    from vectormark.optimizer.automatic_replay import (
+    from vectormark.refinement.automatic_replay import (
         NormalizeCornersOperation, PassInputRegionRef, apply_corner_normalization_choice,
     )
-    from vectormark.optimizer.vector_region import VectorRegion
+    from vectormark.refinement.region_sample import RegionSample
 
     d = 'M3 3 L4 3 L4 4 L3 4 Z ' + D
     hole, outer = parse_svg_paths(d, region_id='r1')
     geometry = PathGeometryWithCutouts(outer, (hole,))
     shape = Shape('path', {'d': d, 'fill_rule': 'evenodd', 'path_ids': ('r1.p0', 'r1.p1'),
                            'canonical_path_geometry': geometry})
-    target = VectorRegion(1, shape, FlatFill('#123456'))
+    target = RegionSample(1, shape, FlatFill('#123456'))
     declaration = path_corner_diagnostics(d, declared_corner_spans=(((10, 0), (14, 4)),))
     action = NormalizeCornersOperation(PassInputRegionRef('', '', (1,)), 1, declaration)
 

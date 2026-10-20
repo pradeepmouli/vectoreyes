@@ -22,7 +22,7 @@ returned panel. These are suggested option bundles, not named server modes.
 Use the live schema for accepted fields, enums, and defaults.
 
 - `trace_drawing(image, options)` retains the original source. `refine="auto"`
-  proposes v1 and also returns pre-optimizer v0; both are refinable. Use
+  proposes v1 and also returns pre-refinement v0; both are refinable. Use
   `refine="none"` when you need to inspect the baseline alone.
 - Use the tool's generated options schema, not a copied enum list. A fixed
   `max_sampling_colors` is useful when the material count is known. Automatic colors

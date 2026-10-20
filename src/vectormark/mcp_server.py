@@ -379,7 +379,7 @@ def idealize_logo_image(
         min_region_fraction=options.get("min_region_fraction", 0.02),
         flatten=options.get("flatten", False),
         no_symmetry=options.get("no_symmetry", False),
-        optimizer=options.get("optimizer", False),
+        refinement=options.get("refinement", False),
         corner_normalize=options.get("corner_normalize", False),
     )
     try:
@@ -446,7 +446,7 @@ mcp = FastMCP(
         "discarded and the vector drawing can become the source of truth. Treat the source-minus-SVG diff as a fidelity gate: "
         "remove every visible structural, geometric, alignment, proportion, or fill discrepancy. Residuals limited to normal SVG "
         "versus raster antialiasing, resampling, and continuous-gradient approximation are acceptable; merely being a close trace is not. "
-        "There are three geometry modalities. Both trace_drawing refine modes are interactive: refine='auto' always returns pre-optimizer v0 plus automatic v1, "
+        "There are three geometry modalities. Both trace_drawing refine modes are interactive: refine='auto' always returns pre-refinement v0 plus automatic v1, "
         "whose final fills are re-fitted from the original source RGB; refine='none' returns only v0 and retains "
         "unrefined trace roots when you need to judge the raw decomposition before any automatic cleanup. Use retrace_drawing only when you can supply "
         "a better palette-labelled geometry guide; its guide colours are temporary labels and all final fills are still fitted from the original source. "
@@ -766,7 +766,7 @@ class TraceVersionOutput(_DrawingOutputSchema):
 
 
 class TraceDrawingOutput(_DrawingOutputSchema):
-    """Trace envelope with one pre-optimizer output and optional automatic child."""
+    """Trace envelope with one pre-refinement output and optional automatic child."""
 
     drawing_id: str
     outputs: list[TraceVersionOutput] = Field(
@@ -955,12 +955,12 @@ class IdealizeOptions(BaseModel):
     colors: int = Field(DEFAULT_COLORS, description="Max palette colors. A CEILING, not a target — flats stay flat; raise it to let gradients keep their bands.")
     flatten: bool = Field(False, description="Emit plain paths instead of native SVG primitives and <use> mirror.")
     no_symmetry: bool = Field(False, description="Disable symmetry detection.")
-    optimizer: bool = Field(False, description="Run the existing geometry optimizer passes.")
-    corner_normalize: bool = Field(False, description="When optimizer is enabled, reduce recognised rounded corners to one quadratic or a sharp point.")
+    refinement: bool = Field(False, description="Run the existing geometry refinement passes.")
+    corner_normalize: bool = Field(False, description="When refinement is enabled, reduce recognised rounded corners to one quadratic or a sharp point.")
     epsilon: float = Field(1.5, description="Primitive/polygon recognition tolerance in pixels.")
     max_error: float = Field(1.0, description="Bézier fit tolerance in pixels.")
-    min_region_size: int = Field(16, ge=1, description="Absolute pixel-area floor before optimizer tracing.")
-    min_region_fraction: float = Field(0.02, ge=0, lt=1, description="Relative retained-region floor before optimizer tracing.")
+    min_region_size: int = Field(16, ge=1, description="Absolute pixel-area floor before refinement tracing.")
+    min_region_fraction: float = Field(0.02, ge=0, lt=1, description="Relative retained-region floor before refinement tracing.")
     preprocess: PreprocessOpts = Field(default_factory=PreprocessOpts, description="Server-side preprocessing options.")
 
 
@@ -1010,7 +1010,7 @@ class TraceDrawingOptions(DrawingOutputSettings):
         False,
         description=(
             "v1 auto-refinement toggle: canonicalize recognised rounded corners to one quadratic while keeping their endpoints fixed. "
-            "This never changes the pre-optimizer v0 trace."
+            "This never changes the pre-refinement v0 trace."
         ),
     )
     remove_background: Literal["auto", "off", "on"] = Field(
@@ -1172,7 +1172,7 @@ def _trace_result(image: ImageRef, options: TraceDrawingOptions):
       "actual parent (or an explicit no-parent tile), current result, addressable region and segment maps, and amplified source-minus-SVG diff. Inspect that panel before choosing any refine_drawing plan. "
         "The final SVG must be a designer-quality replacement for the supplied render: eliminate visible design discrepancies, "
         "not merely achieve a close trace; renderer-level antialiasing and gradient residuals are the only acceptable diff. "
-        "Both refine modes retain a live drawing: refine='auto' returns two immutable outputs, pre-optimizer v0 and automatic v1; "
+        "Both refine modes retain a live drawing: refine='auto' returns two immutable outputs, pre-refinement v0 and automatic v1; "
         "refine='none' retains raw trace roots for diagnostic review. "
         "Use max_sampling_colors='auto' when palette complexity is unknown. fit_strategy='quadratic' is the stable default; "
         "'progressive' protects pre-fit straight sides then uses Q/C recursion, and 'progressive_allow_lines' also permits L/Q/C fitting during recursion. "

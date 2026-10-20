@@ -11,7 +11,7 @@ from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_engine import RasterImage
 from vectormark.drawing_fill import FlatFill
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.refinement.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
     ReplayRecord,
@@ -22,7 +22,7 @@ from vectormark.drawing_recipe import (
 from vectormark.drawing_state import DrawingNotFound, DrawingStore, VersionCandidate
 from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_fit_evidence import FittedRun, automatic_fit_evidence
 from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
@@ -35,9 +35,9 @@ def _trace() -> TraceResult:
     return TraceResult(2, 2, TraceOptions(), (), "<svg/>")
 
 
-def _roots() -> tuple[VectorRegion, ...]:
+def _roots() -> tuple[RegionSample, ...]:
     return (
-        VectorRegion.from_shape(
+        RegionSample.from_shape(
             id=1,
             shape=Shape("rect", {"x": 0.0, "y": 0.0, "w": 2.0, "h": 2.0}),
             fill=LegacyFlatFill("#112233"),

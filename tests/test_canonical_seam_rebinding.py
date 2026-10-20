@@ -12,9 +12,9 @@ from vectormark.drawing_engine import PathFitOptions
 from vectormark.corner_recipe import CornerRecipeExecutor
 from vectormark.drawing_relationships import replace_region
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import ReplayBatch, PassInputRegionRef, PathEndpointRef
-from vectormark.optimizer.replay_binding import capture_replay_state
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.automatic_replay import ReplayBatch, PassInputRegionRef, PathEndpointRef
+from vectormark.refinement.replay_binding import capture_replay_state
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import geometry_from_svg_d
 from vectormark.replay_state import ReplayState
 from vectormark.replay_identity import canonical_input_revision
@@ -22,10 +22,10 @@ from vectormark.replay_identity import canonical_input_revision
 
 def nested_state():
     def branch(identity):
-        leaf = VectorRegion.from_shape(id=1, drawing_id=f'r{identity}-1',
+        leaf = RegionSample.from_shape(id=1, drawing_id=f'r{identity}-1',
             shape=Shape('path', {'d': 'M0 0 L12 0 L12 12 L0 12 Z'}),
             fill=FlatFill('#112233'), z=0, raster=np.ones((16, 16), dtype=bool))
-        return VectorRegion.branch(id=identity, drawing_id=f'r{identity}', children=(leaf,))
+        return RegionSample.branch(id=identity, drawing_id=f'r{identity}', children=(leaf,))
     return capture_replay_state((branch(10), branch(20)), Canvas(16, 16))
 
 

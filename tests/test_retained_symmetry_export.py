@@ -1,4 +1,4 @@
-from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
 from vectormark.drawing_render import render_drawing as _canonical_render
 from types import SimpleNamespace
 from typing import cast
@@ -10,8 +10,8 @@ import pytest
 from vectormark import drawing_refine
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import ProposalIntent
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement.automatic_replay import ProposalIntent
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 
 
 def _forest():
@@ -19,23 +19,23 @@ def _forest():
     left = Shape("path", {"d": "M2 2 L10 2 L10 6 L6 6 L6 14 L10 14 L10 18 L2 18 Z"})
     right = Shape("path", {"d": "M10 2 L18 2 L18 18 L10 18 L10 14 L14 14 L14 6 L10 6 Z"})
     mask = np.zeros((24, 48), dtype=bool)
-    source = VectorRegion(11, left, FlatFill("#123456"), raster=mask,
+    source = RegionSample(11, left, FlatFill("#123456"), raster=mask,
                           drawing_id="r1-1", source_regions=("r1",))
-    mirror = VectorRegion(12, Shape("use", {"href_obj_id": 11, "transform": (-1, 0, 0, 1, 20, 0)}),
+    mirror = RegionSample(12, Shape("use", {"href_obj_id": 11, "transform": (-1, 0, 0, 1, 20, 0)}),
                           source.fill, raster=mask, footprint=to_polygon(right),
                           drawing_id="r1-2", source_regions=("r1",),
                           diagnostics={"symmetry": {"mode": "self_mirror"}})
-    branch = VectorRegion.branch(id=1, children=(source, mirror), raster=mask,
+    branch = RegionSample.branch(id=1, children=(source, mirror), raster=mask,
                                  drawing_id="r1", source_regions=("r1",),
                                  diagnostics={"symmetry": {"mode": "self"}})
-    clone = VectorRegion(2, Shape("use", {"href_obj_id": 11, "transform": (1, 0, 0, 1, 22, 0)}),
+    clone = RegionSample(2, Shape("use", {"href_obj_id": 11, "transform": (1, 0, 0, 1, 22, 0)}),
                          FlatFill("#fedcba"), raster=mask, footprint=source.footprint,
                          drawing_id="r2", source_regions=("r2",), diagnostics={"clone": {"source": "r1-1"}})
     return branch, clone
 
 
 def test_materialization_retains_full_union_hole_identity_and_clone():
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
     before = _forest()
     result = materialize_self_symmetry(before)
     joined, clone = result
@@ -67,7 +67,7 @@ def test_materialization_retains_full_union_hole_identity_and_clone():
 
 
 def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(monkeypatch):
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
     regions = materialize_self_symmetry(_forest())
     def forbidden(*args, **kwargs):
         raise AssertionError("renderer reconstructed geometry")
@@ -78,7 +78,7 @@ def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(mon
     import vectormark.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "unary_union", forbidden)
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
-    import vectormark.optimizer.gate as gate
+    import vectormark.refinement.gate as gate
     monkeypatch.setattr(gate, "rasterize", forbidden)
     trace = SimpleNamespace(width=48, height=24)
     first = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)))
@@ -111,14 +111,14 @@ def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
 
 @pytest.mark.parametrize("stale_clone", [False, True])
 def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, monkeypatch):
-    from vectormark.optimizer import framework
+    from vectormark.refinement import framework
     from vectormark.drawing_adapter import transform_working_shape
-    from vectormark.optimizer.symmetry_materialize import union_self_symmetry
+    from vectormark.refinement.symmetry_materialize import union_self_symmetry
     branch, old_clone = _forest()
-    source = VectorRegion(11, Shape("path", {"d": branch.footprint.to_svg_d(), "fill_rule": "evenodd", "tag": "before"}),
+    source = RegionSample(11, Shape("path", {"d": branch.footprint.to_svg_d(), "fill_rule": "evenodd", "tag": "before"}),
                           branch.fill or branch.children[0].fill, footprint=branch.footprint,
                           raster=branch.raster, drawing_id="r1-1", source_regions=("r1",))
-    root = VectorRegion.branch(id=1, children=(source,), drawing_id="r1", raster=branch.raster)
+    root = RegionSample.branch(id=1, children=(source,), drawing_id="r1", raster=branch.raster)
     clone_footprint = to_polygon(transform_working_shape(source.current, (1, 0, 0, 1, 22, 0)))
     clone = old_clone.with_current(old_clone.current, footprint=old_clone.footprint if stale_clone else clone_footprint)
     inputs = [root, clone]
@@ -133,7 +133,7 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
         return real_assess(replacements, sources, policy=policy)
     monkeypatch.setattr(framework, "_replacement_preserves_scene", capture)
     published = []
-    result = framework.optimize(inputs, {obj.id: obj.raster for obj in inputs}, [reconstruct],
+    result = framework.select_refinements(inputs, {obj.id: obj.raster for obj in inputs}, [reconstruct],
                                 on_pass=lambda name, values: published.append(values))
     assert (2, 11) in assessed
     assert len(published) == 1 and published[0] == result
@@ -149,9 +149,9 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
         assert result[1].footprint.symmetric_difference(clone_footprint).area < 1e-8
         rendered = _canonical_render(_export_drawing("export", width=(SimpleNamespace(width=48, height=24)).width, height=(SimpleNamespace(width=48, height=24)).height, regions=_export_addresses(result)))
         assert 'href="#geometry-r1-1"' in rendered.svg
-        from vectormark.pipeline import _render_optimizer_body
+        from vectormark.pipeline import _render_refinement_body
         # The legacy pipeline uses the same retained identity across subtrees.
-        body, defs = _render_optimizer_body(result)
+        body, defs = _render_refinement_body(result)
         assert 'id="s1-11-geometry"' in "".join(defs)
         assert 'href="#s1-11-geometry"' in "".join(body)
     assert source.current.params["tag"] == "before"
@@ -159,15 +159,15 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
 
 def test_automatic_callback_and_later_polish_share_retained_materialization(monkeypatch):
     from vectormark import pipeline
-    from vectormark.optimizer.automatic_replay import (
+    from vectormark.refinement.automatic_replay import (
         DeclareIntrinsicSymmetryOperation,
         draft_input_ref,
         operation_intent,
     )
-    from vectormark.optimizer.framework import Proposal
+    from vectormark.refinement.framework import Proposal
     from vectormark.drawing_symmetry import Axis2D
-    from vectormark.optimizer.automatic_replay import apply_intrinsic_symmetry_choice
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
+    from vectormark.refinement.automatic_replay import apply_intrinsic_symmetry_choice
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
     branch, _ = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     original = joined.with_current(Shape("path", {**joined.current.params, "tag": "before"}),
@@ -187,7 +187,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization(monk
         assert objects[0].diagnostics["materialization"]["operation"] == "self_symmetry_union"
         assert objects[0].footprint.area == pytest.approx(192)
         return []
-    monkeypatch.setattr(pipeline, "_optimizer_passes", lambda options: [symmetric, polish])
+    monkeypatch.setattr(pipeline, "_refinement_passes", lambda options: [symmetric, polish])
     trace = SimpleNamespace(width=48, height=24, options=SimpleNamespace(
         simplify_tolerance=1.0, curve_tolerance=1.0, trace_level="pixel",
         max_sampling_colors=8, min_region_size=1))
@@ -217,7 +217,7 @@ def test_manual_symmetry_uses_shared_union_and_rejects_outside_axis_without_muta
     from vectormark.drawing_trace import TraceOptions, TraceResult
     from vectormark.drawing_plan import parse_plan
     shape = Shape("path", {"d": "M36 8 L56 8 L56 24 L36 24 Z"})
-    source = VectorRegion(2, shape, FlatFill("#123456"), raster=np.zeros((32, 64), bool),
+    source = RegionSample(2, shape, FlatFill("#123456"), raster=np.zeros((32, 64), bool),
                           drawing_id="r2", source_regions=("r2",))
     trace = TraceResult(64, 32, TraceOptions(), (), "")
     def plan(x):
@@ -236,8 +236,8 @@ def test_manual_symmetry_uses_shared_union_and_rejects_outside_axis_without_muta
 def test_pipeline_renderer_requires_retained_geometry_and_cannot_fit(monkeypatch):
     from vectormark import fit, skia_geometry
     from vectormark import drawing_simplification
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
-    from vectormark.pipeline import _render_optimizer_body
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectormark.pipeline import _render_refinement_body
     before = _forest()
     retained = materialize_self_symmetry(before)
     def forbidden(*args, **kwargs):
@@ -245,15 +245,15 @@ def test_pipeline_renderer_requires_retained_geometry_and_cannot_fit(monkeypatch
     monkeypatch.setattr(skia_geometry, "unary_union", forbidden)
     monkeypatch.setattr(fit, "atomic_flatten_path_d", forbidden)
     monkeypatch.setattr(drawing_simplification, "simplify_paths", forbidden)
-    first = _render_optimizer_body(retained)
-    assert first == _render_optimizer_body(retained)
+    first = _render_refinement_body(retained)
+    assert first == _render_refinement_body(retained)
     with pytest.raises(ValueError, match="materializ"):
-        _render_optimizer_body(before)
+        _render_refinement_body(before)
 
 
 def test_top_level_symmetry_source_assesses_nested_clone_leaf_not_parent_exterior(monkeypatch):
-    from vectormark.optimizer import framework
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
+    from vectormark.refinement import framework
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
     branch, clone = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     source = joined.with_current(Shape("path", {**joined.current.params, "tag": "before"}),
@@ -262,7 +262,7 @@ def test_top_level_symmetry_source_assesses_nested_clone_leaf_not_parent_exterio
     # This exterior intentionally equals the eventual full clone, so measuring
     # it instead of the current stale leaf would wrongly accept the change.
     future_clone = remap_symmetry_clones((joined, clone), {(1,): (1,)}, before=(source, clone))[1]
-    clone_root = VectorRegion.branch(id=20, children=(clone,), footprint=future_clone.footprint,
+    clone_root = RegionSample.branch(id=20, children=(clone,), footprint=future_clone.footprint,
                                      raster=clone.raster, drawing_id="r2")
     def symmetric(objects, masks):
         if not any(obj.id == 1 for obj in objects):
@@ -271,41 +271,41 @@ def test_top_level_symmetry_source_assesses_nested_clone_leaf_not_parent_exterio
         return [framework.Proposal(
             (1, 20), [joined, remapped_root], intent=cast(ProposalIntent, None)
         )]
-    result = framework.optimize([source, clone_root], {1: source.raster, 20: clone.raster}, [symmetric])
+    result = framework.select_refinements([source, clone_root], {1: source.raster, 20: clone.raster}, [symmetric])
     assert result[0].current == source.current
     assert result[1].children[0] is clone
     assert result[0].diagnostics["symmetric"]["accepted"] is False
 
 
 def test_real_recursive_compound_producer_preserves_colliding_local_ids_at_export():
-    from vectormark.optimizer.framework import optimize
-    from vectormark.optimizer.passes.compound import split_compound_pass
-    from vectormark.pipeline import _render_optimizer_body
+    from vectormark.refinement.framework import select_refinements
+    from vectormark.refinement.passes.compound import split_compound_pass
+    from vectormark.pipeline import _render_refinement_body
     mask = np.zeros((40, 40), dtype=bool)
-    compound = VectorRegion(1, Shape("path", {"d": "M0 0 L8 0 L8 8 L0 8 Z M12 0 L20 0 L20 8 L12 8 Z", "fill_rule": "evenodd"}),
+    compound = RegionSample(1, Shape("path", {"d": "M0 0 L8 0 L8 8 L0 8 Z M12 0 L20 0 L20 8 L12 8 Z", "fill_rule": "evenodd"}),
                             FlatFill("#123456"), raster=mask)
-    branch = VectorRegion.branch(id=10, children=(compound,), raster=mask)
-    unrelated = VectorRegion(2, Shape("rect", {"x": 0, "y": 20, "w": 8, "h": 8}), FlatFill("#654321"), raster=mask)
-    out = optimize([branch, unrelated], {10: mask, 2: mask}, [split_compound_pass])
+    branch = RegionSample.branch(id=10, children=(compound,), raster=mask)
+    unrelated = RegionSample(2, Shape("rect", {"x": 0, "y": 20, "w": 8, "h": 8}), FlatFill("#654321"), raster=mask)
+    out = select_refinements([branch, unrelated], {10: mask, 2: mask}, [split_compound_pass])
     assert sorted(leaf.id for root in out for leaf in root.leaves()) == [1, 2, 2]
-    body, _ = _render_optimizer_body(out)
+    body, _ = _render_refinement_body(out)
     ids = {Element.attrib["id"] for Element in ET.fromstring("<svg>" + "".join(body) + "</svg>")}
     assert ids == {"s2", "s10-1-1", "s10-1-2"}
 
 
 def test_clone_local_source_shadows_unrelated_cross_scope_materialization():
-    from vectormark.optimizer.symmetry_materialize import remap_symmetry_clones, union_self_symmetry
+    from vectormark.refinement.symmetry_materialize import remap_symmetry_clones, union_self_symmetry
     mask = np.zeros((40, 40), dtype=bool)
-    outer = VectorRegion(1, Shape("rect", {"x": 0, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
-    local = VectorRegion(1, Shape("rect", {"x": 12, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
-    clone = VectorRegion(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 0, 12)}),
+    outer = RegionSample(1, Shape("rect", {"x": 0, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
+    local = RegionSample(1, Shape("rect", {"x": 12, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
+    clone = RegionSample(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 0, 12)}),
                          FlatFill("#654321"), footprint=local.footprint, raster=mask, diagnostics={"clones": {"matched_source": 1}})
-    branch = VectorRegion.branch(id=10, children=(local, clone), raster=mask)
+    branch = RegionSample.branch(id=10, children=(local, clone), raster=mask)
     changed = union_self_symmetry(outer, (outer.footprint,), diagnostics={"mode": "self"})
     out = remap_symmetry_clones((changed, branch), {(1,): (1,)}, before=(outer, branch))
     assert out[1] is branch and out[1].children[1] is clone
-    from vectormark.pipeline import _render_optimizer_body
-    body, defs = _render_optimizer_body(out)
+    from vectormark.pipeline import _render_refinement_body
+    body, defs = _render_refinement_body(out)
     assert 'href="#s10-1-geometry"' in "".join(body)
     assert 'id="s10-1-geometry"' in "".join(defs)
     assert 'href="#s1-geometry"' not in "".join(body)
@@ -313,14 +313,14 @@ def test_clone_local_source_shadows_unrelated_cross_scope_materialization():
 
 def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
     import importlib
-    symmetry = importlib.import_module("vectormark.optimizer.passes.symmetry")
-    from vectormark.optimizer.framework import optimize
+    symmetry = importlib.import_module("vectormark.refinement.passes.symmetry")
+    from vectormark.refinement.framework import select_refinements
     from vectormark.drawing_adapter import transform_working_shape
     mask = np.zeros((32, 48), dtype=bool)
     shape = Shape("path", {"d": "M2 2 L18 2 L18 18 L2 18 Z"})
-    source = VectorRegion(1, shape, FlatFill("#123456"), raster=mask, drawing_id="r1", source_regions=("r1",))
+    source = RegionSample(1, shape, FlatFill("#123456"), raster=mask, drawing_id="r1", source_regions=("r1",))
     matrix = (1, 0, 0, 1, 22, 0)
-    clone = VectorRegion(2, Shape("use", {"href_obj_id": 1, "transform": matrix}), FlatFill("#654321"),
+    clone = RegionSample(2, Shape("use", {"href_obj_id": 1, "transform": matrix}), FlatFill("#654321"),
                            footprint=to_polygon(transform_working_shape(shape, matrix)), raster=mask,
                          drawing_id="r2", source_regions=("r2",), diagnostics={"clones": {"matched_source": 1}})
     half_shape = Shape("path", {"d": "M2 2 L10 2 L10 18 L2 18 Z"})
@@ -337,7 +337,7 @@ def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
                             "left",
                             0.0,
                         ))
-    out = optimize([source, clone], {1: mask, 2: mask}, [symmetry.symmetry_pass])
+    out = select_refinements([source, clone], {1: mask, 2: mask}, [symmetry.symmetry_pass])
     assert [region.id for region in out] == [1, 2]
     history = out[0].diagnostics["materialization"]
     assert history["consumed_region_ids"] == (1,)
@@ -348,15 +348,15 @@ def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
 
 
 def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
-    from vectormark.drawing_adapter import drawing_from_vector_regions
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectormark.drawing_adapter import drawing_from_region_samples
     from vectormark.drawing_trace import TraceOptions, TraceResult
     from vectormark.drawing_plan import parse_plan
-    from vectormark.pipeline import _render_optimizer_body
+    from vectormark.pipeline import _render_refinement_body
     branch, clone = _forest()
-    local = VectorRegion(1, Shape("rect", {"x": 0, "y": 20, "w": 4, "h": 4}), FlatFill("#aabbcc"),
+    local = RegionSample(1, Shape("rect", {"x": 0, "y": 20, "w": 4, "h": 4}), FlatFill("#aabbcc"),
                          raster=branch.raster, drawing_id="r3-1", source_regions=("r3",))
-    host = VectorRegion.branch(id=20, children=(local, clone), drawing_id="r3", raster=branch.raster)
+    host = RegionSample.branch(id=20, children=(local, clone), drawing_id="r3", raster=branch.raster)
     before = (branch, host)
     out = materialize_self_symmetry(before)
     retained_clone = out[1].children[1]
@@ -366,13 +366,13 @@ def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
     assert out[1].children[0] is local
     assert out[0].diagnostics["materialization"]["retired_region_ids"] == (11, 12)
     assert out[0].diagnostics["materialization"]["source_region_path_remap"] == (((1, 11), (1,)), ((1, 12), (1,)))
-    body, defs = _render_optimizer_body(out)
+    body, defs = _render_refinement_body(out)
     assert 'href="#s1-geometry"' in "".join(body)
     assert 'id="s1-geometry"' in "".join(defs)
     trace = TraceResult(48, 24, TraceOptions(), (), "")
     rendered = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(out)))
     assert 'href="#geometry-r1"' in rendered.svg
-    canonical = drawing_from_vector_regions("drw_x", width=48, height=24, regions=out)
+    canonical = drawing_from_region_samples("drw_x", width=48, height=24, regions=out)
     assert canonical.regions[1].children[1].geometry.source_region_id == "r1"
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
                        "ops": [{"op": "set_fill", "target": "r3-2", "fill": {"type": "flat", "color": "#ffffff"}}]})
@@ -384,7 +384,7 @@ def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
 
 @pytest.mark.parametrize("bad_path", [("..", "..", 11), ("bad", 11), (1, "..", 11), (True,), (), (123, 11)])
 def test_final_export_rejects_invalid_explicit_paths_without_input_mutation(bad_path):
-    from vectormark.pipeline import _render_optimizer_body
+    from vectormark.pipeline import _render_refinement_body
     branch, clone = _forest()
     source = branch.children[0]
     # Use a valid local source ID so no bare-reference fallback may hide the
@@ -392,37 +392,37 @@ def test_final_export_rejects_invalid_explicit_paths_without_input_mutation(bad_
     bad = clone.with_current(Shape("use", {**clone.current.params, "href_obj_id": source.id,
                                           "href_region_path": bad_path}), footprint=clone.footprint)
     with pytest.raises(ValueError, match="reference|source"):
-        _render_optimizer_body((source, bad))
+        _render_refinement_body((source, bad))
     assert bad.current.params["href_region_path"] == bad_path
     assert "href_region_path" not in clone.current.params
 
 
 def test_ambiguous_external_reference_is_rejected_not_arbitrarily_selected():
-    from vectormark.pipeline import _render_optimizer_body
-    from vectormark.optimizer.symmetry_materialize import remap_symmetry_clones
+    from vectormark.pipeline import _render_refinement_body
+    from vectormark.refinement.symmetry_materialize import remap_symmetry_clones
     branch, clone = _forest()
     source = branch.children[0]
-    first = VectorRegion.branch(id=10, children=(source,), raster=source.raster)
-    second = VectorRegion.branch(id=20, children=(source.with_current(source.current),), raster=source.raster)
+    first = RegionSample.branch(id=10, children=(source,), raster=source.raster)
+    second = RegionSample.branch(id=20, children=(source.with_current(source.current),), raster=source.raster)
     before = (first, second, clone)
     with pytest.raises(ValueError, match="ambiguous"):
-        _render_optimizer_body(before)
+        _render_refinement_body(before)
     with pytest.raises(ValueError, match="ambiguous"):
         remap_symmetry_clones(before, {(10, 11): (10, 11)}, before=before)
     assert before[0].children[0] is source and before[2] is clone
 
 
 def test_recursive_transaction_does_not_update_shadowed_clone_in_other_subtree():
-    from vectormark.optimizer.framework import Proposal, optimize
-    from vectormark.optimizer.symmetry_materialize import union_self_symmetry
+    from vectormark.refinement.framework import Proposal, select_refinements
+    from vectormark.refinement.symmetry_materialize import union_self_symmetry
     mask = np.zeros((40, 40), dtype=bool)
-    source = VectorRegion(1, Shape("rect", {"x": 0, "y": 0, "w": 8, "h": 8, "reconstruct": True}),
+    source = RegionSample(1, Shape("rect", {"x": 0, "y": 0, "w": 8, "h": 8, "reconstruct": True}),
                           FlatFill("#123456"), raster=mask)
-    local = VectorRegion(1, Shape("rect", {"x": 12, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
-    clone = VectorRegion(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 0, 12)}),
+    local = RegionSample(1, Shape("rect", {"x": 12, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
+    clone = RegionSample(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 0, 12)}),
                          FlatFill("#654321"), footprint=local.footprint, raster=mask, diagnostics={"clones": {"matched_source": 1}})
-    first = VectorRegion.branch(id=10, children=(source,), raster=mask)
-    second = VectorRegion.branch(id=20, children=(local, clone), raster=mask)
+    first = RegionSample.branch(id=10, children=(source,), raster=mask)
+    second = RegionSample.branch(id=20, children=(local, clone), raster=mask)
     def reconstruct(objects, masks):
         return [Proposal(
             (obj.id,),
@@ -430,19 +430,19 @@ def test_recursive_transaction_does_not_update_shadowed_clone_in_other_subtree()
             intent=cast(ProposalIntent, None),
         )
                 for obj in objects if obj.current is not None and obj.current.params.get("reconstruct")]
-    out = optimize([first, second], {10: mask, 20: mask}, [reconstruct])
+    out = select_refinements([first, second], {10: mask, 20: mask}, [reconstruct])
     assert out[0].children[0].diagnostics["symmetry"]["materialized"]
     assert out[1] is second and out[1].children[1] is clone
     assert first.children[0] is source
 
 
 def test_remap_binds_before_new_local_id_can_shadow_original_source():
-    from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
+    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
     branch, clone = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     clone = clone.with_current(Shape("use", {**clone.current.params, "href_obj_id": 1}), footprint=clone.footprint)
-    host = VectorRegion.branch(id=20, children=(clone,), raster=clone.raster)
-    newcomer = VectorRegion(1, Shape("rect", {"x": 0, "y": 20, "w": 4, "h": 4}), FlatFill("#aabbcc"), raster=clone.raster)
+    host = RegionSample.branch(id=20, children=(clone,), raster=clone.raster)
+    newcomer = RegionSample(1, Shape("rect", {"x": 0, "y": 20, "w": 4, "h": 4}), FlatFill("#aabbcc"), raster=clone.raster)
     candidate = (joined, host.with_children((newcomer, clone)))
     out = remap_symmetry_clones(candidate, {(1,): (1,)}, before=(joined, host))
     assert out[1].children[1].current.params["href_region_path"] == ("..", 1)

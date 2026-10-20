@@ -1,6 +1,6 @@
 """Shared tangent smoothing and retained operation execution.
 
-The optimizer selects targets; this module owns the existing bounded projection.
+The refinement selects targets; this module owns the existing bounded projection.
 """
 
 from __future__ import annotations

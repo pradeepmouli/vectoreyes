@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare trace-auto corpus SVGs against the existing current/optimizer files."""
+"""Compare trace-auto corpus SVGs against the existing current/refinement files."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def _trace_summary(path: Path) -> dict[str, Any]:
 
 
 def _flags(name: str, variants: dict[str, dict[str, float]], trace: dict[str, Any]) -> list[str]:
-    prior = min(variants["current"]["mae"], variants["optimizer"]["mae"])
+    prior = min(variants["current"]["mae"], variants["refinement"]["mae"])
     flags: list[str] = []
     if variants["trace_auto"]["mae"] > prior * 1.15:
         flags.append("fidelity regression vs best existing")
@@ -80,7 +80,7 @@ def _row(corpus: Path, source_path: Path) -> dict[str, Any] | None:
     diagnostics = corpus / "diagnostics" / f"trace_auto-{name}.json"
     paths = {
         mode: svg_dir / f"{mode}-{name}.svg"
-        for mode in ("current", "optimizer", "trace_auto")
+        for mode in ("current", "refinement", "trace_auto")
     }
     if not diagnostics.exists() or any(not path.exists() for path in paths.values()):
         return None
@@ -105,7 +105,7 @@ def _html(rows: list[dict[str, Any]]) -> str:
         name = html.escape(row["name"])
         variants = row["variants"]
         panels = ['<figure><figcaption>source</figcaption><img src="input/%s.png"></figure>' % name]
-        for mode in ("current", "optimizer", "trace_auto"):
+        for mode in ("current", "refinement", "trace_auto"):
             label = mode.replace("_", " ")
             panels.append(
                 '<figure><figcaption>%s · MAE %s</figcaption><object data="svg/%s-%s.svg" type="image/svg+xml"></object></figure>'

@@ -10,11 +10,13 @@ from .drawing_relationships import replace_region
 from .drawing_topology import normalize_drawing_topology
 from .replay_state import ReplayState, publish_drawing_state
 from .selected_outcomes import region_ancestries
-from .optimizer.automatic_replay import (
+from .refinement.automatic_replay import (
     AutomaticIntent, CornerDiagnosticsObservation, FitPrimitiveOperation,
     ReplayBatch, SmoothPathOperation, SimplifyLineletOperation,
     NormalizeCornersOperation, DeclareIntrinsicSymmetryOperation, AssignCloneOperation,
     MirrorRegionOperation, ReconstructOcclusionOperation,
+    ApplySeamConstraintsOperation, RefreshDependentClonesOperation,
+    ReconstructSelfSymmetryOperation, NormalizeRetainedTopologyOperation, PassInputRegionRef,
 )
 from .replay_inputs import ReplayInputResolver, assign_replacement_masks, clone_report
 from .path_geometry import PathGeometry
@@ -85,29 +87,277 @@ def _restore_input(selected: AutomaticRegionInput, observations, metadata) -> Dr
     return selected.region
 
 
-def _direct_batch_group(state: ReplayState, batches: tuple[ReplayBatch, ...]) -> bool:
-    for batch in batches:
-        for record in batch.entries:
-            intent = record.intent
-            if not isinstance(intent, CornerDiagnosticsObservation) and not (
-                    isinstance(intent, AutomaticIntent) and isinstance(intent.action,
-                        (FitPrimitiveOperation, SmoothPathOperation, SimplifyLineletOperation,
-                         NormalizeCornersOperation, DeclareIntrinsicSymmetryOperation,
-                         AssignCloneOperation, MirrorRegionOperation, ReconstructOcclusionOperation))):
-                return False
-    return True
-
-
 def _selected_shape(state, region, metadata):
     from .drawing_adapter import current_shape_for_region
     indexed = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
     return current_shape_for_region(region, indexed, region_ancestries(state), metadata.get(region.id, {}))
 
 
+def _publish_shape(region, shape, metadata):
+    """Publish a numeric kernel result without creating a disposable region."""
+    from .drawing_adapter import _geometry
+    geometry = _geometry(shape.kind, shape.params, region.id, {})
+    diagnostics = {}
+    if shape.kind == 'path' and 'canonical_path_geometry' not in shape.params:
+        from .corner_provenance import ingress_prefit_corners
+        geometry, diagnostics['corners'] = ingress_prefit_corners(
+            geometry, str(shape.params['d']), region.id, region.diagnostics.get('corners'),
+            path_ids=shape.params.get('path_ids'))
+    core = {'d', 'canonical_path_geometry'} if shape.kind == 'path' else set(shape.params)
+    metadata[region.id] = {key: value for key, value in shape.params.items() if key not in core}
+    return replace(region, geometry=geometry, diagnostics={**region.diagnostics, **diagnostics})
+
+
+def _replace_bound_children(region, replacements):
+    if region.id in replacements:
+        return replacements[region.id]
+    return replace(region, children=tuple(_replace_bound_children(child, replacements)
+        for child in region.children)) if region.children else region
+
+
+def _select_seams(state, action, resolver, observations, metadata):
+    from .drawing_seams import SeamInput, execute_seam_constraints
+    from .geometry_native import region_path
+    from .path_geometry import CloneGeometry
+    from .drawing_adapter import transform_working_shape
+
+    inputs = {}
+    for pair in action.pairs:
+        for ref in (pair.left, pair.right):
+            key = tuple(ref.ancestry)
+            if key in inputs:
+                continue
+            bound = resolver.resolve(ref)
+            owner = resolver.resolve(PassInputRegionRef(ref.batch_id, ref.input_revision, (key[0],)))
+            shape = _selected_shape(state, bound.region, {bound.region.id: bound.metadata})
+            if isinstance(bound.region.geometry, CloneGeometry):
+                source_id = bound.region.geometry.source_region_id
+                sources = [item for item in _walk_regions(owner.region) if item.id == source_id and item.is_leaf]
+                if len(sources) != 1:
+                    raise ValueError('seam replay clone source is absent or ambiguous')
+                source_bound = next(item for item in _index_inputs((owner,)).values() if item.region.id == source_id)
+                shape = transform_working_shape(_selected_shape(state, sources[0],
+                    {source_id: source_bound.metadata}), shape.params['transform'])
+            by_id = {item.id: item for item in _walk_regions(owner.region)}
+            inputs[key] = SeamInput(shape, int(bound.observation['id']), int(owner.observation['id']),
+                (float(owner.region.z), float(bound.region.z), int(owner.observation['id']),
+                 int(bound.observation['id'])), region_path(owner.region, by_id))
+    roots = tuple(_restore_input(resolver.resolve(ref), observations, metadata) for ref in action.roots)
+    replacements = {}
+    for key, update in execute_seam_constraints(action, inputs).items():
+        ref = PassInputRegionRef(action.roots[0].batch_id, action.roots[0].input_revision, key)
+        region = resolver.resolve(ref).region
+        selected = _publish_shape(region, update.shape, metadata)
+        candidate = update.candidate
+        replacements[region.id] = replace(selected, diagnostics={**selected.diagnostics, 'seams': {
+            'accepted': True, 'paired_with': int(update.paired_with), 'selected': update.selected,
+            'axis': candidate.axis, 'gap_before': abs(candidate.a_value - candidate.b_value),
+            'seam': candidate.seam}})
+    return tuple(_replace_bound_children(root, replacements) for root in roots)
+
+
+def _select_refresh(state, action, resolver, observations, metadata):
+    from .path_geometry import CloneGeometry
+    from .replay_inputs import clone_reference_diagnostics
+    roots = tuple(_restore_input(resolver.resolve(ref), observations, metadata) for ref in action.roots)
+    replacements = {}
+    for refresh in action.clones:
+        target = resolver.resolve(refresh.clone).region
+        source = resolver.resolve(refresh.source).region
+        if not isinstance(target.geometry, CloneGeometry):
+            raise ValueError('dependent clone refresh requires clone geometry')
+        diagnostics = clone_reference_diagnostics(target.diagnostics,
+            source_id=int(resolver.resolve(refresh.source).observation['id']),
+            source_path=tuple(refresh.source.ancestry), previous_source_id=refresh.previous_source_id,
+            previous_source_path=refresh.previous_source_path)
+        replacements[target.id] = replace(target,
+            geometry=replace(target.geometry, source_region_id=source.id),
+            diagnostics={**target.diagnostics, **diagnostics})
+    return tuple(_replace_bound_children(root, replacements) for root in roots)
+
+
+def _select_self_symmetry(state, action, resolver, observations, metadata):
+    from .drawing_symmetry import Axis2D, reconstruct_self_symmetry
+    from .geometry_native import region_path
+    from .drawing_adapter import generated_tree_observations
+    from .refinement.region_sample import to_polygon
+    from .fit import Shape
+
+    bound = resolver.resolve(action.target)
+    target = _restore_input(bound, observations, metadata)
+    by_id = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
+    footprint = region_path(target, by_id)
+    info = bound.observation
+    if target.is_leaf and isinstance(target.diagnostics.get('geometry_seed'), Mapping) and info['original_kind'] is not None:
+        seeded = to_polygon(Shape(info['original_kind'], dict(info['original_params'])))
+        if not seeded.is_empty:
+            footprint = seeded
+    selected = reconstruct_self_symmetry(target, footprint, axis=Axis2D(*action.axis),
+        residual=action.residual, fit_kind=action.fit_kind, side=action.side,
+        corner_radius=action.corner_radius, epsilon=action.epsilon,
+        max_error=action.max_error, cubic=action.cubic)
+    if selected.is_branch:
+        identities = {selected.id: int(info['id'])}
+        def identify(region):
+            for index, child in enumerate(region.children, 1):
+                identities[child.id] = index
+                identify(child)
+        identify(selected)
+        raster = np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape'])
+        generated, generated_metadata = generated_tree_observations(selected, identities=identities,
+            raster_shape=raster.shape, retained_rasters={selected.id: raster},
+            parent_ancestry=tuple(info['ancestry'])[:-1])
+        for key in ('source_label', 'color_hex', 'coverage', 'coverage_source', 'coverage_shape',
+                    'coverage_dtype', 'coverage_origin', 'coverage_canvas'):
+            generated[selected.id][key] = info[key]
+        observations.update(generated)
+        metadata.update(generated_metadata)
+    else:
+        leaves = tuple(item for item in _index_inputs((bound,)).values() if item.region.is_leaf)
+        consumed = tuple(dict.fromkeys(int(item.observation['id']) for item in leaves))
+        selected = replace(selected, fill=leaves[0].region.fill, diagnostics={**selected.diagnostics,
+            'materialization': {**selected.diagnostics.get('materialization', {}),
+                'consumed_region_ids': consumed,
+                'retired_region_ids': tuple(identity for identity in consumed if identity != int(info['id'])),
+                'source_region_remap': tuple((identity, int(info['id'])) for identity in consumed)}},
+            source_region_ids=tuple(sorted(set(target.source_region_ids).union(
+                *(leaf.region.source_region_ids for leaf in leaves)))))
+        observations[selected.id].update(original_kind=leaves[0].observation['original_kind'],
+            original_params=dict(leaves[0].observation['original_params']))
+        metadata[selected.id] = {'fill_rule': 'evenodd'}
+    if action.dependent_clones:
+        from .replay_inputs import clone_reference_diagnostics
+        from .path_geometry import CloneGeometry
+        dependent = []
+        def refresh(clone):
+            if clone.children:
+                return replace(clone, children=tuple(refresh(child) for child in clone.children))
+            if not isinstance(clone.geometry, CloneGeometry) or clone.geometry.source_region_id != target.id:
+                return clone
+            diagnostics = clone_reference_diagnostics(clone.diagnostics,
+                source_id=int(info['id']), source_path=tuple(action.target.ancestry),
+                previous_source_id=int(info['id']), previous_source_path=tuple(action.target.ancestry))
+            return replace(clone, diagnostics={**clone.diagnostics, **diagnostics})
+        for ref in action.dependent_clones:
+            clone = _restore_input(resolver.resolve(ref), observations, metadata)
+            dependent.append(refresh(clone))
+        return (selected, *dependent)
+    return (selected,)
+
+
+def _topology_shape(region, metadata):
+    from .drawing_adapter import shape_from_region_geometry
+    from .fit import Shape
+    shape = shape_from_region_geometry(region, metadata)
+    if shape.kind != 'path':
+        return shape
+    paths = {path.path.id: path for path in component_paths(region.geometry)}
+    order = metadata.get('path_ids', tuple(paths))
+    return Shape('path', {**shape.params, 'd': ' '.join(paths[identity].to_svg_d() for identity in order)})
+
+
+def _topology_records(regions, observations, metadata):
+    from .drawing_seams import seam_path_revision
+    from .path_geometry import CloneGeometry
+    result = {}
+    for root in regions:
+        for region in root.leaves():
+            if isinstance(region.geometry, CloneGeometry):
+                continue
+            shape = _topology_shape(region, metadata.get(region.id, {}))
+            if shape.kind != 'path':
+                continue
+            paths = {path.path.id: path for path in component_paths(region.geometry)}
+            order = metadata.get(region.id, {}).get('path_ids', tuple(paths))
+            for index, identity in enumerate(order):
+                result.setdefault(identity, []).append((tuple(observations[region.id]['ancestry']),
+                    index, seam_path_revision(str(shape.params['d']), index), len(paths[identity].path.commands)))
+    return result
+
+
+def _select_topology(state, action, resolver, observations, metadata):
+    from .geometry_native import region_path
+    from .drawing_topology import match_topology_paths, _component_corners, retired_corner_features
+    from .refinement.gate import rasterize
+    from .refinement.region_sample import to_polygon
+    from .fit import Shape
+    from .path_geometry import CloneGeometry
+
+    inputs = tuple(resolver.resolve(ref) for ref in action.roots)
+    roots = tuple(_restore_input(bound, observations, metadata) for bound in inputs)
+    before = _topology_records(roots, observations, metadata)
+    selected = normalize_drawing_topology(replace(state.drawing, regions=roots),
+        allow_external=action.allow_external)
+    bound_by_id = {bound.region.id: bound for bound in _index_inputs(inputs).values()}
+    selected_by_id = {item.id: item for root in selected.regions for item in _walk_regions(root)}
+
+    def publish(region, prior=None):
+        bound = bound_by_id.get(region.id, prior)
+        if bound is None:
+            raise ValueError('retained topology output has no source observation')
+        source = bound.region
+        if source.is_branch:
+            return replace(region, children=tuple(publish(child) for child in region.children))
+        if isinstance(source.geometry, CloneGeometry):
+            if region.is_branch:
+                ancestry = tuple(bound.observation['ancestry'])
+                observations[region.id] = dict(bound.observation)
+                children = []
+                for child in region.children:
+                    info = dict(bound.observation)
+                    raster = rasterize(region_path(child, selected_by_id), info['raster_shape'])
+                    info.update(id=int(child.id.rsplit('-', 1)[1]), ancestry=(*ancestry, int(child.id.rsplit('-', 1)[1])),
+                        raster=raster.tobytes(), raster_source=None)
+                    observations[child.id] = info
+                    metadata[child.id] = dict(bound.metadata)
+                    children.append(child)
+                return replace(region, children=tuple(children), diagnostics={**region.diagnostics,
+                    'topology': {**region.diagnostics['topology'], 'source_region_path':
+                        tuple(bound_by_id[source.geometry.source_region_id].observation['ancestry'])}})
+            return region
+        paths = component_paths(source.geometry)
+        identities = tuple(bound.metadata.get('path_ids', tuple(path.path.id for path in paths)))
+        retained = {path.path.id for leaf in region.leaves() for path in component_paths(leaf.geometry)}
+        if not region.is_branch and set(identities) == retained:
+            return region
+        source_d = _topology_shape(source, bound.metadata).params['d']
+        children = []
+        for leaf in region.leaves():
+            members = {path.path.id for path in component_paths(leaf.geometry)}
+            indices = tuple(i for i, identity in enumerate(identities) if identity in members)
+            output_ids = tuple(identities[i] for i in indices)
+            local = int(leaf.id.rsplit('-', 1)[1]) if region.is_branch else int(bound.observation['id'])
+            output_metadata = {**bound.metadata, 'path_ids': output_ids,
+                'fill_rule': 'evenodd' if len(indices) > 1 else 'nonzero'}
+            output_shape = _topology_shape(leaf, output_metadata)
+            info = dict(bound.observation)
+            ancestry = (*tuple(info['ancestry']), local) if region.is_branch else tuple(info['ancestry'])
+            raster = rasterize(to_polygon(Shape('path', dict(output_shape.params))), info['raster_shape'])
+            info.update(id=local, ancestry=ancestry, raster=raster.tobytes(), raster_source=None)
+            observations[leaf.id] = info
+            metadata[leaf.id] = output_metadata
+            children.append(replace(leaf, diagnostics={**source.diagnostics,
+                'corners': _component_corners(source.diagnostics.get('corners'), source_d,
+                    output_shape.params['d'], indices), 'topology': leaf.diagnostics['topology']}))
+        receipt = {**region.diagnostics['topology'], 'retired_feature_ids': retired_corner_features(
+            source_d, source.diagnostics.get('corners', {}), identities,
+            region.diagnostics['topology']['retired_path_ids'])}
+        if region.is_branch:
+            return replace(region, children=tuple(children), diagnostics={**region.diagnostics, 'topology': receipt})
+        return replace(children[0], diagnostics={**children[0].diagnostics, 'topology': receipt})
+
+    roots = tuple(publish(region) for region in selected.regions)
+    recorded = tuple(replace(item, target=replace(item.target, batch_id='', input_revision=''))
+        for item in action.path_correspondence)
+    if match_topology_paths(before, _topology_records(roots, observations, metadata)) != recorded:
+        raise ValueError('retained topology path correspondence is stale')
+    return tuple(region for region in roots if int(observations[region.id]['id']) in action.affected_ids)
+
+
 def _select_relationship(state, action, resolver, observations, metadata):
     from .drawing_actions import AssignCloneAction
     from .drawing_relationships import assign_clone
-    from .drawing_adapter import _geometry, resolved_instance_shape, transform_working_shape, working_fill_from_spec
+    from .drawing_adapter import resolved_instance_shape, transform_working_shape, working_fill_from_spec
     from .drawing_fill import serialize_fill
     from .geometry_native import region_path
     from .path_geometry import CloneGeometry
@@ -136,14 +386,9 @@ def _select_relationship(state, action, resolver, observations, metadata):
         else:
             source_shape = _selected_shape(state, source, {source.id: source_input.metadata})
         shape = transform_working_shape(source_shape, action.transform)
-        geometry = _geometry(shape.kind, shape.params, target.id, {})
-        if shape.kind == 'path' and 'canonical_path_geometry' not in shape.params:
-            from .corner_provenance import ingress_prefit_corners
-            geometry, projected_diagnostics['corners'] = ingress_prefit_corners(
-                geometry, str(shape.params['d']), target.id, target.diagnostics.get('corners'),
-                path_ids=shape.params.get('path_ids'))
-        core = {'d', 'canonical_path_geometry'} if shape.kind == 'path' else set(shape.params)
-        metadata[target.id] = {key: value for key, value in shape.params.items() if key not in core}
+        projected = _publish_shape(target, shape, metadata)
+        geometry = projected.geometry
+        projected_diagnostics = dict(projected.diagnostics)
     if isinstance(action, AssignCloneOperation):
         fill_name = 'NoneType' if target.fill is None else type(working_fill_from_spec(serialize_fill(target.fill))).__name__
         diagnostics = {'clones': clone_report(int(source_input.observation['id']), fill_name,
@@ -195,6 +440,14 @@ def _select_regions(state, intent, resolver, observations, metadata):
             return _select_relationship(state, action, resolver, observations, metadata)
         if isinstance(action, ReconstructOcclusionOperation):
             return _select_occlusion(action, resolver, observations, metadata)
+        if isinstance(action, ApplySeamConstraintsOperation):
+            return _select_seams(state, action, resolver, observations, metadata)
+        if isinstance(action, RefreshDependentClonesOperation):
+            return _select_refresh(state, action, resolver, observations, metadata)
+        if isinstance(action, ReconstructSelfSymmetryOperation):
+            return _select_self_symmetry(state, action, resolver, observations, metadata)
+        if isinstance(action, NormalizeRetainedTopologyOperation):
+            return _select_topology(state, action, resolver, observations, metadata)
     selected = _restore_input(resolver.resolve(
         intent.target if isinstance(intent, CornerDiagnosticsObservation) else intent.action.target), observations, metadata)
     if isinstance(intent, CornerDiagnosticsObservation):
@@ -230,14 +483,11 @@ def _select_regions(state, intent, resolver, observations, metadata):
 
 def replay_automatic_batches(state: ReplayState, batches: tuple[ReplayBatch, ...], *,
                             finalize_topology: bool = True) -> ReplayState:
-    """Replay eligible choices canonically while retaining exact numeric receipts."""
+    """Replay recorded choices canonically while retaining exact input receipts."""
     if not batches:
         return state
-    from .optimizer.replay_binding import replay_numeric_batches
     from .replay_identity import bind_automatic_inputs, scoped_input_regions
-    if not _direct_batch_group(state, batches):
-        return replay_numeric_batches(state, batches, finalize_topology=finalize_topology)
-    from .optimizer.framework import accepted_proposal_diagnostics
+    from .refinement.framework import accepted_proposal_diagnostics
 
     for batch in batches:
         masks = bind_automatic_inputs(state, batch)
@@ -287,6 +537,6 @@ def replay_automatic_batches(state: ReplayState, batches: tuple[ReplayBatch, ...
 
 
 def _replacement_raster(state, region, metadata, shape):
-    from .optimizer.gate import rasterize
-    from .optimizer.vector_region import to_polygon
+    from .refinement.gate import rasterize
+    from .refinement.region_sample import to_polygon
     return rasterize(to_polygon(_selected_shape(state, region, metadata)), shape)

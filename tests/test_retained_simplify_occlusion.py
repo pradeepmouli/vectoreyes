@@ -3,14 +3,14 @@ import pytest
 
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.automatic_replay import (
+from vectormark.refinement.automatic_replay import (
     CompletedOcclusionPrimitive,
     IntersectionLens,
     PassInputRegionRef,
     ReconstructOcclusionOperation,
     SimplifyLineletOperation,
 )
-from vectormark.optimizer.vector_region import VectorRegion, to_polygon
+from vectormark.refinement.region_sample import RegionSample, to_polygon
 from vectormark.path_geometry import CirclePrimitive, PrimitiveGeometry
 
 
@@ -24,15 +24,15 @@ class Resolver:
 
 def test_engine_simplification_applies_recorded_settings_and_preserves_covering_region():
     from vectormark.drawing_adapter import bind_path_input
-    from vectormark.optimizer.automatic_replay import apply_simplification_choice
+    from vectormark.refinement.automatic_replay import apply_simplification_choice
 
     d = (
         "M247 417.5 Q241.23 417.72 237.5 413 L237.5 405 L242 400.5 "
         "Q256.31 399.74 253.5 413 L247 417.5 Z"
     )
     shape = Shape("path", {"d": d})
-    target = VectorRegion(1, shape, FlatFill("#123456"), footprint=to_polygon(shape))
-    covering = VectorRegion(
+    target = RegionSample(1, shape, FlatFill("#123456"), footprint=to_polygon(shape))
+    covering = RegionSample(
         2, Shape("rect", {"x": 0, "y": 0, "w": 1, "h": 1}), FlatFill("#abcdef")
     )
     action = SimplifyLineletOperation(
@@ -57,9 +57,9 @@ def test_engine_simplification_applies_recorded_settings_and_preserves_covering_
 
 def test_engine_simplification_rejects_an_inapplicable_recorded_operation():
     from vectormark.drawing_adapter import bind_path_input
-    from vectormark.optimizer.automatic_replay import apply_simplification_choice
+    from vectormark.refinement.automatic_replay import apply_simplification_choice
 
-    target = VectorRegion(
+    target = RegionSample(
         1, Shape("rect", {"x": 0, "y": 0, "w": 1, "h": 1}), FlatFill("#123456")
     )
     action = SimplifyLineletOperation(
@@ -73,10 +73,10 @@ def test_engine_simplification_rejects_an_inapplicable_recorded_operation():
 
 
 def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
-    from vectormark.optimizer.automatic_replay import apply_occlusion_choice
+    from vectormark.refinement.automatic_replay import apply_occlusion_choice
 
     sources = [
-        VectorRegion(
+        RegionSample(
             i,
             Shape("circle", {"cx": x, "cy": 16, "r": 8}),
             FlatFill(color),
@@ -129,7 +129,7 @@ def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
 
 
 def test_engine_occlusion_rejects_missing_dependency_before_resolving_sources():
-    from vectormark.optimizer.automatic_replay import apply_occlusion_choice
+    from vectormark.refinement.automatic_replay import apply_occlusion_choice
 
     ref = PassInputRegionRef("", "", (1,))
     action = ReconstructOcclusionOperation(

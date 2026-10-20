@@ -23,7 +23,7 @@ from vectormark.drawing_state import DrawingNotFound, DrawingStore, VersionCandi
 from vectormark.drawing_trace import TraceOptions, TracePath, TraceRegion, TraceResult
 from vectormark.fit import Shape
 from vectormark.material_pretrace import GradientSupport, MaterialPretraceResult
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
@@ -47,9 +47,9 @@ def _source(width: int = 2, height: int = 2) -> RasterImage:
     return RasterImage(width, height, "rgb8", bytes(width * height * 3))
 
 
-def _regions(width: int = 2, height: int = 2) -> tuple[VectorRegion, ...]:
+def _regions(width: int = 2, height: int = 2) -> tuple[RegionSample, ...]:
     return (
-        VectorRegion.from_shape(
+        RegionSample.from_shape(
             id=1,
             shape=Shape("rect", {"x": 0.0, "y": 0.0, "w": width, "h": height}),
             fill=LegacyFlatFill("#112233"),

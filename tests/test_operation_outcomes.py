@@ -9,14 +9,14 @@ from pydantic import ValidationError
 from vectormark.drawing_actions import ActionSettings, DrawingPlan
 from vectormark.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.refinement.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
 from vectormark.drawing_refine import resolved_action_settings
 from vectormark.drawing_render import render_drawing
 from vectormark.drawing_trace import TraceOptions, TraceResult
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 import vectormark.drawing_replay as replay_module
 from vectormark.drawing_state import DrawingStore, VersionCandidate
 
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 def fixture():
     source = RasterImage(8, 8, 'rgb8', bytes([255]) * 8 * 8 * 3)
     trace = TraceResult(8, 8, TraceOptions(), (), '<svg/>')
-    region = VectorRegion.from_shape(id=1, shape=Shape('rect', {'x': 1., 'y': 1., 'w': 4., 'h': 4.}),
+    region = RegionSample.from_shape(id=1, shape=Shape('rect', {'x': 1., 'y': 1., 'w': 4., 'h': 4.}),
         fill=FlatFill('#112233'), z=0, raster=np.ones((8, 8), dtype=bool), drawing_id='r1', source_regions=('r1',))
     evidence = capture_working_geometry_evidence(kind='source', trace=trace, geometry_source=source, trace_roots=(region,))
     paint = build_paint_evidence(source)
@@ -35,12 +35,12 @@ def fixture():
 
 
 def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
-    from vectormark.drawing_adapter import drawing_from_vector_regions
-    from vectormark.optimizer.topology_binding import normalize_working_topology
+    from vectormark.drawing_adapter import drawing_from_region_samples
+    from vectormark.refinement.topology_binding import normalize_working_topology
     d = ('M0 0 L4 0 L4 4 L0 4 Z '
          'M1 1 L2 1 L2 2 L1 2 Z '
          'M5 5 L7 5 L7 7 L5 7 Z')
-    root = VectorRegion.from_shape(id=1, shape=Shape('path', {'d': d}),
+    root = RegionSample.from_shape(id=1, shape=Shape('path', {'d': d}),
         fill=FlatFill('#112233'), z=0, raster=np.ones((8, 8), dtype=bool),
         drawing_id='r1', source_regions=('r1',))
     clone = replace(root, id=2, drawing_id='r2', source_regions=('r2',),
@@ -48,7 +48,7 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     # Reuse begins from the concrete pre-fit region, not an already split tree.
     before = (replace(root, current=Shape('rect', dict(x=0, y=0, w=7, h=7))), clone)
     after = normalize_working_topology((root, clone))
-    selected = drawing_from_vector_regions('drw_test', width=8, height=8, regions=after).region('r1')
+    selected = drawing_from_region_samples('drw_test', width=8, height=8, regions=after).region('r1')
     assert [leaf.id for leaf in selected.leaves()] == ['r1-1', 'r1-3']
     from vectormark.drawing_recipe import RecipeOperation
     from vectormark.drawing_actions import FitPathDrawingAction
@@ -57,7 +57,7 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     from tests._working_evidence import retain_working_operation_outcome
     operation, result = retain_working_operation_outcome(operation, before, after,
         evidence=evidence, paint=paint, upstream=upstream)
-    drawing = drawing_from_vector_regions('drw_test', width=8, height=8, regions=result)
+    drawing = drawing_from_region_samples('drw_test', width=8, height=8, regions=result)
     assert [leaf.id for leaf in drawing.region('r1').leaves()] == ['r1-1', 'r1-3']
     assert [leaf.id for leaf in drawing.region('r2').leaves()] == ['r2-1', 'r2-3']
     assert drawing.region('r1').diagnostics['topology'] == selected.diagnostics['topology']
@@ -323,13 +323,13 @@ def test_proposals_can_vary_but_reproduction_does_not_generate(monkeypatch):
     recipe = replace(recipe, settings=recipe.settings.model_copy(update={'purpose': 'design_fidelity', 'execution': 'exploratory'}))
     assert hasattr(replay_module, 'propose_effective_recipe'), 'proposal execution must be explicit'
     assert hasattr(replay_module, 'reproduce_effective_recipe'), 'reproduction must not execute the recipe'
-    from vectormark.optimizer.replay_binding import capture_replay_state
+    from vectormark.refinement.replay_binding import capture_replay_state
     execute = replay_module._replay_drawing_with_producers
     calls = []
     def varying(*args, **kwargs):
         state, producers, corners = execute(*args, **kwargs)
         calls.append(len(calls) + 1)
-        region = VectorRegion.from_shape(id=1, shape=Shape('rect', {'x': 1., 'y': 1., 'w': float(calls[-1] + 2), 'h': 4.}),
+        region = RegionSample.from_shape(id=1, shape=Shape('rect', {'x': 1., 'y': 1., 'w': float(calls[-1] + 2), 'h': 4.}),
             fill=FlatFill('#112233'), z=0, raster=np.ones((8, 8), dtype=bool), drawing_id='r1', source_regions=('r1',))
         return capture_replay_state((region,), state.drawing.canvas), producers, corners
     monkeypatch.setattr(replay_module, '_replay_drawing_with_producers', varying)
@@ -628,7 +628,7 @@ def test_selected_fit_preserves_unrelated_symmetry_materialization():
     import test_retained_symmetry_export as symmetry_helpers
     import test_drawing_recipe_actions as helpers
     forest = symmetry_helpers._forest()
-    target = VectorRegion.from_shape(id=3,
+    target = RegionSample.from_shape(id=3,
         shape=Shape('rect', dict(x=42., y=2., w=4., h=4.)), fill=FlatFill('#112233'),
         z=2, raster=np.ones((24, 48), dtype=bool), drawing_id='r3', source_regions=('r3',))
     evidence, paint, base = helpers._direct_recipe_fixture((*forest, target), width=48, height=24)

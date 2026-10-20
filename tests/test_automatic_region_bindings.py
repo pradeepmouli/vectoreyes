@@ -5,11 +5,11 @@ from vectormark.candidate import FlatFill
 from vectormark.drawing_actions import AssignCloneAction
 from vectormark.drawing_relationships import assign_clone
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 
 
 def leaf(identity, x, color):
-    return VectorRegion(identity, Shape('rect', {'x': x, 'y': 0, 'w': 4, 'h': 4}),
+    return RegionSample(identity, Shape('rect', {'x': x, 'y': 0, 'w': 4, 'h': 4}),
         FlatFill(color), raster=np.ones((12, 20), dtype=bool), source_regions=(f'material-{x}',))
 
 
@@ -50,12 +50,12 @@ def test_binding_retains_selected_symbolic_dependency_for_cycle_validation():
 
 
 def test_resolver_binds_named_output_descendant_without_shadowing_input():
-    from vectormark.optimizer.automatic_replay import (
+    from vectormark.refinement.automatic_replay import (
         NamedRegionOutput, OperationOutputRegionRef, PassInputRegionRef, ReplayBatch, RegionResolver,
     )
     source, target = leaf(1, 0, '#112233'), leaf(1, 8, '#ABCDEF')
-    root = VectorRegion.branch(id=10, children=(source,))
-    output = VectorRegion.branch(id=20, children=(target,))
+    root = RegionSample.branch(id=10, children=(source,))
+    output = RegionSample.branch(id=20, children=(target,))
     resolver = RegionResolver([root], ReplayBatch('batch', 'revision', (), ()))
     resolver.register('split', NamedRegionOutput('result', (20,)), output)
     bound = resolver.bind_inputs({
@@ -87,7 +87,7 @@ def test_bound_baked_copy_uses_selected_transform_without_replacing_target_paint
 @pytest.mark.parametrize('refresh', [False, True])
 def test_bound_clone_refresh_preserves_metadata_and_exact_scoped_reference(refresh):
     from vectormark.drawing_adapter import bind_region_inputs
-    from vectormark.optimizer.automatic_replay import apply_clone_reference_update
+    from vectormark.refinement.automatic_replay import apply_clone_reference_update
     source, target = leaf(1, 2, '#112233'), leaf(2, 8, '#ABCDEF')
     clone = target.with_current(Shape('use', {'href_obj_id': 5,
         'href_region_path': (5,), 'transform': (1, 0, 0, 1, 8, 0), 'note': 'retained'}),

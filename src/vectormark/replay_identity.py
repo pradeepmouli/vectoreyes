@@ -15,7 +15,7 @@ from .replay_state import ReplayState, retained_region_raster
 from .types import CoverageField
 
 if TYPE_CHECKING:
-    from .optimizer.automatic_replay import ReplayBatch
+    from .refinement.automatic_replay import ReplayBatch
 
 
 @dataclass(frozen=True)
@@ -35,12 +35,12 @@ class RegionInput:
     diagnostics: Mapping[str, object]
 
     def __post_init__(self) -> None:
-        from .optimizer.automatic_replay import _semantic_diagnostics
+        from .refinement.automatic_replay import _semantic_diagnostics
         object.__setattr__(self, 'diagnostics', _semantic_diagnostics(self.diagnostics))
 
 
 def input_records_revision(records: Sequence[RegionInput], masks: Mapping[int, np.ndarray]) -> str:
-    from .optimizer.automatic_replay import _stable
+    from .refinement.automatic_replay import _stable
     ids = {record.id for record in records}
     relevant = {int(identity): np.asarray(mask, dtype=bool)
         for identity, mask in masks.items() if int(identity) in ids}

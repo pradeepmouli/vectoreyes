@@ -3,7 +3,7 @@
 from typing import Callable, Generic, Mapping, TYPE_CHECKING, TypeVar
 
 if TYPE_CHECKING:
-    from .optimizer.automatic_replay import NamedRegionOutput, RegionRef, ReplayBatch
+    from .refinement.automatic_replay import NamedRegionOutput, RegionRef, ReplayBatch
 
 
 T = TypeVar('T')
@@ -21,7 +21,7 @@ class ReplayInputResolver(Generic[T]):
         self._output_paths: dict[tuple[str, str], tuple[int, ...]] = {}
 
     def resolve(self, ref: 'RegionRef') -> T:
-        from .optimizer.automatic_replay import PassInputRegionRef
+        from .refinement.automatic_replay import PassInputRegionRef
         if isinstance(ref, PassInputRegionRef):
             if ref.batch_id != self._batch.batch_id or ref.input_revision != self._batch.input_revision:
                 raise ValueError('automatic replay input binding does not belong to this batch revision')
@@ -50,7 +50,7 @@ class ReplayInputResolver(Generic[T]):
         self._output_paths[key] = output.ancestry
 
     def path(self, ref: 'RegionRef') -> tuple[int, ...]:
-        from .optimizer.automatic_replay import PassInputRegionRef
+        from .refinement.automatic_replay import PassInputRegionRef
         self.resolve(ref)
         if isinstance(ref, PassInputRegionRef):
             return tuple(ref.ancestry)
@@ -73,6 +73,18 @@ def mirror_report(source_id: int, axis: tuple[float, float, float]) -> dict[str,
         angle_degrees=math.degrees(float(axis[0])))
     return {'accepted': True, 'mode': 'pair', 'matched_source': source_id,
         'axis': selected.model_dump(mode='json')}
+
+
+def clone_reference_diagnostics(existing, *, source_id, source_path, previous_source_id, previous_source_path):
+    result = {'clone_reference_remap': {
+        'previous_source_region_id': previous_source_id, 'source_region_id': source_id,
+        'previous_source_region_path': previous_source_path, 'source_region_path': source_path,
+        'reason': 'self_symmetry_materialization'}}
+    for key, field in (('clone', 'source_id'), ('clones', 'matched_source')):
+        relation = existing.get(key)
+        if isinstance(relation, Mapping):
+            result[key] = {**relation, field: source_id}
+    return result
 
 
 def union_masks(mask_by_id, identities):

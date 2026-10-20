@@ -5,12 +5,12 @@ import math
 from vectormark.candidate import FlatFill
 from vectormark.drawing_actions import SymmetryAxisInput
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 
 
 def choose(source, target, *, matrix, symbolic=True, family_size=None, axis=None):
     from vectormark.drawing_adapter import bind_region_inputs
-    from vectormark.optimizer.automatic_replay import (
+    from vectormark.refinement.automatic_replay import (
         AssignCloneOperation, MirrorRegionOperation, apply_relationship_choice, draft_input_ref,
     )
     refs = draft_input_ref(source.id), draft_input_ref(target.id)
@@ -20,9 +20,9 @@ def choose(source, target, *, matrix, symbolic=True, family_size=None, axis=None
 
 
 def pair():
-    source = VectorRegion(1, Shape('path', {'d': 'M1 2 L5 2 L5 6 L1 6 Z'}),
+    source = RegionSample(1, Shape('path', {'d': 'M1 2 L5 2 L5 6 L1 6 Z'}),
         FlatFill('#112233'), 1, raster=np.ones((12, 20), dtype=bool), drawing_id='r1')
-    target = VectorRegion(2, Shape('rect', {'x': 9, 'y': 2, 'w': 4, 'h': 4}),
+    target = RegionSample(2, Shape('rect', {'x': 9, 'y': 2, 'w': 4, 'h': 4}),
         FlatFill('#abcdef'), 4, raster=np.ones((12, 20), dtype=bool), drawing_id='r2')
     return source, target
 

@@ -1,7 +1,7 @@
 """Private working-evidence execution bridge for drawing plans.
 
 Versions retain canonical Drawings. This module temporarily executes against
-cached VectorRegion evidence; canonical serialization lives in drawing_render.
+cached RegionSample evidence; canonical serialization lives in drawing_render.
 """
 
 from __future__ import annotations
@@ -13,24 +13,24 @@ import numpy as np
 
 from .drawing_actions import ActionSettings, SetZOrderAction
 from .drawing_plan import DrawingPlan, PlanValidationError, validate_plan
-from .drawing_adapter import publish_region_update, publish_drawing_update, drawing_from_vector_regions, normalize_drawing_addresses, rebind_working_corner_provenance, restore_working_root_metadata, working_leaf_targets
+from .drawing_adapter import publish_region_update, publish_drawing_update, drawing_from_region_samples, normalize_drawing_addresses, rebind_working_corner_provenance, restore_working_root_metadata, working_leaf_targets
 from .drawing_trace import TraceResult
-from .optimizer.vector_region import VectorRegion
-from .optimizer.automatic_replay import (
+from .refinement.region_sample import RegionSample
+from .refinement.automatic_replay import (
     AutomaticActionOutcome,
     ReplayBatch,
-    optimize_with_intent,
+    select_refinements_with_intent,
 )
-from .optimizer.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
-from .optimizer.symmetry_materialize import materialize_self_symmetry
-from .optimizer.topology_binding import normalize_working_topology
+from .refinement.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
+from .refinement.symmetry_materialize import materialize_self_symmetry
+from .refinement.topology_binding import normalize_working_topology
 from .pipeline import Options
 from .refinement_settings import RefinementPasses
-from .optimizer.paint_binding import refill_all_regions_from_source, refill_changed_regions_from_source
+from .refinement.paint_binding import refill_all_regions_from_source, refill_changed_regions_from_source
 from . import drawing_region_actions, drawing_relationships, path_operations, drawing_partition
 
 
-DrawingRegions = tuple[VectorRegion, ...]
+DrawingRegions = tuple[RegionSample, ...]
 
 
 @dataclass(frozen=True)
@@ -74,7 +74,7 @@ def ordered_path_operation_stages(
 
 
 
-def stitch_regions(trace: TraceResult, regions: Sequence[VectorRegion]) -> DrawingRegions:
+def stitch_regions(trace: TraceResult, regions: Sequence[RegionSample]) -> DrawingRegions:
     """Normalize shared root boundaries before retaining interactive ``v0``.
 
     Initial trace stitching may snap existing shared geometry, but it must not
@@ -85,7 +85,7 @@ def stitch_regions(trace: TraceResult, regions: Sequence[VectorRegion]) -> Drawi
 
 
 def stitch_regions_with_intent(
-    trace: TraceResult, regions: Sequence[VectorRegion], *, enabled: bool = True
+    trace: TraceResult, regions: Sequence[RegionSample], *, enabled: bool = True
 ) -> RecordedRefinement:
     """Normalize initial seams and retain the accepted concrete constraints."""
     if not enabled:
@@ -104,16 +104,16 @@ def stitch_regions_with_intent(
 
 def auto_refine(
     trace: TraceResult,
-    regions: Sequence[VectorRegion],
+    regions: Sequence[RegionSample],
     *,
     rgb: np.ndarray | None = None,
     corner_normalize: bool = False,
     refinement_passes: RefinementPasses | None = None,
     on_pass: Callable[[str, DrawingRegions], None] | None = None,
 ) -> DrawingRegions:
-    """Run the one-shot optimizer over already-traced drawing roots.
+    """Run the one-shot refinement over already-traced drawing roots.
 
-    ``trace_drawing(refine="auto")`` must not enter the optimizer's alternate
+    ``trace_drawing(refine="auto")`` must not enter the refinement's alternate
     raster-to-region path.  The trace artifact is the drawing's source of truth:
     it owns stable region and command IDs, and every auto-refined version must
     remain a descendant of those roots.
@@ -130,7 +130,7 @@ def auto_refine(
 
 def auto_refine_with_intent(
     trace: TraceResult,
-    regions: Sequence[VectorRegion],
+    regions: Sequence[RegionSample],
     *,
     rgb: np.ndarray | None = None,
     allow_gradients: bool = True,
@@ -140,8 +140,8 @@ def auto_refine_with_intent(
 ) -> RecordedRefinement:
     """Run automatic refinement and retain its exact committed operations."""
     # Import locally: pipeline owns the pass ordering, while drawing_refine owns
-    # the persistent VectorRegion forest used by MCP drawing versions.
-    from .pipeline import _optimizer_passes
+    # the persistent RegionSample forest used by MCP drawing versions.
+    from .pipeline import _refinement_passes
 
     options = Options(
         epsilon=trace.options.simplify_tolerance,
@@ -150,7 +150,7 @@ def auto_refine_with_intent(
         aa_contours=trace.options.trace_level == "subpixel",
         max_sampling_colors=trace.options.max_sampling_colors,
         min_region_size=trace.options.min_region_size,
-        optimizer=True,
+        refinement=True,
         corner_normalize=corner_normalize,
         refinement_passes=refinement_passes or RefinementPasses(),
     )
@@ -159,7 +159,7 @@ def auto_refine_with_intent(
     regions = normalize_working_topology(materialize_self_symmetry(regions))
     before = {region.id: region for region in regions}
     masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
-    def _capture(pass_name: str, current: list[VectorRegion]) -> None:
+    def _capture(pass_name: str, current: list[RegionSample]) -> None:
         if on_pass is not None:
             on_pass(
                 pass_name,
@@ -168,8 +168,8 @@ def auto_refine_with_intent(
                 ))),
             )
 
-    optimized = optimize_with_intent(
-        list(regions), masks, _optimizer_passes(options), on_pass=_capture
+    optimized = select_refinements_with_intent(
+        list(regions), masks, _refinement_passes(options), on_pass=_capture
     )
     result = normalize_working_topology(normalize_drawing_addresses(
         tuple(
@@ -197,7 +197,7 @@ def auto_refine_with_intent(
 
 def refine(
     trace: TraceResult,
-    base: Sequence[VectorRegion],
+    base: Sequence[RegionSample],
     plan: DrawingPlan,
     *,
     rgb: np.ndarray | None = None,
@@ -207,7 +207,7 @@ def refine(
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
     regions = normalize_working_topology(materialize_self_symmetry(base))
-    drawing = drawing_from_vector_regions(
+    drawing = drawing_from_region_samples(
         plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
     )
     validate_plan(plan, drawing)
@@ -222,7 +222,7 @@ def refine(
         if index and name in {"fit_path", "fit_primitive", "set_fill", "merge", "split"}:
             # Temporary adapter: later actions must see earlier plan edits,
             # while the first action reuses the already validated projection.
-            drawing = drawing_from_vector_regions(
+            drawing = drawing_from_region_samples(
                 plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
             )
         if name == "merge":
@@ -244,7 +244,7 @@ def refine(
                 max_error=max_error,
             )
         elif name in {"set_symmetry", "assign_clone", "align"}:
-            drawing = drawing_from_vector_regions(plan.drawing_id, width=trace.width,
+            drawing = drawing_from_region_samples(plan.drawing_id, width=trace.width,
                 height=trace.height, regions=regions)
             execute = {"set_symmetry": drawing_relationships.set_region_symmetry,
                 "assign_clone": drawing_relationships.assign_clone,
@@ -287,7 +287,7 @@ def refine(
                     continue
                 targets = working_leaf_targets(regions)
                 target = targets[target_id]
-                drawing = drawing_from_vector_regions(
+                drawing = drawing_from_region_samples(
                     plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
                 )
                 try:
@@ -322,7 +322,7 @@ def refine(
             regions = refill_changed_regions_from_source(before, regions, rgb)
         regions = normalize_working_topology(regions)
     if z_order is not None:
-        drawing = drawing_from_vector_regions(
+        drawing = drawing_from_region_samples(
             plan.drawing_id, width=trace.width, height=trace.height, regions=regions,
         )
         ordered = drawing_region_actions.set_drawing_z_order(drawing, z_order)
@@ -332,7 +332,7 @@ def refine(
 
 
 def _run_detection(
-    regions: Sequence[VectorRegion],
+    regions: Sequence[RegionSample],
     trace: TraceResult,
     operation: str,
     target_id: object | None,
@@ -341,7 +341,7 @@ def _run_detection(
     max_error: float,
     allow_underlap: bool = True,
 ) -> DrawingRegions:
-    """Run one existing optimizer pass over the cached region forest."""
+    """Run one existing refinement pass over the cached region forest."""
     return run_detection_with_intent(
         regions,
         trace,
@@ -354,7 +354,7 @@ def _run_detection(
 
 
 def run_detection_with_intent(
-    regions: Sequence[VectorRegion],
+    regions: Sequence[RegionSample],
     trace: TraceResult,
     operation: str,
     target_id: object | None,
@@ -430,7 +430,7 @@ def run_detection_with_intent(
 
     before = {region.id: region for region in regions}
     masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
-    optimized = optimize_with_intent(list(regions), masks, [pass_fn])
+    optimized = select_refinements_with_intent(list(regions), masks, [pass_fn])
     restored = tuple(
         restore_working_root_metadata(region, before.get(region.id))
         for region in optimized.objects

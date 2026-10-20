@@ -2,12 +2,12 @@ from dataclasses import replace
 
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
+from vectormark.refinement.region_sample import RegionSample
 from vectormark.path_geometry import CornerAnchor, CompoundPathGeometry, parse_svg_paths
 
 
 def test_component_publication_preserves_sparse_canonical_command_identity():
-    from vectormark.optimizer.topology_binding import normalize_working_topology
+    from vectormark.refinement.topology_binding import normalize_working_topology
 
     d = 'M0 0 L10 0 L10 10 L0 10 Z M20 0 L30 0 L30 10 L20 10 Z'
     paths = parse_svg_paths(d, region_id='r1')
@@ -17,7 +17,7 @@ def test_component_publication_preserves_sparse_canonical_command_identity():
     paths = tuple(replace(path, anchors=(CornerAnchor(f'{path.path.id}.corner',
         path.path.commands[1].id, path.path.commands[1].id),)) for path in paths)
     cached = CompoundPathGeometry(paths, 'nonzero', 'pending component publication')
-    source = VectorRegion(1, Shape('path', {'d': d, 'canonical_path_geometry': cached}),
+    source = RegionSample(1, Shape('path', {'d': d, 'canonical_path_geometry': cached}),
         FlatFill('#123456'), drawing_id='r1')
 
     (result,) = normalize_working_topology((source,))

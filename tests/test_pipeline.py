@@ -2,8 +2,8 @@ import numpy as np
 from PIL import Image
 from vectormark.candidate import FlatFill, LinearGradientFill
 from vectormark.fit import Shape
-from vectormark.optimizer.vector_region import VectorRegion
-from vectormark.pipeline import Options, _render_optimizer_body, _segment_image, idealize
+from vectormark.refinement.region_sample import RegionSample
+from vectormark.pipeline import Options, _render_refinement_body, _segment_image, idealize
 from tests._render import render_svg, ssim
 
 
@@ -68,8 +68,8 @@ def test_symmetric_holed_region_emits_exactly_symmetric():
     assert ssim(render_svg(svg, w, h), img) >= 0.90
 
 
-def _evenodd_source(obj_id: int, *, fill: str = "#111111", z: int = 0) -> VectorRegion:
-    return VectorRegion(
+def _evenodd_source(obj_id: int, *, fill: str = "#111111", z: int = 0) -> RegionSample:
+    return RegionSample(
         obj_id,
         Shape(
             "path",
@@ -83,9 +83,9 @@ def _evenodd_source(obj_id: int, *, fill: str = "#111111", z: int = 0) -> Vector
     )
 
 
-def test_optimizer_body_preserves_evenodd_when_flattening_use():
+def test_refinement_body_preserves_evenodd_when_flattening_use():
     source = _evenodd_source(10)
-    clone = VectorRegion(
+    clone = RegionSample(
         20,
         Shape("use", {"href_obj_id": 10, "transform": (1.0, 0.0, 0.0, 1.0, 24.0, 0.0)}),
         FlatFill("#111111"),
@@ -93,15 +93,15 @@ def test_optimizer_body_preserves_evenodd_when_flattening_use():
         footprint=source.footprint,
     )
 
-    body, _defs = _render_optimizer_body([clone, source], flatten=True)
+    body, _defs = _render_refinement_body([clone, source], flatten=True)
 
     assert body[0].count('fill-rule="evenodd"') == 1
     assert body[1].count('fill-rule="evenodd"') == 1
 
 
-def test_optimizer_body_preserves_evenodd_when_inlining_recolored_use():
+def test_refinement_body_preserves_evenodd_when_inlining_recolored_use():
     source = _evenodd_source(10, fill="#111111")
-    clone = VectorRegion(
+    clone = RegionSample(
         20,
         Shape(
             "use",
@@ -116,7 +116,7 @@ def test_optimizer_body_preserves_evenodd_when_inlining_recolored_use():
         footprint=source.footprint,
     )
 
-    body, _defs = _render_optimizer_body([clone, source])
+    body, _defs = _render_refinement_body([clone, source])
 
     assert body[0].startswith('<path id="s10"')
     assert 'fill="#111111"' in body[0]
@@ -124,18 +124,18 @@ def test_optimizer_body_preserves_evenodd_when_inlining_recolored_use():
     assert 'fill-rule="evenodd"' in body[1]
 
 
-def test_optimizer_body_inlines_gradient_use_to_preserve_global_paint_space():
+def test_refinement_body_inlines_gradient_use_to_preserve_global_paint_space():
     fill = LinearGradientFill(
         {"x1": 0.0, "y1": 0.0, "x2": 0.0, "y2": 40.0},
         [(0.0, "#ff0000"), (1.0, "#0000ff")],
     )
-    source = VectorRegion(
+    source = RegionSample(
         10,
         Shape("path", {"d": "M0 20 L20 20 L20 40 L0 40 Z"}),
         fill,
         0,
     )
-    mirror = VectorRegion(
+    mirror = RegionSample(
         20,
         Shape("use", {"href_obj_id": 10, "transform": (1.0, 0.0, 0.0, -1.0, 0.0, 40.0)}),
         fill,
@@ -143,7 +143,7 @@ def test_optimizer_body_inlines_gradient_use_to_preserve_global_paint_space():
         footprint=source.footprint,
     )
 
-    body, defs = _render_optimizer_body([source, mirror])
+    body, defs = _render_refinement_body([source, mirror])
     svg_body = "".join(body)
 
     assert len(defs) == 1
@@ -152,15 +152,15 @@ def test_optimizer_body_inlines_gradient_use_to_preserve_global_paint_space():
     assert svg_body.count('fill="url(#g0)"') == 2
 
 
-def test_optimizer_body_inlines_same_fill_use_to_keep_output_concrete():
+def test_refinement_body_inlines_same_fill_use_to_keep_output_concrete():
     fill = FlatFill("#111111")
-    source = VectorRegion(
+    source = RegionSample(
         10,
         Shape("path", {"d": "M0 0 L20 0 L20 20 L0 20 Z"}),
         fill,
         0,
     )
-    clone = VectorRegion(
+    clone = RegionSample(
         20,
         Shape("use", {"href_obj_id": 10, "transform": (1.0, 0.0, 0.0, 1.0, 24.0, 0.0)}),
         fill,
@@ -168,35 +168,35 @@ def test_optimizer_body_inlines_same_fill_use_to_keep_output_concrete():
         footprint=source.footprint,
     )
 
-    body, _defs = _render_optimizer_body([source, clone])
+    body, _defs = _render_refinement_body([source, clone])
 
     assert body[0].startswith('<path id="s10"')
     assert body[1].startswith('<path fill="#111111"')
     assert "<use" not in "".join(body)
 
 
-def test_optimizer_body_renders_by_z_then_id():
-    low_source = VectorRegion(
+def test_refinement_body_renders_by_z_then_id():
+    low_source = RegionSample(
         10,
         Shape("rect", {"x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0}),
         FlatFill("#111111"),
         0,
     )
-    low_use = VectorRegion(
+    low_use = RegionSample(
         99,
         Shape("use", {"href_obj_id": 10, "transform": (1.0, 0.0, 0.0, 1.0, 12.0, 0.0)}),
         FlatFill("#111111"),
         0,
         footprint=low_source.footprint,
     )
-    high_cover = VectorRegion(
+    high_cover = RegionSample(
         2,
         Shape("rect", {"x": 0.0, "y": 0.0, "w": 30.0, "h": 30.0}),
         FlatFill("#333333"),
         1,
     )
 
-    body, _defs = _render_optimizer_body([high_cover, low_use, low_source])
+    body, _defs = _render_refinement_body([high_cover, low_use, low_source])
 
     assert 'fill="#111111"' in body[0]
     assert body[1].startswith('<path')

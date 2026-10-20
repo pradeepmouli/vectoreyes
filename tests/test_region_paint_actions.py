@@ -54,12 +54,12 @@ def test_working_refill_routes_only_invalidated_leaf_to_canonical_paint(monkeypa
     from vectormark import paint_fitting
     from vectormark.candidate import FlatFill as WorkingFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.vector_region import VectorRegion
-    from vectormark.optimizer.paint_binding import refill_regions
+    from vectormark.refinement.region_sample import RegionSample
+    from vectormark.refinement.paint_binding import refill_regions
     source = np.ones((10, 10), dtype=bool)
-    first = VectorRegion.from_shape(id=1, drawing_id='r1', shape=Shape('rect', dict(x=0, y=0, w=4, h=4)),
+    first = RegionSample.from_shape(id=1, drawing_id='r1', shape=Shape('rect', dict(x=0, y=0, w=4, h=4)),
         fill=None, z=0, raster=source)
-    second = VectorRegion.from_shape(id=2, drawing_id='r2', shape=Shape('rect', dict(x=5, y=5, w=4, h=4)),
+    second = RegionSample.from_shape(id=2, drawing_id='r2', shape=Shape('rect', dict(x=5, y=5, w=4, h=4)),
         fill=WorkingFill('#112233'), z=1, raster=source)
     calls = []
     execute = paint_fitting.fit_source_paint
