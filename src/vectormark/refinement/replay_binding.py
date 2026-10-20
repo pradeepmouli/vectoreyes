@@ -30,6 +30,22 @@ def capture_replay_state(regions: Sequence[RegionSample], canvas: Canvas) -> Rep
         _snapshot_canonical(working_region_evidence(regions)))
 
 
+def capture_trace_replay_state(regions: Sequence[RegionSample], canvas: Canvas) -> ReplayState:
+    """Retain trace overlaps explicitly, matching canonical root assembly ingress.
+
+    Fitted fragments may overlap before stitching. Preserve their exact commands
+    and pending ownership rather than silently rewriting or rejecting the trace.
+    Strict geometry-edit validation remains the default outside this boundary.
+    """
+    from ..drawing_adapter import normalize_drawing_addresses
+    from ..drawing_materialization import materialize_self_symmetry_state
+    from .topology_binding import normalize_working_topology
+
+    addressed = normalize_drawing_addresses(tuple(regions))
+    normalized = normalize_working_topology(addressed, defer_overlaps=True)
+    return materialize_self_symmetry_state(capture_replay_state(normalized, canvas))
+
+
 def working_regions_from_state(state: ReplayState) -> tuple[RegionSample, ...]:
     drawing = _snapshot_canonical(state.drawing)
     return restore_selected_roots(drawing.regions, tuple(root.id for root in drawing.regions), (),

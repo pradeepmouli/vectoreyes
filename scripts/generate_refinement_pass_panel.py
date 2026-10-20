@@ -27,9 +27,7 @@ from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX, preprocess_image
 from vectormark.refinement.trace import trace_regions
 from vectormark.pipeline import Options, _render_refinement_body
 from vectormark.drawing import Canvas
-from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
-from vectormark.refinement.topology_binding import normalize_working_topology
-from vectormark.drawing_materialization import materialize_self_symmetry_state
+from vectormark.refinement.replay_binding import capture_trace_replay_state, working_regions_from_state
 from vectormark.drawing_refinement import refine_canonical_drawing
 
 
@@ -100,8 +98,7 @@ def main() -> None:
         ("trace", _render_objects(objects, meta.width, meta.height, options)),
     ]
 
-    state = materialize_self_symmetry_state(capture_replay_state(
-        normalize_working_topology(objects), Canvas(meta.width, meta.height)))
+    state = capture_trace_replay_state(objects, Canvas(meta.width, meta.height))
     def capture(name, current):
         index = len(frames) - 1
         frames.append((f"{index:02d} {name.removesuffix('_pass')}",

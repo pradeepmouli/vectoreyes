@@ -139,15 +139,12 @@ def auto_refine_with_intent(
 ) -> RecordedRefinement:
     """Adapt diagnostic region inputs/outputs around canonical automatic execution."""
     from .drawing import Canvas
-    from .refinement.replay_binding import capture_replay_state, working_regions_from_state
-    from .drawing_materialization import materialize_self_symmetry_state
+    from .refinement.replay_binding import capture_trace_replay_state, working_regions_from_state
     from .drawing_refinement import refine_canonical_drawing
     from .drawing_paint import refill_drawing_from_source, source_paint_masks
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
-    state = materialize_self_symmetry_state(capture_replay_state(
-        normalize_working_topology(normalize_drawing_addresses(tuple(regions))),
-        Canvas(trace.width, trace.height)))
+    state = capture_trace_replay_state(regions, Canvas(trace.width, trace.height))
     def _capture(pass_name, current):
         if on_pass is not None:
             on_pass(pass_name, working_regions_from_state(current))

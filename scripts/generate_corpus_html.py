@@ -364,10 +364,7 @@ def _idealize_refinement_with_trace_cache(
     from vectormark.emit import render_svg_doc
     from dataclasses import replace
     from vectormark.drawing import Canvas
-    from vectormark.drawing_adapter import normalize_drawing_addresses
-    from vectormark.refinement.topology_binding import normalize_working_topology
-    from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
-    from vectormark.drawing_materialization import materialize_self_symmetry_state
+    from vectormark.refinement.replay_binding import capture_trace_replay_state, working_regions_from_state
     from vectormark.drawing_refinement import refine_canonical_drawing
     from vectormark.pipeline import (
         _condition_input,
@@ -386,10 +383,9 @@ def _idealize_refinement_with_trace_cache(
         working,
         options,
     )
-    addressed = normalize_drawing_addresses(tuple(replace(region, drawing_id=f'r{int(region.id) + 1}',
-        raster=masks[region.id]) for region in objects))
-    state = materialize_self_symmetry_state(capture_replay_state(
-        normalize_working_topology(addressed), Canvas(w0, h0)))
+    addressed = tuple(replace(region, drawing_id=f'r{int(region.id) + 1}',
+        raster=masks[region.id]) for region in objects)
+    state = capture_trace_replay_state(addressed, Canvas(w0, h0))
     selected = refine_canonical_drawing(state, epsilon=options.epsilon, max_error=options.max_error,
         cubic=options.cubic_paths, no_symmetry=options.no_symmetry,
         corner_normalize=options.corner_normalize, refinement_passes=options.refinement_passes)

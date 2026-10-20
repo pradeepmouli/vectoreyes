@@ -1060,15 +1060,11 @@ def _idealize_refinement(arr: np.ndarray, opt: Options, width: int, height: int)
     """Experimental trace-vectorize + geometry-refinement pipeline."""
     from .refinement.trace import trace_regions
     from .drawing import Canvas
-    from .refinement.replay_binding import capture_replay_state, working_regions_from_state
-    from .drawing_materialization import materialize_self_symmetry_state
+    from .refinement.replay_binding import capture_trace_replay_state, working_regions_from_state
     from .drawing_refinement import refine_canonical_drawing
-    from .drawing_adapter import normalize_drawing_addresses
-    from .refinement.topology_binding import normalize_working_topology
 
     objects, masks = trace_regions(arr, opt)
-    state = materialize_self_symmetry_state(capture_replay_state(
-        normalize_working_topology(normalize_drawing_addresses(objects)), Canvas(width, height)))
+    state = capture_trace_replay_state(objects, Canvas(width, height))
     selected = refine_canonical_drawing(state, epsilon=opt.epsilon, max_error=opt.max_error,
         cubic=opt.cubic_paths, no_symmetry=opt.no_symmetry,
         corner_normalize=opt.corner_normalize, refinement_passes=opt.refinement_passes)

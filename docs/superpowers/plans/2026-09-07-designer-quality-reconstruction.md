@@ -2862,8 +2862,35 @@ trace and refine SVGs remain byte-identical to the retained baseline
 in the isolated runtime, with artifacts under `native-canonical-crossscope-wrapper`.
 No live deployment, push or corpus overwrite.
 
-A reduced-size Daikonic pass-panel probe at 128/256 px still rejects partially
-overlapping fitted boundaries. The numerical baseline fails with the same
-topology error; this is a retained tracing limitation, not a successful panel
-smoke or a newly fixed topology case. Broader appearance, constraints,
-complexity and agent/generated/holdout evaluation gates remain open.
+A reduced-size Daikonic pass-panel probe initially rejected partially
+overlapping fitted boundaries at 128/256 px. The numerical baseline failed
+identically. The trace-overlap ingress follow-up below resolves this report
+entry failure. Broader appearance, constraints, complexity and
+agent/generated/holdout evaluation gates remain open.
+
+### Trace-overlap ingress consistency — 2026-10-20
+
+Reduced Daikonic tracing produces genuine, small overlaps between separate
+fitted fragments (three pairs at 128 px, intersection areas 0.004–0.084 px²).
+These are not float32 Boolean residue and are not evidence that the fragments
+may be discarded. Canonical root assembly already retains such boundaries as
+pending compound topology, but diagnostic/report entry points were attempting
+strict component publication before refinement could run.
+
+`capture_trace_replay_state` now owns the shared trace-report boundary: stable
+addresses, overlap-deferred topology publication, detached replay capture and
+canonical symmetry materialization. Diagnostic automatic refinement,
+standalone conversion, cached corpus reporting and the pass panel all use it.
+Input commands and explicit pending ownership are preserved. This does not
+silently Boolean-normalize a trace, promise that stitching resolves every
+overlap, or relax the default strict validation used for geometry edits.
+
+Four regression cases fail on the original entry error and pass with the
+shared boundary. Both actual 128 px and 256 px Daikonic pass panels complete
+through all enabled passes. The 38-case focused topology/materialization group
+passes in both runtimes. All 1,467 source tests pass (220.95s), and all 1,467
+compiled tests pass (176.92s), each with the same 1,037 existing warnings.
+The compiled 256 px panel is byte-identical to its source-runtime counterpart;
+all three changed engine modules load as native extensions. The wheel is
+installed only in the isolated verification runtime. No deployment or corpus
+overwrite.
