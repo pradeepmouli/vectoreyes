@@ -276,7 +276,7 @@ def _topology_records(regions, observations, metadata):
     return result
 
 
-def _select_topology(state, action, resolver, observations, metadata):
+def _prepare_topology_regions(state, action, resolver, observations, metadata):
     from .geometry_native import region_path
     from .drawing_topology import match_topology_paths, _component_corners, retired_corner_features
     from .refinement.gate import rasterize
@@ -348,9 +348,14 @@ def _select_topology(state, action, resolver, observations, metadata):
         return replace(children[0], diagnostics={**children[0].diagnostics, 'topology': receipt})
 
     roots = tuple(publish(region) for region in selected.regions)
+    return roots, match_topology_paths(before, _topology_records(roots, observations, metadata))
+
+
+def _select_topology(state, action, resolver, observations, metadata):
+    roots, correspondence = _prepare_topology_regions(state, action, resolver, observations, metadata)
     recorded = tuple(replace(item, target=replace(item.target, batch_id='', input_revision=''))
         for item in action.path_correspondence)
-    if match_topology_paths(before, _topology_records(roots, observations, metadata)) != recorded:
+    if correspondence != recorded:
         raise ValueError('retained topology path correspondence is stale')
     return tuple(region for region in roots if int(observations[region.id]['id']) in action.affected_ids)
 

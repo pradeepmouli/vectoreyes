@@ -16,3 +16,19 @@ class RefinementPasses(BaseModel):
     simplify: bool = Field(True, description="Apply the constrained linelet simplifier, not a broad refit.")
     smooth: bool = Field(True, description="Smooth eligible consecutive curve joins.")
     stitch: bool = Field(True, description="Repair shared region boundaries after the selected geometry passes.")
+
+
+def refinement_pass_names(settings: RefinementPasses, *, no_symmetry: bool = False) -> tuple[str, ...]:
+    """One ordered schedule shared by canonical and numerical orchestration."""
+    stages = (
+        ('occlusion_pass', settings.occlusion),
+        ('split_compound_pass', settings.split_compound),
+        ('primitives_pass', settings.primitives),
+        ('clones_pass', settings.clones),
+        ('symmetry_pass', settings.symmetry and not no_symmetry),
+        ('linelet_simplify_pass', settings.simplify),
+        ('smooth_pass', settings.smooth),
+        ('corner_normalize_pass', True),
+        ('seams_pass', settings.stitch),
+    )
+    return tuple(name for name, enabled in stages if enabled)

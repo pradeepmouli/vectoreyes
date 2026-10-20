@@ -2772,3 +2772,44 @@ installed only in the isolated runtime, with separate artifacts under
 Default multi-pass orchestration and remaining explicit symmetry projection
 are not retired by this checkpoint. Cross-scope orchestration and broader
 appearance/constraints/complexity/evaluation work remain open.
+
+### Default DrawingEngine refinement on canonical actions — 2026-10-20
+
+`PythonDrawingEngine.refine_automatically` now obtains its pre-output-palette
+input through canonical recipe replay and runs the independent canonical
+discoverers, without materializing a RegionSample scene. The engine retains
+their accepted batches and resolves original paint only after the complete
+geometry sequence. The final output-palette projection remains downstream of
+the recorded geometry input.
+
+`refinement_pass_names` is the shared owner of stage order and toggles for this
+route and the remaining numerical pipeline: occlusion, component publication,
+primitives, clones, symmetry, linelet simplification, smoothing, optional corner
+normalization/observation, then full-scene stitching. Canonical scope traversal
+records the actual pass name and ordinal, so empty or observational stages do
+not collide merely because their input geometry is unchanged.
+
+Component discovery now shares preparation with strict topology replay. It
+records surviving path ownership and reuses the prepared result for selection;
+replay still rejects missing or stale correspondence. This is not permission
+to infer post-fit corners or repair geometry during export.
+
+All 1,453 source tests pass (156.40s) and all 1,453 compiled tests pass
+(153.28s), each with 1,035 warnings. Ten new canonical-orchestration guards
+pass in both runtimes; the 92-case focused integration group passes. The MCP
+control-threading test now observes the real engine/canonical route instead of
+patching the removed adapter import. Six changed core modules are confirmed
+native extensions; focused lint and staged whitespace checks pass.
+Exact-settings FastMCP Radish/Vbird trace and refine SVGs remain byte-identical
+to the retained baseline (18.65s/87.06s; concurrent checks, not benchmarks).
+The wheel is installed only in the isolated runtime, with separate artifacts
+under `native-canonical-default-refinement`. No live deployment or corpus
+overwrite.
+
+The standalone numerical pipeline, its adapter-facing automatic wrapper,
+remaining explicit self-symmetry projection and cross-scope clone transaction
+migration remain open. In particular, canonical symmetry still conservatively
+declines a local reconstruction whose clone dependents are outside its scope;
+this checkpoint does not claim that the older outer clone-refresh transaction
+has been ported. The broader appearance/constraints/complexity/evaluation gates
+also remain open.

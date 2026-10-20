@@ -800,16 +800,23 @@ def test_geometry_guide_requires_the_live_trace_canvas_without_silent_resampling
 def test_trace_auto_threads_trace_controls_into_python_trace_and_auto_refinement(monkeypatch):
     captured = {}
 
-    def capture(trace, regions, *, rgb, allow_gradients=True, corner_normalize=False, refinement_passes=None, on_pass=None):
-        from vectormark.drawing_refine import RecordedRefinement
+    from vectormark.python_drawing_engine import PythonDrawingEngine
+    import vectormark.drawing_refinement as refinement_module
+    original_engine = PythonDrawingEngine.refine_automatically
+    original_refine = refinement_module.refine_canonical_drawing
 
-        captured["trace"] = trace
-        captured["regions"] = regions
-        captured["rgb"] = rgb
-        return RecordedRefinement(tuple(regions), (), ())
+    def capture_engine(self, drawing, evidence, **kwargs):
+        captured['trace'] = evidence.geometry.trace
+        captured['canvas'] = evidence.paint.canvas
+        return original_engine(self, drawing, evidence, **kwargs)
 
-    import vectormark.python_drawing_engine as engine_module
-    monkeypatch.setattr(engine_module, "auto_refine_with_intent", capture)
+    def capture_refine(state, **kwargs):
+        captured['state'] = state
+        captured['settings'] = kwargs
+        return original_refine(state, **kwargs)
+
+    monkeypatch.setattr(PythonDrawingEngine, 'refine_automatically', capture_engine)
+    monkeypatch.setattr(refinement_module, 'refine_canonical_drawing', capture_refine)
     trace_drawing(
         ImageRef(data_uri=_png_data_uri()),
         TraceDrawingOptions(
@@ -830,8 +837,10 @@ def test_trace_auto_threads_trace_controls_into_python_trace_and_auto_refinement
     assert options.max_hole_area == 91
     assert options.simplify_tolerance == 2.25
     assert options.curve_tolerance == 0.75
-    assert captured["rgb"].shape[:2] == (captured["trace"].height, captured["trace"].width)
-    assert captured["regions"]
+    assert (captured['canvas'].height, captured['canvas'].width) == (captured['trace'].height, captured['trace'].width)
+    assert captured['settings']['epsilon'] == 2.25
+    assert captured['settings']['max_error'] == 0.75
+    assert captured['state'].drawing.regions
 
 
 def test_idealize_logo_threads_region_thresholds_into_pipeline_options(monkeypatch):

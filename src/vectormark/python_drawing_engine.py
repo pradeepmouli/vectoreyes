@@ -28,12 +28,11 @@ from .drawing_recipe import (
     EffectiveDrawingRecipe, GeometryEvidence, PaintEvidence, ReplayRecord, ResolvedCornerEdit,
     ResolveOriginalPaintOperation, build_geometry_evidence, build_paint_evidence,
     validate_replay_record, )
-from .drawing_refine import auto_refine_with_intent, stitch_regions_with_intent
+from .drawing_refine import stitch_regions_with_intent
 from .drawing_render import trace_summary
 from .drawing_assembly import assemble_drawing_roots
-from .refinement.replay_binding import replay_working_regions
 from .drawing_replay import (
-    extend_recipe_with_plan, propose_effective_recipe, raster_pixels, )
+    extend_recipe_with_plan, propose_effective_recipe, raster_pixels, replay_drawing, )
 from .drawing_trace import PythonTraceEngine, TraceOptions, TraceResult
 from .material_pretrace import preprocess_material_trace
 from .output_settings import DrawingOutputSettings
@@ -212,12 +211,12 @@ class PythonDrawingEngine:
             paint=evidence.paint, recipe=evidence.recipe, replay=evidence.replay)
         # Appended steps replay before the final output-palette projection.
         # Capture their inputs at that same boundary, not from the published fill.
-        baseline = replay_working_regions(evidence.geometry, evidence.paint, evidence.recipe,
+        baseline = replay_drawing(evidence.geometry, evidence.paint, evidence.recipe,
             finalize_output=False)
         trace = evidence.geometry.trace
-        automatic = auto_refine_with_intent(trace, baseline,
-            rgb=raster_pixels(evidence.paint.source) if evidence.geometry.kind == "source" else None,
-            allow_gradients=evidence.paint.output_settings.allow_gradients,
+        from .drawing_refinement import refine_canonical_drawing
+        automatic = refine_canonical_drawing(baseline,
+            epsilon=trace.options.simplify_tolerance, max_error=trace.options.curve_tolerance,
             corner_normalize=corner_normalize, refinement_passes=refinement_passes)
         recipe = replace(evidence.recipe, steps=(*evidence.recipe.steps, *automatic.batches,
             ResolveOriginalPaintOperation(scope="all", share_root_gradients=trace.material_pretrace is None)))

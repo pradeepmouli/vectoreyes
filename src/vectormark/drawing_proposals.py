@@ -60,6 +60,7 @@ def _select_region_scopes(
     state: ReplayState,
     discover: Callable[[ReplayState, tuple[int, ...]], tuple[CanonicalProposal, ...]],
     *, target_id: str | tuple[str, ...] | None, pass_name: str = 'pass_fn',
+    pass_ordinal: int = 0,
 ) -> CanonicalDetectionResult:
     """Share child-first discovery and full-scope publication across detectors."""
     targets = (target_id,) if isinstance(target_id, str) else tuple(target_id or ())
@@ -82,7 +83,8 @@ def _select_region_scopes(
                 for item in scoped_input_regions(state, scope)
                 if any(descendant.id in selected_ids for descendant in _walk_regions(item))}
             proposals = tuple(item for item in proposals if local_ids.intersection(item.addressed_ids or item.proposal_ids))
-        result = select_canonical_pass(state, proposals, pass_name=pass_name, scope=scope)
+        result = select_canonical_pass(state, proposals, pass_name=pass_name, scope=scope,
+            pass_ordinal=pass_ordinal)
         state = result.state
         batches.append(result.batch)
         outcomes.extend(result.outcomes)

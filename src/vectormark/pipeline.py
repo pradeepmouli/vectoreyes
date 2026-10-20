@@ -926,20 +926,6 @@ def _refinement_passes(opt: Options):
     # a compound path can hide a simple exterior behind one or more counters;
     # fitting it both before and after splitting gives the same trace-owned
     # region two competing primitive interpretations.
-    passes = [_configured_occlusion_pass]
-
-    def _configured_simplify_pass(objects, masks):
-        return simplify_pass(
-            objects,
-            masks,
-            epsilon=opt.epsilon,
-            max_error=opt.max_error,
-            cubic=opt.cubic_paths,
-            max_boundary_error=opt.max_error,
-        )
-
-    _configured_simplify_pass.__name__ = "simplify_pass"
-
     def _configured_smooth_pass(objects, masks):
         return smooth_pass(objects, masks, max_error=opt.max_error)
 
@@ -967,40 +953,31 @@ def _refinement_passes(opt: Options):
         )
 
     _configured_corner_normalize_pass.__name__ = "corner_normalize_pass"
-    passes.append(split_compound_pass)
-    passes.append(_configured_primitives_pass)
     # Congruence is the more general relationship between separate regions:
     # rotation and reflection are both valid clone transforms. Establish clone
     # families before symmetry can independently rewrite their members or
     # claim them as mirrored pairs. Self-symmetry then applies only to each
     # remaining canonical geometry.
-    passes.append(clones_pass)
     # A compound trace mixes an exterior with its counters.  It was split
     # above so automatic symmetry only sees addressable semantic leaves. The
     # symmetry pass explicitly excludes compound implementation children, so
     # a cutout is never reflected as an independent shape.
-    if not opt.no_symmetry:
-        passes.append(_configured_symmetry_pass)
-    passes.append(_configured_linelet_simplify_pass)
-    passes.append(_configured_smooth_pass)
     # A corner normalizer keeps all endpoints fixed, so it cannot reopen a
     # seam, but it can still change the curve between them. Run it before the
     # terminal stitch so neighbouring children finish with one shared path.
-    passes.append(_configured_corner_normalize_pass)
-    passes.append(_configured_seams_pass)
-    enabled = opt.refinement_passes
-    selection = {
-        "occlusion_pass": enabled.occlusion,
-        "split_compound_pass": enabled.split_compound,
-        "primitives_pass": enabled.primitives,
-        "clones_pass": enabled.clones,
-        "symmetry_pass": enabled.symmetry,
-        "linelet_simplify_pass": enabled.simplify,
-        "smooth_pass": enabled.smooth,
-        "corner_normalize_pass": True,  # Its existing enabled flag controls normalization.
-        "seams_pass": enabled.stitch,
+    from .refinement_settings import refinement_pass_names
+    configured = {
+        'occlusion_pass': _configured_occlusion_pass,
+        'split_compound_pass': split_compound_pass,
+        'primitives_pass': _configured_primitives_pass,
+        'clones_pass': clones_pass,
+        'symmetry_pass': _configured_symmetry_pass,
+        'linelet_simplify_pass': _configured_linelet_simplify_pass,
+        'smooth_pass': _configured_smooth_pass,
+        'corner_normalize_pass': _configured_corner_normalize_pass,
+        'seams_pass': _configured_seams_pass,
     }
-    return [function for function in passes if selection[function.__name__]]
+    return [configured[name] for name in refinement_pass_names(opt.refinement_passes, no_symmetry=opt.no_symmetry)]
 
 
 _SVG_ELEMENT_RE = re.compile(r"<(path|circle|ellipse|rect|polygon|use)\b")
