@@ -2659,3 +2659,40 @@ remain byte-identical (22.08s/98.93s; not benchmarks). The final wheel and
 artifacts under `native-canonical-clone-discovery` supersede the initial clone
 build made before the family-source fix. No live deployment, push, server
 restart or corpus overwrite.
+
+### Canonical symmetry discovery and shared numeric checks — 2026-10-20
+
+The symmetry axis candidates, geometric residuals, reflection matching and
+self-reconstruction fitter selection now belong to `symmetry_detection`.
+The numerical pass delegates to that owner; its tolerances, candidate ordering
+and fitter preferences are unchanged. Canonical discovery and public
+`detect_symmetry` plans operate on retained drawings without projecting a
+RegionSample scene. Accepted recipes retain the chosen axis and fitter, not
+instructions to repeat discovery during replay.
+
+Mirror pairs retain independent paint. Intrinsic symmetry keeps the geometry
+unchanged. Material partitions and implementation-only compound children keep
+their existing eligibility restrictions; polygon primitives are not silently
+promoted to path reconstruction. Child-first scopes preserve repeated local
+IDs. Same-scope dependent clones participate in the source reconstruction's
+quality transaction. A source with dependents outside that scope is
+conservatively protected from automatic reconstruction until cross-scope
+orchestration can assess the complete transaction; verified intrinsic symmetry
+may still be declared. This may skip useful reconstruction, but does not claim
+that a local quality check covers remote instances.
+
+Fourteen new cases cover mirror/source/target selection, intrinsic and selected
+self-symmetry, material eligibility, public plans without projection, polygon
+eligibility, local and cross-scope clones, repeated IDs and numerical-selection
+parity. All 1,415 source tests pass (147.63s) and 1,415 compiled tests pass
+(149.51s), each with 985 warnings. The 155-case focused integration group
+passes, and all 14 new cases also pass separately in the compiled runtime.
+The shared kernel, discovery, public replay and numerical pass are confirmed
+native extensions; focused lint and staged whitespace checks pass.
+Exact-settings FastMCP Radish/Vbird trace and refine SVGs are all byte-identical
+to the retained baseline (18.05s/105.06s; concurrent verification, not a
+benchmark). The wheel is installed only in the isolated runtime, with separate
+artifacts under `native-canonical-symmetry-discovery`.
+Default multi-pass discovery still uses the numerical orchestrator; occlusion,
+seam and cross-scope orchestration migration and the broader quality/evaluation
+work remain open. No live deployment or corpus overwrite.

@@ -322,7 +322,7 @@ def test_single_region_public_action_replays_from_retained_evidence(
     if action["op"] == "detect_symmetry":
         assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
         monkeypatch.setattr(
-            "vectormark.refinement.passes.symmetry._best_self_reconstruction",
+            "vectormark.symmetry_detection._best_self_reconstruction",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("symmetry selection ran during recipe replay")
             ),

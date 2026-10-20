@@ -343,7 +343,7 @@ def test_symmetry_pass_records_simple_self_symmetric_path_without_rewriting():
 
 
 def test_rejected_approximate_reconstruction_is_not_reported_as_intrinsic(monkeypatch):
-    import vectormark.refinement.passes.symmetry as module
+    import vectormark.symmetry_detection as module
 
     poly = SkPath(shell=[(20.0, 60.0), (40.1, 20.0), (60.0, 60.0)])
     obj = _obj(1, poly)

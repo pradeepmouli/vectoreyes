@@ -116,6 +116,112 @@ def discover_clone_proposals(
     return tuple(proposals)
 
 
+def discover_symmetry_proposals(
+    state: ReplayState, *, epsilon: float = 1.5, max_error: float = 1.0,
+    cubic: bool = False, scope: tuple[int, ...] = (),
+) -> tuple[CanonicalProposal, ...]:
+    """Discover retained mirror/intrinsic/self choices using shared numeric kernels."""
+    import numpy as np
+    from . import symmetry_detection as detection
+    from .drawing_fill import FlatFill
+    from .path_geometry import PrimitiveGeometry, CirclePrimitive, EllipsePrimitive, RectanglePrimitive, PolygonPrimitive
+    from .fit import Shape
+    from .refinement.region_sample import to_polygon
+    from .refinement.automatic_replay import (
+        MirrorRegionOperation, DeclareIntrinsicSymmetryOperation, ReconstructSelfSymmetryOperation,
+    )
+
+    indexed = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
+    roots = scoped_input_regions(state, scope)
+    local_ids = {item.id for root in roots for item in _walk_regions(root)}
+    usable = []
+    for region in sorted(roots, key=lambda item: int(state.region_evidence[item.id]['id'])):
+        if not region.is_leaf or isinstance(region.geometry, CloneGeometry):
+            continue
+        if isinstance(region.diagnostics.get('compound'), Mapping):
+            continue
+        flat = region_path(region, indexed)
+        if flat.is_empty or not detection._automatic_symmetry_is_tractable(flat):
+            continue
+        usable.append((region, flat, int(state.region_evidence[region.id]['id'])))
+
+    proposals, paired = [], set()
+    for index, (_source, source_flat, source_id) in enumerate(usable):
+        if source_id in paired:
+            continue
+        for _target, target_flat, target_id in usable[index+1:]:
+            if target_id in paired:
+                continue
+            match = detection.mirror_pair(source_flat, target_flat)
+            if match is None:
+                continue
+            axis, matrix = match
+            refs = (draft_input_ref(source_id), draft_input_ref(target_id))
+            action = MirrorRegionOperation(*refs, detection._axis_tuple(axis), matrix)
+            proposals.append(CanonicalProposal((source_id, target_id),
+                operation_intent(action, refs, (source_id, target_id))))
+            paired.update((source_id, target_id))
+            break
+
+    for region, flat, identity in usable:
+        if identity in paired:
+            continue
+        seed = isinstance(region.diagnostics.get('geometry_seed'), Mapping)
+        if isinstance(region.diagnostics.get('material_surface'), Mapping) and not seed:
+            continue
+        explicit = region.diagnostics.get('geometry', {})
+        explicit_kind = explicit.get('explicit') if isinstance(explicit, Mapping) else None
+        primitive = region.geometry.primitive if isinstance(region.geometry, PrimitiveGeometry) else None
+        intrinsic_only = ((not isinstance(region.fill, FlatFill) and not seed)
+            or isinstance(primitive, (CirclePrimitive, EllipsePrimitive)) or type(primitive) is RectanglePrimitive
+            or explicit_kind in {'circle', 'ellipse', 'rect', 'rounded_rect', 'cap', 'trapezoid', 'rounded_trapezoid'})
+        if isinstance(primitive, PolygonPrimitive) and not intrinsic_only:
+            continue
+        dependents = [root for root in roots if root.id != region.id and any(
+            isinstance(item.geometry, CloneGeometry) and item.geometry.source_region_id == region.id
+            for item in _walk_regions(root))]
+        external_dependents = any(isinstance(item.geometry, CloneGeometry)
+            and item.geometry.source_region_id == region.id and item.id not in local_ids
+            for item in indexed.values())
+        best = None
+        if not intrinsic_only and not external_dependents:
+            info = state.region_evidence[region.id]
+            reconstruction = flat
+            if seed and info['original_kind'] is not None:
+                original = to_polygon(Shape(info['original_kind'], dict(info['original_params'])))
+                if not original.is_empty:
+                    reconstruction = original
+            mask = np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape'])
+            best = detection._best_self_reconstruction(reconstruction, mask,
+                epsilon=epsilon, max_error=max_error, cubic=cubic,
+                preserve_explicit_geometry=explicit_kind is not None)
+        ref = draft_input_ref(identity)
+        if best is not None:
+            dependent_ids = tuple(int(state.region_evidence[item.id]['id']) for item in dependents)
+            refs = (ref, *(draft_input_ref(item) for item in dependent_ids))
+            ids = (identity, *dependent_ids)
+            action = ReconstructSelfSymmetryOperation(ref, refs[1:], detection._axis_tuple(best.axis),
+                best.residual, best.fit_kind, best.side, best.corner_radius, epsilon, max_error, cubic)
+            proposals.append(CanonicalProposal(ids, operation_intent(action, refs, ids)))
+        else:
+            intrinsic = detection._best_self_axis(flat)
+            if intrinsic is not None and (intrinsic_only or intrinsic[1] <= 1e-9):
+                axis, residual = intrinsic
+                action = DeclareIntrinsicSymmetryOperation(ref, detection._axis_tuple(axis), residual)
+                proposals.append(CanonicalProposal((identity,), operation_intent(action, (ref,), (identity,))))
+    return tuple(proposals)
+
+
+def detect_symmetry_regions(
+    state: ReplayState, *, target_id: str | None = None, epsilon: float = 1.5,
+    max_error: float = 1.0, cubic: bool = False,
+) -> CanonicalDetectionResult:
+    """Select canonical symmetry choices in child-first, fully addressed scopes."""
+    return _select_region_scopes(state,
+        lambda snapshot, scope: discover_symmetry_proposals(snapshot, epsilon=epsilon,
+            max_error=max_error, cubic=cubic, scope=scope), target_id=target_id)
+
+
 def detect_clone_regions(
     state: ReplayState, *, target_id: str | None = None, symbolic: bool = True,
 ) -> CanonicalDetectionResult:

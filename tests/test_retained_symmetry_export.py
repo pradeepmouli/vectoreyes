@@ -314,6 +314,7 @@ def test_clone_local_source_shadows_unrelated_cross_scope_materialization():
 def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
     import importlib
     symmetry = importlib.import_module("vectormark.refinement.passes.symmetry")
+    detection = importlib.import_module("vectormark.symmetry_detection")
     from vectormark.refinement.framework import select_refinements
     from vectormark.drawing_adapter import transform_working_shape
     mask = np.zeros((32, 48), dtype=bool)
@@ -326,8 +327,8 @@ def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
     half_shape = Shape("path", {"d": "M2 2 L10 2 L10 18 L2 18 Z"})
     half = to_polygon(half_shape)
     mirror = to_polygon(Shape("path", {"d": "M10 2 L18 2 L18 18 L10 18 Z"}))
-    monkeypatch.setattr(symmetry, "_best_self_reconstruction", lambda *args, **kwargs:
-                        symmetry._SelfReconstruction(
+    monkeypatch.setattr(detection, "_best_self_reconstruction", lambda *args, **kwargs:
+                        detection._SelfReconstruction(
                             symmetry.Axis2D(np.pi / 2, 10, 10),
                             half,
                             mirror,

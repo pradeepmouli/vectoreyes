@@ -902,15 +902,15 @@ def test_symmetry_modes_replay_exact_axis_winner_without_candidate_selection(mon
     assert self_action.fit_kind in {"ellipse_cap", "symmetric_half", "path_half", "geometry_path"}
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._best_self_reconstruction",
+        "vectormark.symmetry_detection._best_self_reconstruction",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("self selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._best_self_axis",
+        "vectormark.symmetry_detection._best_self_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("axis selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._mirror_pair_axis",
+        "vectormark.symmetry_detection._mirror_pair_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pair selection ran")),
     )
     _assert_semantic_regions_equal(
@@ -1026,11 +1026,11 @@ def test_each_self_symmetry_winner_replays_only_its_recorded_fitter(
     assert action.cubic is True
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._best_self_reconstruction",
+        "vectormark.symmetry_detection._best_self_reconstruction",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("winner selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._best_self_axis",
+        "vectormark.symmetry_detection._best_self_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("axis selection ran")),
     )
     replayed = replay_batches([source], result.batches, masks=masks)
@@ -1114,11 +1114,11 @@ def test_recursive_intent_commits_or_rolls_back_as_one_outer_clone_transaction(
         assert result.objects[1].current.params["href_region_path"] == (10, 11)
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._best_self_reconstruction",
+        "vectormark.symmetry_detection._best_self_reconstruction",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("recursive selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.refinement.passes.symmetry._best_self_axis",
+        "vectormark.symmetry_detection._best_self_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("recursive axis ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)
