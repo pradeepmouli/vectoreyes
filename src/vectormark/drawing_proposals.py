@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, field, replace
 from collections.abc import Callable
+from typing import Mapping
 
 from .drawing import DrawingRegion, _walk_regions
 from .drawing_automatic import AutomaticBatchApplication, AutomaticChoiceNotApplicable, PreparedAutomaticSelection
@@ -15,7 +16,7 @@ from .refinement.automatic_replay import (
     AutomaticActionOutcome, AutomaticObservationRecord, AutomaticOperationRecord,
     CornerDiagnosticsObservation, ProposalIntent, ReplayBatch, batch_identity,
     bind_intent, primitive_intent, draft_input_ref, operation_intent,
-    SmoothPathOperation, NormalizeCornersOperation, SimplifyLineletOperation,
+    SmoothPathOperation, NormalizeCornersOperation, SimplifyLineletOperation, AssignCloneOperation,
 )
 from .refinement.framework import _BUDGET_OMITTED, _effective_policy_value
 from .replay_identity import canonical_input_revision, scoped_input_regions
@@ -29,6 +30,7 @@ class CanonicalProposal:
     geometry_policy: GeometryPolicy | None = None
     region_geometry_policy: GeometryPolicy | None = None
     prepared: PreparedAutomaticSelection | None = field(default=None, kw_only=True)
+    addressed_ids: tuple[int, ...] = field(default=(), kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -77,7 +79,7 @@ def _select_region_scopes(
         if selected_ids is not None:
             local_ids = {int(state.region_evidence[item.id]['id'])
                 for item in scoped_input_regions(state, scope) if item.id in selected_ids}
-            proposals = tuple(item for item in proposals if local_ids.intersection(item.proposal_ids))
+            proposals = tuple(item for item in proposals if local_ids.intersection(item.addressed_ids or item.proposal_ids))
         result = select_canonical_pass(state, proposals, pass_name=pass_name, scope=scope)
         state = result.state
         batches.append(result.batch)
@@ -86,6 +88,41 @@ def _select_region_scopes(
     from .replay_state import publish_drawing_state
     state = publish_drawing_state(state, normalize_drawing_topology(state.drawing))
     return CanonicalDetectionResult(state, tuple(batches), tuple(outcomes))
+
+
+def discover_clone_proposals(
+    state: ReplayState, *, symbolic: bool = True, scope: tuple[int, ...] = (),
+) -> tuple[CanonicalProposal, ...]:
+    """Match canonical leaf footprints without projecting a sampling scene."""
+    from .clone_detection import CloneDetectionInput, find_clone_matches
+    indexed = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
+    inputs = []
+    for region in scoped_input_regions(state, scope):
+        if not region.is_leaf or region.fill is None or isinstance(region.geometry, CloneGeometry):
+            continue
+        symmetry = region.diagnostics.get('symmetry')
+        if isinstance(symmetry, Mapping) and symmetry.get('mode') == 'self':
+            continue
+        footprint = region_path(region, indexed)
+        if not footprint.is_empty:
+            inputs.append(CloneDetectionInput(int(state.region_evidence[region.id]['id']), footprint))
+    proposals = []
+    for match in find_clone_matches(tuple(inputs)):
+        source, target = draft_input_ref(match.source_id), draft_input_ref(match.target_id)
+        action = AssignCloneOperation(source, target, match.matrix, symbolic, match.family_size)
+        proposals.append(CanonicalProposal((match.target_id,),
+            operation_intent(action, (source, target), (match.target_id,)),
+            addressed_ids=(match.source_id, match.target_id)))
+    return tuple(proposals)
+
+
+def detect_clone_regions(
+    state: ReplayState, *, target_id: str | None = None, symbolic: bool = True,
+) -> CanonicalDetectionResult:
+    """Select clone relationships while retaining independent target paint."""
+    return _select_region_scopes(state,
+        lambda snapshot, scope: discover_clone_proposals(snapshot, symbolic=symbolic, scope=scope),
+        target_id=target_id)
 
 
 def discover_path_proposals(

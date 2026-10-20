@@ -1191,9 +1191,10 @@ def extend_recipe_with_plan(
             if action.op == "stitch"
             else getattr(action, "target", None)
         )
-        if detection == "detect_primitives":
-            from .drawing_proposals import detect_primitive_regions
-            selected = detect_primitive_regions(state, epsilon=settings.epsilon, target_id=target)
+        if detection in {"detect_primitives", "detect_clones"}:
+            from .drawing_proposals import detect_primitive_regions, detect_clone_regions
+            selected = (detect_primitive_regions(state, epsilon=settings.epsilon, target_id=target)
+                if detection == "detect_primitives" else detect_clone_regions(state, target_id=target))
             batches = tuple(replace(batch, settings=settings, origin="agent")
                 for batch in selected.batches)
             steps.extend(batches)

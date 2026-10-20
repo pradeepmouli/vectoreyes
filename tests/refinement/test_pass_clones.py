@@ -1,7 +1,4 @@
-import math
-
 import numpy as np
-import pytest
 
 from vectormark.skia_geometry import SkPath, affinity
 from vectormark.candidate import FlatFill, LinearGradientFill
@@ -10,7 +7,6 @@ from vectormark.fit import Shape
 from vectormark.refinement.framework import select_refinements
 from vectormark.refinement.region_sample import RegionSample
 from vectormark.refinement.passes.clones import clones_pass
-import vectormark.refinement.passes.clones as clones_module
 
 
 def _mask_for_polygon(poly: SkPath, shape_hw: tuple[int, int] = (96, 96)) -> np.ndarray:
@@ -124,8 +120,7 @@ def test_clones_pass_checks_nearby_descriptor_buckets_before_rejecting(monkeypat
     masks = {obj.id: _mask_for_polygon(obj.footprint) for obj in objects}
 
     monkeypatch.setattr(
-        clones_module,
-        "_best_transform",
+        "vectormark.clone_detection._best_transform",
         lambda _canonical, target, **_kwargs: ((1.0, 0.0, 0.0, 1.0, 34.0, 22.0), target),
     )
     proposals = clones_pass(objects, masks)
@@ -188,7 +183,7 @@ def test_clones_pass_does_not_chain_targets_as_canonicals(monkeypatch):
             return (1.0, 0.0, 0.0, 1.0, target_flat.centroid.x - canonical_flat.centroid.x, 0.0), target_flat
         return None
 
-    monkeypatch.setattr(clones_module, "_best_transform", _nontransitive_match)
+    monkeypatch.setattr("vectormark.clone_detection._best_transform", _nontransitive_match)
     objects = [canonical, middle, target]
     masks = {obj.id: _mask_for_polygon(obj.footprint) for obj in objects}
 

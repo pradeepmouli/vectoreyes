@@ -503,7 +503,7 @@ def test_detect_clones_replays_accepted_concrete_action_without_detection(monkey
     )
     assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
     monkeypatch.setattr(
-        "vectormark.refinement.passes.clones.clones_pass",
+        "vectormark.clone_detection.find_clone_matches",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("clone detection ran during recipe replay")
         ),

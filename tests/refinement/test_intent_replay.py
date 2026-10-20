@@ -187,7 +187,7 @@ def test_clone_intent_replays_source_identity_transform_and_independent_paint(mo
     assert result.objects[1].current.params["href_obj_id"] == source.id
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.clones._best_transform",
+        "vectormark.clone_detection._best_transform",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("clone detection ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)
@@ -220,7 +220,7 @@ def test_accepted_operation_preserves_external_masks_for_the_next_batch(monkeypa
     ] == [["AssignCloneOperation"], []]
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.clones._best_transform",
+        "vectormark.clone_detection._best_transform",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("clone detection ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)

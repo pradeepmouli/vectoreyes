@@ -2627,3 +2627,35 @@ and whitespace checks pass. Exact-settings FastMCP Radish/Vbird v0/v1 SVGs remai
 byte-identical (17.84s/105.27s; not benchmarks). Artifacts are separate under
 `native-fill-outcomes`; the wheel is installed only in the isolated runtime.
 No push, live deployment, server restart or corpus overwrite.
+
+### Canonical clone discovery and shared matcher — 2026-10-20
+
+Clone congruence matching now has one geometry-only owner, `clone_detection`,
+consuming typed footprint inputs and returning source/target/transform matches.
+The remaining numerical pass delegates to it instead of owning a second
+algorithm. Canonical discovery and public `detect_clones` plans use the same
+matcher without constructing RegionSample inputs. Targeting either a source or
+an instance retains the existing family-selection meaning; paint is independent
+of the reused geometry, and scoped local IDs remain distinct.
+
+Matching tolerances, reflection/rotation candidates and tie-breaking are
+unchanged. A new real-geometry regression exposed a family-before-pair defect:
+the strict-pair phase could reclassify an already selected family source,
+creating a chain. Selected family sources are now protected from that later
+phase. This preserves family priority; its conservative cost is foregoing a
+strict-pair fallback when a preferred family's proposals later fail an outer
+quality gate. Replay guards now prohibit the new matcher owner, not a retired
+private function. Remaining symmetry/occlusion/seam discovery and default
+multi-pass orchestration are still migration work.
+
+Verification: 1,401 source tests pass (139.06s) and 1,401 compiled tests pass
+(148.40s), each with 985 warnings. Ten new cases cover translation, rotation,
+reflection, non-chained families, independent paint, source/instance targeting,
+scoped IDs and public plan discovery without sampling projection. The initial
+79-case integration group and final 20-case matcher/pass guard group pass.
+Three matcher/discovery modules are confirmed native extensions; lint and
+staged whitespace checks pass. Exact-settings FastMCP Radish/Vbird v0/v1 SVGs
+remain byte-identical (22.08s/98.93s; not benchmarks). The final wheel and
+artifacts under `native-canonical-clone-discovery` supersede the initial clone
+build made before the family-source fix. No live deployment, push, server
+restart or corpus overwrite.
