@@ -545,7 +545,7 @@ def test_stitch_replays_accepted_constraints_without_pair_discovery(monkeypatch)
         drawing_id="drw_stitch", evidence=evidence, paint=paint, recipe=recipe
     ).drawing
     monkeypatch.setattr(
-        "vectormark.refinement.passes.seams._candidate_for_pair",
+            "vectormark.seam_detection._candidate_for_pair",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("seam pair discovery ran during recipe replay")
         ),

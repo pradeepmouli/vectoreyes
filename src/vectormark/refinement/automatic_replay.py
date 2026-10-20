@@ -922,7 +922,7 @@ def apply_seam_constraints(action, resolver):
     for key, update in updates.items():
         ref = PassInputRegionRef(action.roots[0].batch_id, action.roots[0].input_revision, key)
         region = resolver.resolve(ref)
-        replacements.setdefault(key[0], {})[region.id] = publish_seam_shape(region,
+        replacements.setdefault(key[0], {})[tuple(key)] = publish_seam_shape(region,
             update.shape, update.paired_with, update.candidate, selected=update.selected)
     return [replace_private_leaves(resolver.resolve(root), replacements.get(root.ancestry[0], {}))
         for root in action.roots]

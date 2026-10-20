@@ -78,7 +78,6 @@ from .drawing_paint import (
 from .drawing_refine import (
     ordered_path_operation_stages,
     resolved_action_settings,
-    run_detection_with_intent,
 )
 from .drawing_engine import PathFitOptions
 from .path_fit_evidence import (
@@ -1191,33 +1190,23 @@ def extend_recipe_with_plan(
             if action.op == "stitch"
             else getattr(action, "target", None)
         )
-        if detection in {"detect_primitives", "detect_clones", "detect_symmetry"}:
-            from .drawing_proposals import detect_primitive_regions, detect_clone_regions, detect_symmetry_regions
+        if detection is not None:
+            from .drawing_proposals import detect_primitive_regions, detect_clone_regions, detect_symmetry_regions, detect_seam_regions
             if detection == "detect_primitives":
                 selected = detect_primitive_regions(state, epsilon=settings.epsilon, target_id=target)
             elif detection == "detect_clones":
                 selected = detect_clone_regions(state, target_id=target)
-            else:
+            elif detection == "detect_symmetry":
                 selected = detect_symmetry_regions(state, epsilon=settings.epsilon,
                     max_error=settings.max_error, target_id=target)
+            else:
+                selected = detect_seam_regions(state, epsilon=settings.epsilon,
+                    max_error=settings.max_error, target_ids=tuple(target) if target else None)
             batches = tuple(replace(batch, settings=settings, origin="agent")
                 for batch in selected.batches)
             steps.extend(batches)
             state = selected.state
             _register_automatic_outputs(batches, state, producers)
-        elif detection is not None:
-            recorded = run_detection_with_intent(
-                working_regions_from_state(state),
-                evidence.trace,
-                detection,
-                target,
-                epsilon=settings.epsilon,
-                max_error=settings.max_error,
-            )
-            steps.extend(replace(batch, settings=settings, origin="agent")
-                         for batch in recorded.batches)
-            state = capture_replay_state(recorded.regions, paint.canvas)
-            _register_automatic_outputs(recorded.batches, state, producers)
         else:
             stages = (
                 ordered_path_operation_stages(action.ops)

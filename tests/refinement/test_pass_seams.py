@@ -7,7 +7,7 @@ from vectormark.fit import Shape
 from vectormark.refinement.framework import select_refinements
 from vectormark.refinement.gate import rasterize
 from vectormark.refinement.passes.seams import seams_pass
-import vectormark.refinement.passes.seams as seams_module
+import vectormark.seam_detection as seams_module
 from vectormark.refinement.region_sample import RegionSample, to_polygon
 from vectormark.pipeline import Options, _refinement_passes
 from vectormark._fitcurve import cubic_inflects
@@ -42,11 +42,11 @@ def test_regions_close_rejects_overlapping_bounds_with_no_near_path_endpoints():
             raise AssertionError("separated path endpoints must reject before exact distance")
 
     left = SimpleNamespace(
-        current=Shape("path", {"d": "M0 0 L0 100 L100 100 L100 0 Z"}),
+        shape=Shape("path", {"d": "M0 0 L0 100 L100 100 L100 0 Z"}),
         footprint=Footprint(),
     )
     right = SimpleNamespace(
-        current=Shape("path", {"d": "M40 40 L40 60 L60 60 L60 40 Z"}),
+        shape=Shape("path", {"d": "M40 40 L40 60 L60 60 L60 40 Z"}),
         footprint=Footprint(),
     )
 

@@ -786,11 +786,11 @@ def test_stitch_replays_axis_cluster_and_pathops_constraints_without_discovery(m
     assert top_receipt.commands
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.seams._candidate_for_pair",
+        "vectormark.seam_detection._candidate_for_pair",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("seam pair discovery ran")),
     )
     monkeypatch.setattr(
-        "vectormark.refinement.passes.seams._cluster_leaf_vertices",
+        "vectormark.seam_detection._cluster_leaf_vertices",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("seam cluster discovery ran")),
     )
     _assert_semantic_regions_equal(

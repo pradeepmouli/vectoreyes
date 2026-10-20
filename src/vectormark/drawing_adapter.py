@@ -321,11 +321,15 @@ def publish_seam_shape(obj: RegionSample, shape: Shape, other_id: int, candidate
         'seam': candidate.seam}})
 
 
-def replace_private_leaves(root: RegionSample, replacements: Mapping[int, RegionSample]) -> RegionSample:
+def replace_private_leaves(
+    root: RegionSample, replacements: Mapping[tuple[int, ...], RegionSample], *,
+    ancestry: tuple[int, ...] = (),
+) -> RegionSample:
     """Publish addressed leaf edits without replacing the retained exterior."""
+    path = (*ancestry, int(root.id))
     if root.is_leaf:
-        return replacements.get(int(root.id), root)
-    children = tuple(replace_private_leaves(child, replacements) for child in root.children)
+        return replacements.get(path, root)
+    children = tuple(replace_private_leaves(child, replacements, ancestry=path) for child in root.children)
     return replace(root, children=children)
 
 

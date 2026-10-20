@@ -2733,3 +2733,42 @@ installed only in the isolated runtime, with separate artifacts under
 Default multi-pass orchestration remains on its
 numerical route; seam discovery, cross-scope/default orchestration and broader
 quality/evaluation work remain open. No live deployment or corpus overwrite.
+
+### Canonical seam discovery and full-ancestry publication — 2026-10-20
+
+Seam discovery now has one geometry-only owner, `seam_detection`. The initial
+numerical stitch pass and canonical/public stitch action share ordered pair
+discovery, composite adjacency checks, paint ordering, endpoint clustering and
+the existing execution math. Canonical discovery reads retained drawing values
+without constructing a RegionSample scene, records the selected constraints,
+and reuses the prepared execution during quality selection. Replay executes
+those constraints without rediscovering seams. Topology checks remain
+predicates before publication; they are not export-time geometry repairs.
+
+Leaf publication now uses full ancestry rather than a bare local ID. A new
+regression demonstrated that numerical replay could otherwise overwrite two
+different nested leaves with the same edit. Targeted canonical discovery also
+includes an enclosing owner when one of its descendants is selected. PathOps
+reconstruction correspondence uses the same full-path key as execution rather
+than incorrectly treating rebuilt commands as positional mutations.
+
+Underlap still requires a shared owner and its actual boundary clip. No larger
+clip is invented for standalone leaves. Sixteen new cases cover scene-free
+discovery/replay, exact selection parity, material eligibility, public plans,
+individual/multiple/nested targets, repeated local IDs, underlap constraints and
+post-symmetry selection. Native validation caught and corrected an empty-child
+fallback type mismatch that ordinary Python execution accepted.
+
+All 1,443 source tests pass (139.87s) and all 1,443 compiled tests pass
+(136.85s), each with 1,035 warnings. The 93-case focused integration group
+passes; all 16 new guards also pass separately in the corrected compiled
+runtime. Six changed core modules are confirmed native extensions. Focused
+lint and staged whitespace checks pass. Exact-settings FastMCP Radish/Vbird
+trace and refine SVGs remain byte-identical to the retained baseline
+(18.09s/91.00s; concurrent checks, not benchmarks). The corrected wheel is
+installed only in the isolated runtime, with separate artifacts under
+`native-canonical-seam-verified`. No live deployment or corpus overwrite.
+
+Default multi-pass orchestration and remaining explicit symmetry projection
+are not retired by this checkpoint. Cross-scope orchestration and broader
+appearance/constraints/complexity/evaluation work remain open.

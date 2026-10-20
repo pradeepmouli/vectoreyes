@@ -59,11 +59,12 @@ def detect_primitive_regions(
 def _select_region_scopes(
     state: ReplayState,
     discover: Callable[[ReplayState, tuple[int, ...]], tuple[CanonicalProposal, ...]],
-    *, target_id: str | None, pass_name: str = 'pass_fn',
+    *, target_id: str | tuple[str, ...] | None, pass_name: str = 'pass_fn',
 ) -> CanonicalDetectionResult:
     """Share child-first discovery and full-scope publication across detectors."""
-    selected_ids = None if target_id is None else {
-        region.id for region in _walk_regions(state.drawing.region(target_id))}
+    targets = (target_id,) if isinstance(target_id, str) else tuple(target_id or ())
+    selected_ids = None if not targets else {region.id for target in targets
+        for region in _walk_regions(state.drawing.region(target))}
     scopes: list[tuple[int, ...]] = []
 
     def visit(roots: tuple[DrawingRegion, ...], scope: tuple[int, ...]) -> None:
@@ -78,7 +79,8 @@ def _select_region_scopes(
         proposals = discover(state, scope)
         if selected_ids is not None:
             local_ids = {int(state.region_evidence[item.id]['id'])
-                for item in scoped_input_regions(state, scope) if item.id in selected_ids}
+                for item in scoped_input_regions(state, scope)
+                if any(descendant.id in selected_ids for descendant in _walk_regions(item))}
             proposals = tuple(item for item in proposals if local_ids.intersection(item.addressed_ids or item.proposal_ids))
         result = select_canonical_pass(state, proposals, pass_name=pass_name, scope=scope)
         state = result.state
@@ -114,6 +116,77 @@ def discover_clone_proposals(
             operation_intent(action, (source, target), (match.target_id,)),
             addressed_ids=(match.source_id, match.target_id)))
     return tuple(proposals)
+
+
+def discover_seam_proposals(
+    state: ReplayState, *, epsilon: float = 1.0, max_error: float = 1.0,
+    cubic: bool = False, post_symmetry: bool = False, allow_underlap: bool = True,
+    scope: tuple[int, ...] = (),
+) -> tuple[CanonicalProposal, ...]:
+    """Prepare shared seam decisions without constructing an engine region tree."""
+    from .drawing_adapter import current_shape_for_region
+    from .drawing_topology import normalize_drawing_topology
+    from .drawing_seams import _SEAM_TOL, _JUNCTION_TOL
+    from .seam_detection import SeamDetectionInput, discover_seam_choices
+    from .refinement.automatic_replay import PassInputRegionRef
+    from .selected_outcomes import region_ancestries
+    indexed = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
+    native_paths = region_ancestries(state)
+    paths = {}
+
+    def index(region, path):
+        paths[path] = region
+        for child in region.children:
+            index(child, (*path, int(state.region_evidence[child.id]['id'])))
+
+    for root in scoped_input_regions(state, scope):
+        index(root, (int(state.region_evidence[root.id]['id']),))
+    local_paths = {region.id: path for path, region in paths.items()}
+    footprints = {region.id: region_path(region, indexed) for region in paths.values()}
+    inputs = []
+    for path, region in paths.items():
+        owner = paths[(path[0],)]
+        source_path = local_paths.get(region.geometry.source_region_id) if isinstance(region.geometry, CloneGeometry) else None
+        if source_path is not None and source_path[0] != path[0]:
+            source_path = None
+        shape = None if region.is_branch else current_shape_for_region(region, indexed,
+            native_paths, state.shape_metadata.get(region.id, {}))
+        inputs.append(SeamDetectionInput(PassInputRegionRef('', '', path), shape,
+            footprints[region.id], (float(owner.z), float(region.z), path[0], path[-1]),
+            footprints[owner.id], region.diagnostics, source_path))
+    choices = discover_seam_choices(tuple(inputs), epsilon=epsilon, max_error=max_error,
+        cubic=cubic, post_symmetry=post_symmetry, allow_underlap=allow_underlap)
+    if not choices:
+        return ()
+    revision = canonical_input_revision(state, scope)
+    batch = ReplayBatch(batch_identity('seam_discovery', scope, revision, 0), revision, scope, ())
+    application = AutomaticBatchApplication(state, batch)
+    proposals = []
+    for choice in choices:
+        bound = bind_intent(choice.intent, batch_id=batch.batch_id, input_revision=revision, ordinal=len(proposals))
+        selected = application.prepare(bound)
+        try:
+            normalize_drawing_topology(replace(state.drawing,
+                regions=tuple(item.region for item in selected.regions)), allow_external=True)
+        except ValueError:
+            continue
+        proposals.append(CanonicalProposal(choice.owner_ids, choice.intent,
+            region_geometry_policy=GeometryPolicy(max_boundary_error_px=max(_SEAM_TOL, _JUNCTION_TOL),
+                max_perimeter_residual_error_px=max(_SEAM_TOL, _JUNCTION_TOL), preserve_topology=False),
+            prepared=selected))
+    return tuple(proposals)
+
+
+def detect_seam_regions(
+    state: ReplayState, *, target_ids: tuple[str, ...] | None = None,
+    epsilon: float = 1.0, max_error: float = 1.0, cubic: bool = False,
+    post_symmetry: bool = False, allow_underlap: bool = True,
+) -> CanonicalDetectionResult:
+    """Select shared-boundary transactions in child-first addressed scopes."""
+    return _select_region_scopes(state,
+        lambda snapshot, scope: discover_seam_proposals(snapshot, epsilon=epsilon,
+            max_error=max_error, cubic=cubic, post_symmetry=post_symmetry,
+            allow_underlap=allow_underlap, scope=scope), target_id=target_ids)
 
 
 def discover_occlusion_proposals(

@@ -68,7 +68,7 @@ def test_public_primitive_detection_uses_canonical_discovery(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('primitive plan discovery projected a sampling scene')
     monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
-    monkeypatch.setattr('vectormark.drawing_replay.run_detection_with_intent', forbidden)
+    monkeypatch.setattr('vectormark.drawing_refine.run_detection_with_intent', forbidden)
     result = _refine(ctx, traced, [{'op': 'detect_primitives', 'target': 'r1'}])
     assert result['version'] != traced['version']
 
