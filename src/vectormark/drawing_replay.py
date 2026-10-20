@@ -1220,20 +1220,15 @@ def extend_recipe_with_plan(
             )
             for stage_index, (stage_name, stage_actions) in enumerate(stages):
                 if stage_name != "direct":
-                    recorded = run_detection_with_intent(
-                        working_regions_from_state(state),
-                        evidence.trace,
-                        stage_name,
-                        action.target,
-                        epsilon=settings.epsilon,
-                        max_error=settings.max_error,
-                    )
-                    steps.extend(replace(batch, settings=settings, origin="agent")
-                                 for batch in recorded.batches)
-                    state = capture_replay_state(recorded.regions, paint.canvas)
-                    _register_automatic_outputs(
-                        recorded.batches, state, producers
-                    )
+                    from .drawing_proposals import detect_path_regions
+                    selected = detect_path_regions(state, operation=stage_name,
+                        epsilon=settings.epsilon, max_error=settings.max_error,
+                        max_boundary_error=settings.max_error, target_id=action.target)
+                    batches = tuple(replace(batch, settings=settings, origin="agent")
+                        for batch in selected.batches)
+                    steps.extend(batches)
+                    state = selected.state
+                    _register_automatic_outputs(batches, state, producers)
                     continue
                 direct_action = (
                     action.model_copy(update={"ops": tuple(stage_actions)})

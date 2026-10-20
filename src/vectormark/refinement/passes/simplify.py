@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...skia_geometry import SkPath, unary_union
+from ...skia_geometry import SkPath
 from ...fit import Shape
-from ...drawing_simplification import _path_subpaths
+from ...drawing_simplification import covering_later_paths
 from ...drawing_adapter import bind_path_input
 from ..automatic_replay import SimplifyLineletOperation, apply_simplification_choice, draft_input_ref, operation_intent
 from ..framework import Proposal
@@ -26,46 +26,8 @@ def _covering_later_ids(
     del candidate, masks
     if obj.current is None or obj.current.kind != "path":
         return None
-    subpaths = _path_subpaths(str(obj.current.params['d']), samples=24)
-    if len(subpaths) <= 1:
-        return []
-    outer_index = max(range(len(subpaths)), key=lambda index: subpaths[index][2])
-    dropped_polygons: list[SkPath] = []
-    for index, (_tokens, points, _area) in enumerate(subpaths):
-        if index == outer_index:
-            continue
-        poly = SkPath(shell=list(points))
-        poly = poly.buffer(0)
-        if not poly.is_empty:
-            dropped_polygons.append(poly)
-    if not dropped_polygons:
-        return []
-    dropped = unary_union(dropped_polygons)
-
-    cover_ids: list[int] = []
-    cover_geoms: list[SkPath] = []
-    for other in sorted(objects, key=lambda item: (float(item.z), int(item.id))):
-        if other.id == obj.id or other.z <= obj.z:
-            continue
-        try:
-            if isinstance(other.footprint, SkPath):
-                overlap_area = float(other.footprint.intersection(dropped).area)
-            else:
-                overlap_area = 0.0
-        except Exception:
-            overlap_area = 0.0
-        if overlap_area > 1e-9:
-            cover_ids.append(int(other.id))
-            if isinstance(other.footprint, SkPath):
-                cover_geoms.append(other.footprint)
-
-    if not cover_geoms:
-        return None
-    covered = unary_union(cover_geoms)
-    uncovered = dropped.difference(covered)
-    if float(getattr(uncovered, "area", 0.0)) > 1e-6:
-        return None
-    return cover_ids
+    return covering_later_paths(str(obj.current.params['d']), identity=obj.id, z=obj.z,
+        candidates=tuple((other.id, other.z, other.footprint) for other in objects))
 
 
 def _referenced_source_ids(objects: list[RegionSample]) -> set[int]:

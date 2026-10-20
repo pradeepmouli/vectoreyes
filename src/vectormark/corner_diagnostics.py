@@ -134,6 +134,19 @@ def retained_corner_declaration_matches(
     return isinstance(diagnostics, Mapping) and diagnostics.get("path") == d
 
 
+def retained_corner_evidence(d: str, diagnostics: object) -> tuple[bool, Mapping[str, object]]:
+    """Return authoritative evidence, or an explicit observation-only report.
+
+    A missing or stale declaration is never repaired by detecting corners in an
+    already fitted path. Both discovery representations share this decision.
+    """
+    if retained_corner_declaration_matches(d, diagnostics):
+        return True, diagnostics
+    return False, recount_corner_diagnostics(d, {
+        'path': d, 'anchors': [], 'spans': [],
+        'skipped': [{'reason': 'missing_or_stale_provenance'}]})
+
+
 def normalize_corners_path_d(
     d: str, *, max_error: float, diagnostics: Mapping[str, object] | None = None,
 ) -> tuple[str, dict[str, object]]:

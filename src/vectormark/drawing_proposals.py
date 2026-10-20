@@ -1,11 +1,12 @@
 """Automatic choices assessed and published directly against retained drawings."""
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from collections.abc import Callable
 
 from .drawing import DrawingRegion, _walk_regions
-from .drawing_automatic import AutomaticBatchApplication, AutomaticChoiceNotApplicable
+from .drawing_automatic import AutomaticBatchApplication, AutomaticChoiceNotApplicable, PreparedAutomaticSelection
 from .geometry_native import region_path
-from .path_geometry import CloneGeometry
+from .path_geometry import CloneGeometry, PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry
 from .primitive_fitting import recognize_primitive_geometry
 from .proposal_validation import proposal_rejection_reason
 from .quality import GeometryPolicy, assess_geometry, assess_geometry_regions
@@ -13,7 +14,8 @@ from .skia_geometry import SkPath
 from .refinement.automatic_replay import (
     AutomaticActionOutcome, AutomaticObservationRecord, AutomaticOperationRecord,
     CornerDiagnosticsObservation, ProposalIntent, ReplayBatch, batch_identity,
-    bind_intent, primitive_intent,
+    bind_intent, primitive_intent, draft_input_ref, operation_intent,
+    SmoothPathOperation, NormalizeCornersOperation, SimplifyLineletOperation,
 )
 from .refinement.framework import _BUDGET_OMITTED, _effective_policy_value
 from .replay_identity import canonical_input_revision, scoped_input_regions
@@ -26,6 +28,7 @@ class CanonicalProposal:
     intent: ProposalIntent
     geometry_policy: GeometryPolicy | None = None
     region_geometry_policy: GeometryPolicy | None = None
+    prepared: PreparedAutomaticSelection | None = field(default=None, kw_only=True)
 
 
 @dataclass(frozen=True)
@@ -46,11 +49,22 @@ def detect_primitive_regions(
     state: ReplayState, *, epsilon: float, target_id: str | None = None,
 ) -> CanonicalDetectionResult:
     """Select primitives in child scopes first, retaining full region addressing."""
+    return _select_region_scopes(state,
+        lambda snapshot, scope: discover_primitive_proposals(snapshot, epsilon=epsilon, scope=scope),
+        target_id=target_id)
+
+
+def _select_region_scopes(
+    state: ReplayState,
+    discover: Callable[[ReplayState, tuple[int, ...]], tuple[CanonicalProposal, ...]],
+    *, target_id: str | None, pass_name: str = 'pass_fn',
+) -> CanonicalDetectionResult:
+    """Share child-first discovery and full-scope publication across detectors."""
     selected_ids = None if target_id is None else {
         region.id for region in _walk_regions(state.drawing.region(target_id))}
     scopes: list[tuple[int, ...]] = []
 
-    def visit(roots, scope):
+    def visit(roots: tuple[DrawingRegion, ...], scope: tuple[int, ...]) -> None:
         for region in roots:
             if region.children:
                 visit(region.children, (*scope, int(state.region_evidence[region.id]['id'])))
@@ -59,12 +73,12 @@ def detect_primitive_regions(
     visit(state.drawing.regions, ())
     batches, outcomes = [], []
     for scope in scopes:
-        proposals = discover_primitive_proposals(state, epsilon=epsilon, scope=scope)
+        proposals = discover(state, scope)
         if selected_ids is not None:
             local_ids = {int(state.region_evidence[item.id]['id'])
                 for item in scoped_input_regions(state, scope) if item.id in selected_ids}
             proposals = tuple(item for item in proposals if local_ids.intersection(item.proposal_ids))
-        result = select_canonical_pass(state, proposals, pass_name='pass_fn', scope=scope)
+        result = select_canonical_pass(state, proposals, pass_name=pass_name, scope=scope)
         state = result.state
         batches.append(result.batch)
         outcomes.extend(result.outcomes)
@@ -72,6 +86,108 @@ def detect_primitive_regions(
     from .replay_state import publish_drawing_state
     state = publish_drawing_state(state, normalize_drawing_topology(state.drawing))
     return CanonicalDetectionResult(state, tuple(batches), tuple(outcomes))
+
+
+def discover_path_proposals(
+    state: ReplayState, *, operation: str, max_error: float,
+    corner_normalize: bool = True, scope: tuple[int, ...] = (),
+) -> tuple[CanonicalProposal, ...]:
+    """Declare path cleanup choices; selection prepares each numeric fit once."""
+    from .corner_diagnostics import retained_corner_evidence
+    if operation not in {'smooth', 'normalize_corners'}:
+        raise ValueError(f'unknown canonical path discovery operation: {operation}')
+    proposals = []
+    for region in sorted(scoped_input_regions(state, scope),
+                         key=lambda item: int(state.region_evidence[item.id]['id'])):
+        if not region.is_leaf or not isinstance(region.geometry,
+                (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+            continue
+        identity = int(state.region_evidence[region.id]['id'])
+        target = draft_input_ref(identity)
+        if operation == 'smooth':
+            intent = operation_intent(SmoothPathOperation(target, max_error), (target,), (identity,))
+        else:
+            d = region.geometry.to_svg_d()
+            authoritative, declared = retained_corner_evidence(d, region.diagnostics.get('corners'))
+            if corner_normalize and authoritative:
+                intent = operation_intent(NormalizeCornersOperation(target, max_error, declared),
+                    (target,), (identity,))
+            else:
+                intent = CornerDiagnosticsObservation('', target, declared)
+        proposals.append(CanonicalProposal((identity,), intent))
+    return tuple(proposals)
+
+
+def detect_path_regions(
+    state: ReplayState, *, operation: str, max_error: float,
+    corner_normalize: bool = True, target_id: str | None = None,
+    epsilon: float = 1.5, samples: int = 16, cubic: bool = False,
+    linelet_only: bool = False, max_boundary_error: float | None = None,
+) -> CanonicalDetectionResult:
+    """Run one path-only discovery operation without a sampling-scene projection."""
+    if operation == 'simplify':
+        return _select_region_scopes(state,
+            lambda snapshot, scope: discover_simplification_proposals(snapshot, epsilon=epsilon,
+                max_error=max_error, samples=samples, cubic=cubic, linelet_only=linelet_only,
+                max_boundary_error=max_boundary_error, scope=scope), target_id=target_id)
+    return _select_region_scopes(state,
+        lambda snapshot, scope: discover_path_proposals(snapshot, operation=operation,
+            max_error=max_error, corner_normalize=corner_normalize, scope=scope), target_id=target_id)
+
+
+def discover_simplification_proposals(
+    state: ReplayState, *, epsilon: float, max_error: float, samples: int = 16,
+    cubic: bool = False, linelet_only: bool = False,
+    max_boundary_error: float | None = None, scope: tuple[int, ...] = (),
+) -> tuple[CanonicalProposal, ...]:
+    """Choose the existing covered-cutout or topology-preserving fit exactly once."""
+    from .drawing_simplification import covering_later_paths
+    from .path_sampling import _parse_subpaths
+    revision = canonical_input_revision(state, scope)
+    batch = ReplayBatch(batch_identity('simplification_discovery', scope, revision, 0), revision, scope, ())
+    application = AutomaticBatchApplication(state, batch)
+    roots = scoped_input_regions(state, scope)
+    by_id = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
+    referenced = {item.geometry.source_region_id for item in by_id.values()
+        if isinstance(item.geometry, CloneGeometry)}
+    footprints = {root.id: region_path(root, by_id) for root in roots}
+    proposals = []
+    for region in sorted(roots, key=lambda item: int(state.region_evidence[item.id]['id'])):
+        if (not region.is_leaf or region.id in referenced or not isinstance(region.geometry,
+                (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)) or footprints[region.id].is_empty):
+            continue
+        identity = int(state.region_evidence[region.id]['id'])
+        d = region.geometry.to_svg_d()
+        if linelet_only and len(_parse_subpaths(d)) > 1:
+            continue
+        target = draft_input_ref(identity)
+
+        def prepared_proposal(action: SimplifyLineletOperation, covers: tuple[int, ...]) -> CanonicalProposal | None:
+            refs = (target, *(draft_input_ref(item) for item in covers))
+            identities = (identity, *covers)
+            intent = operation_intent(action, refs, identities)
+            bound = bind_intent(intent, batch_id=batch.batch_id, input_revision=revision, ordinal=len(proposals))
+            try:
+                selected = application.prepare(bound)
+            except AutomaticChoiceNotApplicable:
+                return None
+            return CanonicalProposal(identities, intent, prepared=selected)
+
+        if state.shape_metadata.get(region.id, {}).get('fill_rule'):
+            covers = covering_later_paths(d, identity=identity, z=region.z,
+                candidates=tuple((int(state.region_evidence[item.id]['id']), item.z, footprints[item.id]) for item in roots))
+            if covers is not None:
+                cover_refs = tuple(draft_input_ref(item) for item in covers)
+                preferred = prepared_proposal(SimplifyLineletOperation(target, cover_refs,
+                    epsilon, max_error, samples, cubic, linelet_only, max_boundary_error, False, False), tuple(covers))
+                if preferred is not None:
+                    proposals.append(preferred)
+                    continue
+        chosen = prepared_proposal(SimplifyLineletOperation(target, (), epsilon, max_error,
+            samples, cubic, linelet_only, max_boundary_error, True, True), ())
+        if chosen is not None:
+            proposals.append(chosen)
+    return tuple(proposals)
 
 
 def discover_primitive_proposals(
@@ -131,7 +247,15 @@ def select_canonical_pass(
         assessment = None
         if reason is None:
             try:
-                selected = application.prepare(intent)
+                if proposal.prepared is None:
+                    selected = application.prepare(intent)
+                else:
+                    selected = proposal.prepared
+                    rebound = bind_intent(selected.intent, batch_id=batch.batch_id,
+                        input_revision=revision, ordinal=ordinal)
+                    if selected.input_revision != revision or selected.scope != scope or rebound != intent:
+                        raise ValueError('prepared proposal binding does not match its selected input and settings')
+                    selected = replace(selected, intent=intent)
             except AutomaticChoiceNotApplicable:
                 reason = 'no_applicable_candidate'
         if reason is None:

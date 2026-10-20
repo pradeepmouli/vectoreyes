@@ -2561,3 +2561,37 @@ v0/v1 SVGs byte-for-byte (21.87s/117.52s; concurrent validation, not benchmarks)
 The frozen wheel is installed only in the isolated test runtime; artifacts are
 under `native-canonical-proposal-selection`. No live deployment, push, server
 restart or corpus overwrite is included.
+
+### Canonical path-cleanup discovery — 2026-10-20
+
+Smoothing, simplification and corner normalization can now discover and select
+choices directly against retained Drawing/ReplayState. Public `update_geometry`
+cleanup stages use that route without projecting a sampling scene. Child-first
+scope traversal is shared with primitive discovery; operation position,
+repetition and action settings remain unchanged.
+
+Simplification retains its existing preferred covered-cutout choice and
+topology-preserving fallback. The fitter runs once during discovery; its detached
+prepared result is then validated against the input revision, scope and rebound
+intent/settings before acceptance. Covered-cutout geometry policy and retained
+corner-evidence policy each have one shared owner across the remaining old and
+new discovery paths. Stale corner evidence is observation-only, never redetected
+from fitted curves. Clone sources remain conservatively protected by canonical
+identity, at the cost of skipping some potential source simplification.
+
+Replacement rasterization now reads canonical geometry and selected dependency
+context directly rather than converting through Shape/RegionSample helpers.
+The default multi-pass detector orchestrator, structural/relationship discovery
+and the broader quality/fill/evaluation tasks remain open.
+
+Verification: 1,378 source tests pass (165.83s) and 1,378 compiled tests pass
+(159.38s), each with 985 warnings. Seventeen new guards cover discovery,
+observation-only stale declarations, cutouts, clone-source protection, prepared
+choice reuse/binding, public cleanup and direct replacement rasterization.
+Focused lint and whitespace checks pass. Exact-settings FastMCP Radish/Vbird
+v0/v1 SVGs are all byte-identical to the retained baseline (18.62s/111.22s;
+concurrent checks, not benchmarks). A separate compiled Radish plan successfully
+normalizes/simplifies r2/r3/r4 to v1.0 with the sampling projection forbidden;
+its 2,524-byte SVG parses successfully. Artifacts are separate under
+`native-canonical-path-discovery`; the wheel is installed only in the isolated
+runtime. No live deployment, server restart, push or corpus overwrite.

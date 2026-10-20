@@ -12,10 +12,7 @@ from ..automatic_replay import (
     draft_input_ref,
     operation_intent,
 )
-from ...corner_diagnostics import (
-    recount_corner_diagnostics,
-    retained_corner_declaration_matches,
-)
+from ...corner_diagnostics import retained_corner_evidence
 from ..framework import Proposal
 from ..region_sample import RegionSample
 
@@ -34,10 +31,9 @@ def corner_normalize_pass(
         if not obj.is_leaf or obj.current is None or obj.current.kind != "path":
             continue
         d = str(obj.current.params.get("d", ""))
-        existing = obj.diagnostics.get("corners")
-        declared = existing if retained_corner_declaration_matches(d, existing) else None
+        authoritative, declared = retained_corner_evidence(d, obj.diagnostics.get("corners"))
         target_ref = draft_input_ref(obj.id)
-        if enabled and declared is not None:
+        if enabled and authoritative:
             replacement, = apply_corner_normalization_choice(
                 NormalizeCornersOperation(target_ref, max_error, declared), bind_path_input(obj))
             intent = operation_intent(
@@ -46,17 +42,8 @@ def corner_normalize_pass(
                 (obj.id,),
             )
         else:
-            diagnostics = declared if declared is not None else recount_corner_diagnostics(
-                d,
-                {
-                    "path": d,
-                    "anchors": [],
-                    "spans": [],
-                    "skipped": [{"reason": "missing_or_stale_provenance"}],
-                },
-            )
-            replacement = obj.with_diagnostics({"corners": diagnostics})
-            intent = CornerDiagnosticsObservation("", target_ref, diagnostics)
+            replacement = obj.with_diagnostics({"corners": declared})
+            intent = CornerDiagnosticsObservation("", target_ref, declared)
         proposals.append(
             Proposal(
                 (obj.id,),

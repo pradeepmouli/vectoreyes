@@ -491,6 +491,7 @@ class PreparedAutomaticSelection:
     input_revision: str
     intent: ProposalIntent
     regions: tuple[AutomaticRegionInput, ...]
+    scope: tuple[int, ...] = ()
 
 
 class AutomaticBatchApplication:
@@ -522,11 +523,12 @@ class AutomaticBatchApplication:
         metadata = {identity: dict(info) for identity, info in self.metadata.items()}
         regions = _select_regions(self.state, intent, self.resolver, observations, metadata)
         return PreparedAutomaticSelection(self.batch.input_revision, intent,
-            _capture_inputs(regions, observations, metadata))
+            _capture_inputs(regions, observations, metadata), self.batch.scope)
 
     def accept(self, record: AutomaticRecord, selected: PreparedAutomaticSelection) -> None:
         from .refinement.framework import accepted_proposal_diagnostics
-        if selected.input_revision != self.batch.input_revision or selected.intent != record.intent:
+        if (selected.input_revision != self.batch.input_revision or selected.intent != record.intent
+                or selected.scope != self.batch.scope):
             raise ValueError('prepared selection binding does not match the committed intent')
         if record.assessment is None or not record.assessment.accepted:
             raise ValueError('committed automatic operation requires an accepted assessment')
@@ -537,7 +539,8 @@ class AutomaticBatchApplication:
         by_numeric = {int(observations[region.id]['id']): region for region in replacements}
         replacement_masks = assign_replacement_masks(tuple(by_numeric), record.proposal_ids,
             original_ids=self.original_ids, pass_masks=self.masks, current_masks=masks,
-            raster_for=lambda identity, shape: _replacement_raster(self.state, by_numeric[identity], metadata, shape))
+            raster_for=lambda identity, shape: _replacement_raster(self.state, by_numeric[identity], shape,
+                replacements=replacements))
         intent = record.intent
         outputs = _index_inputs(selected.regions)
         if isinstance(intent, AutomaticIntent):
@@ -586,7 +589,10 @@ def replay_automatic_batches(state: ReplayState, batches: tuple[ReplayBatch, ...
     return publish_drawing_state(state, normalize_drawing_topology(state.drawing)) if finalize_topology else state
 
 
-def _replacement_raster(state, region, metadata, shape):
+def _replacement_raster(state: ReplayState, region: DrawingRegion, shape: tuple[int, int], *,
+                        replacements: tuple[DrawingRegion, ...] = ()) -> np.ndarray:
+    """Rasterize retained geometry, resolving references against the selected roots."""
     from .refinement.gate import rasterize
-    from .refinement.region_sample import to_polygon
-    return rasterize(to_polygon(_selected_shape(state, region, metadata)), shape)
+    from .geometry_native import region_path
+    indexed = {item.id: item for root in (*state.drawing.regions, *replacements) for item in _walk_regions(root)}
+    return rasterize(region_path(region, indexed), shape)

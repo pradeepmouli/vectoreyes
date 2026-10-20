@@ -11,7 +11,7 @@ import math
 import re
 from dataclasses import replace
 import numpy as np
-from .skia_geometry import SkPath, _ring_area
+from .skia_geometry import SkPath, _ring_area, unary_union
 from .fit import SIMPLE_CURVE_RESIDUAL_TOL, _fmt, fit_path_stages, minimum_line_length
 from .path_geometry import CornerAnchor, PathGeometry, parse_svg_paths
 from .path_sampling import (
@@ -291,6 +291,37 @@ def _path_subpaths(
             continue
         subpaths.append((tokens, points, _ring_area(points)))
     return subpaths
+
+
+def covering_later_paths(
+    d: str, *, identity: int, z: float,
+    candidates: tuple[tuple[int, float, SkPath], ...],
+) -> list[int] | None:
+    """Identify later painted paths that fully cover every dropped subpath."""
+    subpaths = _path_subpaths(d, samples=24)
+    if len(subpaths) <= 1:
+        return []
+    outer_index = max(range(len(subpaths)), key=lambda index: subpaths[index][2])
+    dropped_polygons = [SkPath(shell=list(points)).buffer(0)
+        for index, (_tokens, points, _area) in enumerate(subpaths) if index != outer_index]
+    dropped_polygons = [path for path in dropped_polygons if not path.is_empty]
+    if not dropped_polygons:
+        return []
+    dropped = unary_union(dropped_polygons)
+    cover_ids, cover_geoms = [], []
+    for other_id, other_z, footprint in sorted(candidates, key=lambda item: (float(item[1]), int(item[0]))):
+        if other_id == identity or other_z <= z:
+            continue
+        try:
+            overlap_area = float(footprint.intersection(dropped).area) if isinstance(footprint, SkPath) else 0.
+        except Exception:
+            overlap_area = 0.
+        if overlap_area > 1e-9:
+            cover_ids.append(int(other_id))
+            cover_geoms.append(footprint)
+    if not cover_geoms or dropped.difference(unary_union(cover_geoms)).area > 1e-6:
+        return None
+    return cover_ids
 
 
 def _quadratic_arc_segment(
