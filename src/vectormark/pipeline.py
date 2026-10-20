@@ -597,7 +597,7 @@ def _render_body(
             flat_filled = [(r, FlatFill(r.color_hex)) for r in comp]
             merged = merge_surfaces(flat_filled, rgb)
             comp = [r for r, _ in merged]
-            fills = {r.label: fit_fill(r.mask, rgb, flat_hex=r.color_hex) for r, _ in merged}
+            fills = {r.label: fit_fill(r.mask, rgb, flat_hex=r.color_hex).fill for r, _ in merged}
         else:
             fills = {}
 

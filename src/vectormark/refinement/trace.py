@@ -52,7 +52,7 @@ def trace_regions(arr: np.ndarray, opt: Options) -> tuple[list[RegionSample], di
         comp_regions = [r for r, _ in merged]
         merged_regions.extend(comp_regions)
         fills_by_label.update({
-            r.label: fit_fill(r.mask, arr, flat_hex=r.color_hex)
+            r.label: fit_fill(r.mask, arr, flat_hex=r.color_hex).fill
             for r in comp_regions
         })
 

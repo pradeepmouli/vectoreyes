@@ -20,7 +20,12 @@ def test_region_paint_fits_source_without_changing_geometry():
     assert updated.geometry is original.geometry
     assert updated.fill == FlatFill('#1464f0')
     assert updated.source_region_ids == original.source_region_ids
-    assert updated.diagnostics['fill'] == {'status': 'refit', 'mask': 'visible_source_material_core', 'sampled_pixels': 36}
+    assert updated.diagnostics['fill'] == {
+        'status': 'refit', 'mask': 'visible_source_material_core', 'sampled_pixels': 36,
+        'selection': {'status': 'forced_flat', 'reason': 'gradients_disabled',
+            'sampled_pixels': 36, 'gradient_searched': False, 'max_gradient_delta_e': .05,
+            'mean_delta_e': None, 'median_delta_e': None,
+            'dominant_rgb_fraction': None, 'oklab_spread': None}}
     assert original.fill == FlatFill('#000000')
 
 

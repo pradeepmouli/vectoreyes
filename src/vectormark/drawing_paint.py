@@ -116,13 +116,12 @@ def refill_drawing_from_source(
         union = np.zeros(rgb.shape[:2], bool)
         for leaf in leaves:
             union |= visible[leaf.id]
-        samples, domain = paint_fitting.source_sample_mask(_source_mask(region.id, source_masks), union)
-        fitted = paint_fitting.canonical_fill(paint_fitting.fit_fill(samples, rgb,
-            flat_hex=paint_fitting.sampled_flat_hex(samples, rgb), allow_gradients=allow_gradients))
+        fitted = paint_fitting.fit_source_paint(rgb,
+            source_mask=_source_mask(region.id, source_masks), visible_mask=union,
+            allow_gradients=allow_gradients)
         def assign(node: DrawingRegion) -> DrawingRegion:
             if node.is_leaf:
-                return _with_fill(node, fitted, {'status': 'refit', 'mask': domain,
-                    'sampled_pixels': int(samples.sum()), 'shared_self_symmetry': True})
+                return _with_fill(node, fitted.fill, {**fitted.diagnostics, 'shared_self_symmetry': True})
             return replace(node, children=tuple(assign(child) for child in node.children))
         return assign(region)
 
@@ -169,8 +168,9 @@ def _refit_shared_root_gradients(
         material_mask = mask & np.any(rgb < 240, axis=2)
         if int(material_mask.sum()) < 3:
             return root
-        fill = paint_fitting.canonical_fill(paint_fitting.fit_fill(material_mask, rgb,
-            flat_hex=paint_fitting.sampled_flat_hex(material_mask, rgb)))
+        selected = paint_fitting.fit_fill(material_mask, rgb,
+            flat_hex=paint_fitting.sampled_flat_hex(material_mask, rgb))
+        fill = paint_fitting.canonical_fill(selected.fill)
         if not isinstance(fill, (LinearGradientFill, RadialGradientFill)):
             return root
         def visit(region: DrawingRegion) -> DrawingRegion:
@@ -178,8 +178,10 @@ def _refit_shared_root_gradients(
                 return replace(region, children=tuple(visit(child) for child in region.children))
             if region.id not in eligible and region.id not in cutouts:
                 return region
-            return _with_fill(region, cutouts.get(region.id, fill), {
-                'status': 'visible_cutout' if region.id in cutouts else 'shared_root_gradient', 'root': root.id})
+            diagnostics = {'status': 'visible_cutout' if region.id in cutouts else 'shared_root_gradient', 'root': root.id}
+            if region.id not in cutouts:
+                diagnostics['selection'] = selected.diagnostics()
+            return _with_fill(region, cutouts.get(region.id, fill), diagnostics)
         return visit(root)
     return replace(drawing, regions=tuple(refit_root(root) for root in drawing.regions))
 

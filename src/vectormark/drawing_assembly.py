@@ -252,7 +252,7 @@ def assemble_drawing_roots(
         on_decomposition_stage(
             "apply_fills",
             tuple(surface for surface, _members, _fill in filled_surfaces),
-            tuple(fill for _surface, _members, fill in filled_surfaces),
+            tuple(selected.fill for _surface, _members, selected in filled_surfaces),
         )
 
     assembled: list[
@@ -295,7 +295,7 @@ def assemble_drawing_roots(
                     "filled_area": filled_hole_area,
                     "max_hole_area": trace.options.max_hole_area,
                 }
-            fill = (
+            selected_fill = (
                 fit_fill(
                     cleaned_mask,
                     rgb,
@@ -305,6 +305,9 @@ def assemble_drawing_roots(
                 if filled_hole_area
                 else source_fill
             )
+            fill = selected_fill.fill
+            diagnostics['fill'] = {'status': 'refit', 'mask': 'material_union',
+                'sampled_pixels': selected_fill.sampled_pixels, 'selection': selected_fill.diagnostics()}
             assembled.append(
                 (
                     cleaned_surface,

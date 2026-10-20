@@ -336,3 +336,19 @@ paint evidence, as do the independent output-fill controls.
 `remove_background="off"` disables color cutouts. For cutting-machine export,
 use `max_output_colors=2`, `allow_gradients=false`, and `background_cutouts="subtract"`
 on black-and-white artwork. General artwork need not disable gradients.
+
+### Fill-fit decisions
+
+Retained fill diagnostics include `selection`, separately from geometry quality.
+It records `status`, `reason`, `sampled_pixels`, `gradient_searched`, the configured
+`max_gradient_delta_e`, and available mean/median errors and flat-color evidence.
+An unmeasured or non-finite metric is null, never an invented zero.
+
+- `flat_evidence`: the existing dominant-color or low-spread check selected flat paint.
+- `gradient_accepted`: the fitted gradient met its measured error gate.
+- `forced_flat`: gradients were disabled; this is not evidence that the source is flat.
+- `fallback_flat`: no acceptable gradient was available; inspect the reason before accepting the result.
+- `empty_support`: no pixels supported a fit.
+
+These decisions explain paint selection. They do not certify whole-image
+appearance or designer fidelity, and do not replace separate shape evaluation.

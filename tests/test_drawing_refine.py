@@ -351,7 +351,7 @@ def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cach
         child_mask = rasterize(child.footprint, rgb.shape[:2])
         assert child.fill == fit_fill(
             child_mask, rgb, flat_hex=sampled_flat_hex(child_mask, rgb)
-        )
+        ).fill
         assert child.fill != FlatFill("#FF6600")
     assert all(child.diagnostics["fill"]["status"] == "refit" for child in split[0].leaves())
     assert all(child.diagnostics["fill"]["mask"] == "visible_source_material_core" for child in split[0].leaves())

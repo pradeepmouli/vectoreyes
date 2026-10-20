@@ -357,6 +357,6 @@ def merge_surfaces(
     """Compatibility wrapper: material geometry first, then fit each material fill."""
     materials = merge_material_regions([region for region, _fill in filled], rgb, edge_de=edge_de)
     return [
-        (region, fit_fill(region.mask, rgb, flat_hex=region.color_hex))
+          (region, fit_fill(region.mask, rgb, flat_hex=region.color_hex).fill)
         for region in materials
     ]

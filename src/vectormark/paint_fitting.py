@@ -76,10 +76,12 @@ def fit_source_paint(
     if rgb.ndim != 3 or rgb.shape[2] != 3 or visible_mask.shape != rgb.shape[:2]:
         raise ValueError('visible mask must match the RGB canvas')
     samples, domain = source_sample_mask(source_mask, np.asarray(visible_mask, dtype=bool))
-    fill = canonical_fill(fit_fill(samples, rgb, flat_hex=sampled_flat_hex(samples, rgb), allow_gradients=allow_gradients))
+    selected = fit_fill(samples, rgb, flat_hex=sampled_flat_hex(samples, rgb), allow_gradients=allow_gradients)
+    fill = canonical_fill(selected.fill)
     if fill is None:
         raise ValueError('fill fitter returned unsupported paint')
-    return PaintFitResult(fill, {'status': 'refit', 'mask': domain, 'sampled_pixels': int(samples.sum())})
+    return PaintFitResult(fill, {'status': 'refit', 'mask': domain, 'sampled_pixels': int(samples.sum()),
+        'selection': selected.diagnostics()})
 
 
 def fit_region_paint(

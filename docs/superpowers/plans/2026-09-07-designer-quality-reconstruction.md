@@ -2595,3 +2595,35 @@ normalizes/simplifies r2/r3/r4 to v1.0 with the sampling projection forbidden;
 its 2,524-byte SVG parses successfully. Artifacts are separate under
 `native-canonical-path-discovery`; the wheel is installed only in the isolated
 runtime. No live deployment, server restart, push or corpus overwrite.
+
+### Accountable fill fitting — 2026-10-20
+
+`fit_fill` now returns a typed `FillFitResult`, not an unexplained paint value.
+Its selected fill is separate from the decision: flat-color evidence, accepted
+gradient, forced flat, fallback flat, or empty support. Reasons distinguish the
+existing dominant-color and low-spread heuristics from disabled gradients, absent
+candidates, rejected error budgets and invalid numeric evidence. The report
+retains sample counts, whether a gradient search ran, the configured gate and
+available mean/median errors. Non-finite diagnostics serialize as null; invalid
+gradient budgets do not run a search or approve a candidate.
+
+Canonical root assembly, visible-source refitting and shared self/root-gradient
+assignment retain that selection evidence in fill diagnostics. Existing numeric
+consumers explicitly access the result's `.fill`; no unreleased compatibility
+wrapper is retained. The selected fills and valid-input fitting thresholds are
+unchanged. A recorded fitting decision is not an independent original-raster
+appearance assessment or designer-quality approval: that evaluation work remains
+open, as do the remaining automatic detector migrations.
+
+Verification: 1,391 source tests pass (138.86s) and 1,391 compiled tests pass
+(155.10s), each with 985 warnings. Thirteen new cases cover evidence/forced/
+fallback/empty outcomes, accepted gradient metrics, non-finite errors, invalid
+budgets and canonical/MCP propagation. The 103-case focused fill/paint/engine
+group passes; the final 13 guards also pass separately in both runtimes after
+strengthening the MCP propagation assertion. Existing numeric-fill tests now
+explicitly inspect `.fill`; their geometry/color assertions are unchanged.
+Four changed fill/paint modules are confirmed native extensions. Focused lint
+and whitespace checks pass. Exact-settings FastMCP Radish/Vbird v0/v1 SVGs remain
+byte-identical (17.84s/105.27s; not benchmarks). Artifacts are separate under
+`native-fill-outcomes`; the wheel is installed only in the isolated runtime.
+No push, live deployment, server restart or corpus overwrite.
