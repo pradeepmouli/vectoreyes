@@ -1,6 +1,5 @@
 from pathlib import Path
 import math
-import re
 
 import numpy as np
 from PIL import Image
@@ -12,10 +11,9 @@ from vectormark.refinement.framework import select_refinements
 from vectormark.refinement.gate import rasterize
 from vectormark.refinement.passes.compound import split_compound_pass
 from vectormark.refinement.passes.primitives import primitives_pass
-import vectormark.refinement.passes.occlusion as occlusion_module
+import vectormark.occlusion_detection as occlusion_module
 import vectormark.refinement.passes.primitives as primitives_module
 from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.refinement.passes.symmetry import symmetry_pass
 from vectormark.refinement.trace import _trace_shape_from_contours
 from vectormark.pipeline import Options, _refinement_passes, _refinement_report, _prefer_refinement_svg, _render_refinement_body, idealize
 import vectormark.pipeline as pipeline_module

@@ -638,7 +638,7 @@ def test_occlusion_replays_completed_sources_and_lens_dependency_without_detecti
     assert all(not hasattr(child, "d") for child in action.children)
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.occlusion.reconstruct_scene",
+        "vectormark.occlusion_detection.reconstruct_scene",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("occlusion detection ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)

@@ -549,6 +549,7 @@ def restore_selected_roots(
     from .drawing_fill import serialize_fill
     from .skia_geometry import unary_union
     from .refinement.region_sample import to_polygon
+    from .replay_state import decode_region_coverage
     existing = {root.drawing_id: root for root in regions}
     changed = {root.id: root for root in selected}
     canonical = (drawing_from_region_samples('selected-input', width=1, height=1, regions=regions)
@@ -603,9 +604,7 @@ def restore_selected_roots(
             else None if region.fill is None else working_fill_from_spec(serialize_fill(region.fill)))
         coverage = prior[info['coverage_source']].coverage if info.get('coverage_source') is not None else None
         if info.get('coverage') is not None:
-            coverage = np.frombuffer(info['coverage'], dtype=info['coverage_dtype']).reshape(info['coverage_shape'])
-            if info['coverage_origin'] is not None:
-                coverage = CoverageField(coverage, info['coverage_origin'], info['coverage_canvas'])
+            coverage = decode_region_coverage(info)
         raster = (prior[info['raster_source']].raster if info.get('raster_source') is not None
             else np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape']))
         return RegionSample(int(info['id']), shape, fill,

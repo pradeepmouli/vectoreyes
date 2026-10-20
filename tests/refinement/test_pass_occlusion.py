@@ -6,7 +6,7 @@ from vectormark.fit import Shape
 from vectormark.occlusion import ScenePrimitive
 from vectormark.refinement.framework import select_refinements
 from vectormark.refinement.passes.occlusion import occlusion_pass
-import vectormark.refinement.passes.occlusion as occlusion_module
+import vectormark.occlusion_detection as occlusion_module
 from vectormark.refinement.passes.primitives import primitives_pass
 from vectormark.refinement.trace import trace_regions
 from vectormark.refinement.region_sample import RegionSample

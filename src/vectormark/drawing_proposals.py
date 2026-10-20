@@ -116,6 +116,50 @@ def discover_clone_proposals(
     return tuple(proposals)
 
 
+def discover_occlusion_proposals(
+    state: ReplayState, *, no_symmetry: bool = False, scope: tuple[int, ...] = (),
+) -> tuple[CanonicalProposal, ...]:
+    """Discover completed primitive graphs directly from retained raster evidence."""
+    from .drawing_fill import FlatFill
+    from .occlusion_detection import OcclusionDetectionInput, discover_occlusion_intents
+    from .replay_state import retained_region_raster, decode_region_coverage
+
+    roots = scoped_input_regions(state, scope)
+    inputs = []
+    for region in roots:
+        if not region.is_leaf:
+            continue
+        info = state.region_evidence[region.id]
+        color = region.fill.color if isinstance(region.fill, FlatFill) else info['color_hex']
+        raster = retained_region_raster(state, region.id)
+        if color is not None and raster.size:
+            inputs.append(OcclusionDetectionInput(int(info['id']), raster, color,
+                region.z, decode_region_coverage(info)))
+    if len(inputs) < 2:
+        return ()
+    # Retiring a source requires an explicit clone remapping transaction, not a
+    # local occlusion replacement that would leave the old address unresolved.
+    referenced = {item.geometry.source_region_id for root in state.drawing.regions
+        for item in _walk_regions(root) if isinstance(item.geometry, CloneGeometry)}
+    protected = {int(state.region_evidence[item.id]['id']) for item in roots
+        if item.id in referenced or isinstance(item.geometry, CloneGeometry)}
+    next_id = max((int(state.region_evidence[item.id]['id']) for item in roots), default=-1)+1
+    shape_hw = retained_region_raster(state, roots[0].id).shape
+    return tuple(CanonicalProposal(tuple(int(ref.ancestry[-1]) for ref in intent.action.component), intent)
+        for intent in discover_occlusion_intents(tuple(inputs), shape_hw=shape_hw,
+            next_id=next_id, no_symmetry=no_symmetry)
+        if not protected.intersection(int(ref.ancestry[-1]) for ref in intent.action.component))
+
+
+def detect_occlusion_regions(
+    state: ReplayState, *, target_id: str | None = None, no_symmetry: bool = False,
+) -> CanonicalDetectionResult:
+    """Select occlusion reconstructions in fully addressed child-first scopes."""
+    return _select_region_scopes(state,
+        lambda snapshot, scope: discover_occlusion_proposals(snapshot,
+            no_symmetry=no_symmetry, scope=scope), target_id=target_id)
+
+
 def discover_symmetry_proposals(
     state: ReplayState, *, epsilon: float = 1.5, max_error: float = 1.0,
     cubic: bool = False, scope: tuple[int, ...] = (),

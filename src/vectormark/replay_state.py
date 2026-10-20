@@ -7,6 +7,7 @@ import numpy as np
 
 from .drawing import Drawing, DrawingRegion, _walk_regions
 from .immutable_value import freeze_value
+from .types import CoverageField
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,16 @@ def retained_region_raster(state: ReplayState, identity: str) -> np.ndarray:
     if info.get('raster') is None or info.get('raster_shape') is None:
         raise ValueError(f'region {identity} has no retained raster observation')
     return np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape'])
+
+
+def decode_region_coverage(info: Mapping[str, object]) -> CoverageField | np.ndarray | None:
+    """Decode only retained coverage, preserving tiled image-space coordinates."""
+    if info.get('coverage') is None:
+        return None
+    values = np.frombuffer(info['coverage'], dtype=info['coverage_dtype']).reshape(info['coverage_shape'])
+    if info['coverage_origin'] is not None:
+        return CoverageField(values, info['coverage_origin'], info['coverage_canvas'])
+    return values
 
 
 def publish_drawing_state(

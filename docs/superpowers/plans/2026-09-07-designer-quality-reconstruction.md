@@ -2696,3 +2696,40 @@ artifacts under `native-canonical-symmetry-discovery`.
 Default multi-pass discovery still uses the numerical orchestrator; occlusion,
 seam and cross-scope orchestration migration and the broader quality/evaluation
 work remain open. No live deployment or corpus overwrite.
+
+### Canonical occlusion discovery and shared graph construction — 2026-10-20
+
+Occlusion proposal construction now has one raster-evidence owner,
+`occlusion_detection`. Both the remaining numerical pass and canonical
+discovery use it, retaining the existing adjacency/component traversal,
+symmetry option, reconstruction thresholds, global layering and child-ID
+allocation. Canonical discovery reads retained masks, paint and coverage
+without constructing a RegionSample scene. The selected graph names completed
+primitives, retained source artwork and dependent circle intersections; replay
+executes those choices without rerunning discovery. Annulus cutouts and colored
+cavity artwork retain their exact source dependencies.
+
+Coverage decoding is shared by canonical receipts, the remaining projection
+adapter and occlusion discovery, preserving tile origins and immutable values.
+Numerical discovery receives detached raster/array-coverage inputs. Canonical
+occlusion currently protects symbolic clone instances and live clone sources
+from component retirement until explicit remapping can assess and publish the
+complete relationship transaction. This may defer a useful reconstruction; it
+does not claim that a local replacement safely retires external references.
+
+Twelve new guards cover exact selection/evidence parity, symmetry disabling,
+source immutability, replay without detection, material targeting, singleton
+inputs, tiled/full coverage, scoped IDs, failed-quality rollback, clone-source
+protection and annulus/cavity dependencies. All 1,427 source tests pass
+(199.99s) and 1,427 compiled tests pass (193.77s), each with 1,035 warnings.
+The 131-case integration group passes, and all 12 new guards pass separately
+in the compiled runtime. Six changed core modules are confirmed native
+extensions; focused lint and staged whitespace checks pass. Exact-settings
+FastMCP Radish/Vbird trace and refine SVGs remain byte-identical to the retained
+baseline (27.98s/122.72s; concurrent checks, not benchmarks). The wheel is
+installed only in the isolated runtime, with separate artifacts under
+`native-canonical-occlusion-discovery`.
+
+Default multi-pass orchestration remains on its
+numerical route; seam discovery, cross-scope/default orchestration and broader
+quality/evaluation work remain open. No live deployment or corpus overwrite.

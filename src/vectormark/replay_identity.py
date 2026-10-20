@@ -11,7 +11,7 @@ import numpy as np
 from .candidate import Fill
 from .drawing import DrawingRegion
 from .fit import Shape
-from .replay_state import ReplayState, retained_region_raster
+from .replay_state import ReplayState, retained_region_raster, decode_region_coverage
 from .types import CoverageField
 
 if TYPE_CHECKING:
@@ -71,11 +71,7 @@ def canonical_input_records(state: ReplayState, scope: tuple[int, ...] = ()) -> 
     def visit(region: DrawingRegion) -> RegionInput:
         info = state.region_evidence[region.id]
         original = None if info['original_kind'] is None else Shape(info['original_kind'], dict(info['original_params']))
-        coverage = None
-        if info.get('coverage') is not None:
-            coverage = np.frombuffer(info['coverage'], dtype=info['coverage_dtype']).reshape(info['coverage_shape'])
-            if info['coverage_origin'] is not None:
-                coverage = CoverageField(coverage, info['coverage_origin'], info['coverage_canvas'])
+        coverage = decode_region_coverage(info)
         return RegionInput(int(info['id']),
             None if region.is_branch else current_shape_for_region(region, indexed, paths,
                 state.shape_metadata.get(region.id, {})), original,
