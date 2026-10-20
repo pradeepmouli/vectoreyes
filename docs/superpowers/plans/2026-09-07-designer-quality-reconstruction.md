@@ -388,13 +388,13 @@ The next bounded checkpoint in this slice is:
 
 - [x] Carry resolved purpose, intent origin, and execution behavior through the
   existing action/engine contracts and per-operation diagnostics.
-- [ ] Extend the existing recipe/replay receipt to bind selected resolved
+- [x] Extend the existing recipe/replay receipt to bind selected resolved
   outcomes to evidence, intent/settings, and upstream dependencies. Retain one
   canonical drawing; do not build a parallel candidate scene/store.
 - [x] Keep reproduction separate from deliberate re-proposal. Reproduction
   cannot invoke an exploratory solver; re-proposal cannot mutate its parent.
   Invalidated bindings must fail explicitly rather than silently retarget.
-- [ ] Verify with a controlled proposer that returns different valid candidates
+- [x] Verify with a controlled proposer that returns different valid candidates
   on repeated calls: committed render/reproduction stays identical without
   calling it again, while explicit re-proposal can publish a different child.
   Cover sibling isolation, rejected proposals, changed evidence/settings,
@@ -2491,3 +2491,40 @@ while numerical detection still consumes a floating-point value. The existing
 Full verification passes 1,324 tests in each runtime (983 warnings;
 121.00s source, 123.79s compiled). The verified wheel is installed only in the
 isolated test runtime. No server deployment is included.
+
+### Region-aware shape quality foundation — 2026-10-20
+
+`DrawingEngine.assess_revision` now assesses canonical drawings against both their
+immediate parent and a separately retained reference. Complete region/branch
+correspondence is explicit for merges and splits; absent or duplicate lineage
+cannot hide a missing material. The report includes per-region step/reference
+geometry assessments plus total coverage. Cumulative reference budgets are
+independent and optional, so an inaccurate baseline cannot silently prohibit an
+intentional improvement. Successful geometry is labelled `geometry_passed`, never
+full fidelity approval; paint remains explicitly `not_assessed`. Invalid metrics
+serialize safely, and unresolved/cyclic references fail locally rather than
+recursing indefinitely.
+
+Automatic proposal acceptance now also checks stable material boundaries. A
+shared-edge shift from x=5 to x=8 no longer passes simply because the union is
+unchanged. Seam repair declares a separate per-material boundary policy using
+its existing seam/junction tolerances, while retaining the previous joint
+coverage budget. Closing a long gap intentionally removes internal union edges;
+that union Hausdorff distance must not be confused with movement of either
+material's boundary. Explicit caller limits remain binding.
+
+This is a shape-quality foundation, not completion of Slice 4: original-raster
+appearance, detailed design-constraint/complexity reports and broader evaluation
+integration remain open. Canonical automatic proposal discovery and removal of
+its remaining disposable numerical adapters are also still open. The old Slice 3
+selected-outcome/reproposal checklist above is now reconciled with its existing
+controlled-proposer and selected-fit regression tests; those were already done.
+
+Verification: 1,338 source tests pass (149.13s) and 1,338 compiled tests pass
+(138.92s), each with 983 warnings and no failures. Fourteen focused regression
+cases cover the shape report, material gate and separate seam budgets. One
+existing test spy was updated for the additional region-policy argument without
+changing its assertions. Lint, whitespace and packaged-skill consistency checks
+pass. Compiled in-process FastMCP Radish/Vbird runs preserve all four v0/v1 SVGs
+byte-for-byte (19.01s/94.80s; not controlled benchmarks). Artifacts remain separate
+under `native-region-quality`; no live server deployment or corpus overwrite.

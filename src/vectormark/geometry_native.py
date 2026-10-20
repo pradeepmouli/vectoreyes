@@ -26,16 +26,20 @@ def affine_tuple(transform: AffineTransform) -> tuple[float, float, float, float
     return (transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty)
 
 
-def region_path(leaf: DrawingRegion, by_id: Mapping[str, DrawingRegion]) -> SkPath:
+def region_path(leaf: DrawingRegion, by_id: Mapping[str, DrawingRegion], *,
+                _active: frozenset[str] = frozenset()) -> SkPath:
     """Resolve canonical geometry without building a second mutable scene."""
+    if leaf.id in _active:
+        raise ValueError('cyclic canonical geometry reference')
+    active = _active | {leaf.id}
     geometry = leaf.geometry
     if leaf.is_branch:
-        return unary_union([region_path(child, by_id) for child in leaf.children])
+        return unary_union([region_path(child, by_id, _active=active) for child in leaf.children])
     if isinstance(geometry, CloneGeometry):
         source = by_id.get(geometry.source_region_id)
         if source is None or isinstance(source.geometry, CloneGeometry):
             raise ValueError('clone source must identify a concrete retained region')
-        path = region_path(source, by_id)
+        path = region_path(source, by_id, _active=active)
         return unary_union([path.affine_transform(affine_tuple(transform)) for transform in geometry.transforms])
     if isinstance(geometry, PathGeometryWithSymmetry):
         half = SkPath.from_svg_d(geometry.half.to_svg_d())

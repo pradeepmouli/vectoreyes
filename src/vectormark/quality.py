@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import heapq
 import math
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Literal
 
 import numpy as np
 
-from .skia_geometry import SkPath
+from .skia_geometry import SkPath, unary_union
 
 
 @dataclass(frozen=True)
@@ -37,9 +37,10 @@ class GeometryAssessment:
         "SkPath-linearized polylines; all vertices plus adaptive segment samples; "
         "conservative upper bound within 0.05 px of polyline Hausdorff distance"
     )
+    region_assessments: tuple[tuple[str, GeometryAssessment], ...] = ()
 
     def diagnostics(self) -> dict[str, object]:
-        return {
+        result = {
             "accepted": self.accepted,
             "policy": {
                 "max_relative_area_error": self.policy.max_relative_area_error,
@@ -59,6 +60,9 @@ class GeometryAssessment:
             "reasons": list(self.reasons),
             "boundary_measurement": self.boundary_measurement,
         }
+        if self.region_assessments:
+            result['regions'] = {identity: report.diagnostics() for identity, report in self.region_assessments}
+        return result
 
 
 def _valid_limit(value: float | None) -> bool:
@@ -237,3 +241,25 @@ def assess_geometry(source: SkPath, replacement: SkPath, policy: GeometryPolicy)
         source_components=source_components, replacement_components=replacement_components,
         source_holes=source_holes, replacement_holes=replacement_holes, reasons=tuple(reasons),
     )
+
+
+def assess_geometry_regions(
+    source: Mapping[str, SkPath], replacement: Mapping[str, SkPath], policy: GeometryPolicy,
+    *, region_policy: GeometryPolicy | None = None,
+) -> GeometryAssessment:
+    """Gate retained material boundaries as well as the joint silhouette.
+
+    Stable identities supply one-to-one correspondence. A structural replacement
+    with different identities is assessed as its explicitly consumed joint region;
+    arbitrary correspondence belongs to the canonical revision assessment API.
+    """
+    coverage = assess_geometry(unary_union(list(source.values())), unary_union(list(replacement.values())), policy)
+    if source.keys() != replacement.keys():
+        return coverage
+    regions = tuple((identity, assess_geometry(path, replacement[identity], region_policy or policy))
+        for identity, path in source.items())
+    if len(regions) == 1 and region_policy is None:
+        return replace(coverage, region_assessments=regions)
+    reasons = tuple(dict.fromkeys((*coverage.reasons,
+        *(f'region:{identity}:{reason}' for identity, report in regions for reason in report.reasons))))
+    return replace(coverage, accepted=not reasons, reasons=reasons, region_assessments=regions)

@@ -128,9 +128,9 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
         )], intent=cast(ProposalIntent, None)) for obj in objects if obj.id == 11]
     assessed = []
     real_assess = framework._replacement_preserves_scene
-    def capture(replacements, sources, *, policy):
+    def capture(replacements, sources, *, policy, region_policy=None):
         assessed.append(tuple(sorted(obj.id for obj in replacements)))
-        return real_assess(replacements, sources, policy=policy)
+        return real_assess(replacements, sources, policy=policy, region_policy=region_policy)
     monkeypatch.setattr(framework, "_replacement_preserves_scene", capture)
     published = []
     result = framework.select_refinements(inputs, {obj.id: obj.raster for obj in inputs}, [reconstruct],

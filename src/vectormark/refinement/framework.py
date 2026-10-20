@@ -7,7 +7,7 @@ from typing import Protocol
 import numpy as np
 
 from .gate import BUDGET, rasterize
-from ..skia_geometry import SkPath, unary_union
+from ..skia_geometry import SkPath
 from ..quality import GeometryAssessment, GeometryPolicy, assess_geometry
 from .region_sample import RegionSample
 from .symmetry_materialize import (
@@ -39,6 +39,7 @@ class Proposal:
     new_objects: list[RegionSample]
     geometry_policy: GeometryPolicy | None = None
     intent: ProposalIntent = field(kw_only=True)
+    region_geometry_policy: GeometryPolicy | None = field(default=None, kw_only=True)
 
 # The primitive fitter already admits a candidate with up to 4% geometric
 # residual.  The framework guard must not reject a proposal that its producing
@@ -97,6 +98,7 @@ def _replacement_preserves_scene(
     source_objects: list[RegionSample],
     *,
     policy: GeometryPolicy,
+    region_policy: GeometryPolicy | None = None,
 ) -> GeometryAssessment:
     """Require a replacement to preserve the vector scene it consumes.
 
@@ -105,10 +107,24 @@ def _replacement_preserves_scene(
     keeps every proposal geometrically faithful without ever comparing it to
     the input raster or trying to reconstruct a root trace through new nodes.
     """
+    from ..quality import assess_geometry_regions
     try:
-        source_geometry = unary_union([obj.footprint for obj in source_objects])
-        predicted_geometry = unary_union([replacement.footprint for replacement in replacements])
-        return assess_geometry(source_geometry, predicted_geometry, policy)
+        def boundaries(roots):
+            result = {}
+            def visit(region, path):
+                if region.is_branch:
+                    for child in region.children:
+                        visit(child, (*path, int(child.id)))
+                else:
+                    identity = region.drawing_id or '-'.join(map(str, path))
+                    if identity in result:
+                        raise ValueError('ambiguous material boundary identity')
+                    result[identity] = region.footprint
+            for root in roots:
+                visit(root, (int(root.id),))
+            return result
+        return assess_geometry_regions(boundaries(source_objects), boundaries(replacements), policy,
+            region_policy=region_policy)
     except Exception:
         return assess_geometry(SkPath(), SkPath(), policy)
 
@@ -487,6 +503,8 @@ def select_refinements(
                 assessment_objects,
                 source_objects,
                 policy=_effective_policy(proposal, budget),
+                region_policy=(_effective_policy_value(proposal.region_geometry_policy, budget)
+                    if proposal.region_geometry_policy is not None else None),
             )
             if not assessment.accepted:
                 rejected = set(proposal_ids)

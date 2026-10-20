@@ -561,6 +561,7 @@ def seams_pass(
     post_symmetry: bool = False,
     allow_underlap: bool = True,
 ) -> list[Proposal]:
+    from ...quality import GeometryPolicy
     owners = sorted(objects, key=lambda current: (float(current.z), int(current.id)))
     owner_by_id = {int(owner.id): owner for owner in owners}
     owner_leaf_maps = {
@@ -700,6 +701,10 @@ def seams_pass(
             proposals.append(Proposal(
                 tuple(sorted(owner_ids)),
                 replacements,
+                region_geometry_policy=GeometryPolicy(
+                    max_boundary_error_px=max(_SEAM_TOL, _JUNCTION_TOL),
+                    max_perimeter_residual_error_px=max(_SEAM_TOL, _JUNCTION_TOL),
+                    preserve_topology=False),
                 intent=operation_intent(action, root_refs, tuple(sorted(owner_ids))),
             ))
     return proposals

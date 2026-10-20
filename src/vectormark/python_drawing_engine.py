@@ -6,6 +6,7 @@ does not own a second scene, store, fitter, or action vocabulary.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass, replace
 from typing import Literal, TypedDict
 
@@ -41,6 +42,8 @@ from .python_path_fitter import PythonPathFitter, validate_explicit_fit_source
 from .fit import _detect_path_features
 from .path_fit_evidence import bind_source_path_features, source_node_command_id
 from .refinement_settings import RefinementPasses
+from .quality import GeometryPolicy
+from .revision_quality import QualityReport, RegionMatch, assess_revision
 
 
 @dataclass(frozen=True)
@@ -190,6 +193,15 @@ class PythonDrawingEngine:
             PythonEngineEvidence(geometry, paint, recipe, execution.replay),
             diagnostics=trace_summary(execution.drawing, asdict(trace.options),
                 execution.replay.path_correspondence))
+
+    def assess_revision(
+        self, reference: Drawing, before: Drawing, candidate: Drawing, *,
+        policy: GeometryPolicy, reference_policy: GeometryPolicy | None = None,
+        matches: Sequence[RegionMatch] | None = None,
+    ) -> QualityReport:
+        """Measure canonical revisions without fitting, mutation or paint scoring."""
+        return assess_revision(reference, before, candidate, policy=policy,
+            reference_policy=reference_policy, matches=matches)
 
     def refine_automatically(
         self, drawing: Drawing, evidence: PythonEngineEvidence, *,

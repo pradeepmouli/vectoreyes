@@ -8,7 +8,7 @@ can replace its capabilities without changing drawing, plan, or MCP contracts.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from math import isfinite
 from typing import Generic, Literal, Protocol, TypeVar
@@ -20,6 +20,8 @@ from .immutable_value import freeze_value
 from .path_geometry import PathGeometry
 from .output_settings import DrawingOutputSettings
 from .refinement_settings import RefinementPasses
+from .quality import GeometryPolicy
+from .revision_quality import QualityReport, RegionMatch
 from .path_fit_evidence import FeatureBindingDiagnostic, FitBoundaryCorrespondence, FitPathCorrespondence, FitSpanCorrespondence
 
 
@@ -256,6 +258,13 @@ class DrawingEngine(Protocol[EvidenceT]):
         self, drawing: Drawing, evidence: EvidenceT, plan: DrawingPlan,
     ) -> DrawingActionResult[EvidenceT]:
         """Apply ordered actions against one retained version and its receipts."""
+
+    def assess_revision(
+        self, reference: Drawing, before: Drawing, candidate: Drawing, *,
+        policy: GeometryPolicy, reference_policy: GeometryPolicy | None = None,
+        matches: Sequence[RegionMatch] | None = None,
+    ) -> QualityReport:
+        """Assess region-aware shape fidelity independently from paint."""
 
     def refine_automatically(
         self, drawing: Drawing, evidence: EvidenceT, *,
