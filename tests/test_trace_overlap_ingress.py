@@ -9,7 +9,7 @@ from tests.test_retained_topology_ingress import _region
 from vectormark.refinement_settings import RefinementPasses
 
 
-@pytest.mark.parametrize('entry', ['diagnostic', 'pipeline', 'cached', 'panel'])
+@pytest.mark.parametrize('entry', ['diagnostic', 'pipeline', 'cached'])
 def test_trace_reports_retain_overlapping_subpaths(entry, monkeypatch, tmp_path):
     from vectormark.pipeline import Options, _idealize_refinement
     from vectormark.drawing_refine import auto_refine_with_intent
@@ -34,26 +34,10 @@ def test_trace_reports_retain_overlapping_subpaths(entry, monkeypatch, tmp_path)
     elif entry == 'pipeline':
         svg, report = _idealize_refinement(rgb, options, 48, 24)
         assert '<svg' in svg and report.elements == 1
-    elif entry == 'cached':
+    else:
         from scripts import generate_corpus_html as corpus
         monkeypatch.setattr(corpus, '_load_or_create_trace', lambda *args: ([source], masks))
         svg, report = corpus._idealize_refinement_with_trace_cache(rgb, options=options,
             entry=SimpleNamespace(name='overlap'), cache_dir=tmp_path)
         assert '<svg' in svg and report.elements == 1
-    else:
-        from scripts import generate_refinement_pass_panel as panel
-        image = tmp_path / 'input.png'
-        image.write_bytes(b'controlled preprocessing input')
-        output = tmp_path / 'panel.png'
-        monkeypatch.setattr(panel, '_parse_args', lambda: SimpleNamespace(
-            columns=3, image=image, no_crop=True, max_size=128, epsilon=1.,
-            max_error=1., colors=8, no_symmetry=True, output=output))
-        monkeypatch.setattr(panel, 'preprocess_image',
-            lambda *args, **kwargs: (rgb, SimpleNamespace(width=48, height=24)))
-        monkeypatch.setattr(panel, 'trace_regions',
-            lambda *args, **kwargs: ([source], masks))
-        panel.main()
-        from PIL import Image
-        with Image.open(output) as rendered:
-            assert rendered.width == 960 and rendered.height >= 238
     assert source.current.params['d'] == d

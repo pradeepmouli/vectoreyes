@@ -2894,3 +2894,24 @@ The compiled 256 px panel is byte-identical to its source-runtime counterpart;
 all three changed engine modules load as native extensions. The wheel is
 installed only in the isolated verification runtime. No deployment or corpus
 overwrite.
+
+### Retire the standalone refinement pass panel — 2026-10-20
+
+Removed the standalone pass-panel generator after the high-resolution Radish
+check exposed that it uses the separate quadratic trace baseline and does not
+retain pre-fit corner provenance. Its images therefore do not evaluate the
+production progressive, corner-aware trace. The 1254 px Radish run retained four
+paths and 79 drawable segments through every pass; corner counts were
+unavailable, not genuinely zero. Earlier successful panel runs above establish
+only that the diagnostic route completed, not production fitting quality.
+
+Removed the panel-only overlap regression case; diagnostic, standalone and
+cached-report overlap coverage remains. Existing generated images are retained
+as historical artifacts, not current evaluation evidence. Future pass views
+must render retained DrawingEngine/MCP states with exact settings and feature
+provenance; the production review/evaluation artifacts remain available.
+
+Validation: all 1,466 source tests pass (144.28s, 1,037 existing warnings).
+The 37-case focused group also passes against the compiled engine (2.49s,
+two existing warnings). No engine code changed, so no native rebuild or
+deployment was required for this diagnostic-only retirement.
