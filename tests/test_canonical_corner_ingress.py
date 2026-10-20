@@ -7,7 +7,7 @@ import pytest
 from vectormark.candidate import FlatFill
 from vectormark.drawing_adapter import drawing_from_vector_regions
 from vectormark.fit import Shape
-from vectormark.optimizer.corners import path_corner_diagnostics
+from vectormark.corner_diagnostics import path_corner_diagnostics
 from vectormark.optimizer.vector_region import VectorRegion
 from vectormark.path_geometry import (
     CornerAnchor,

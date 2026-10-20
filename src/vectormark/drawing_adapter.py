@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
+from types import MappingProxyType
 import numpy as np
 
 if TYPE_CHECKING:
@@ -22,7 +23,6 @@ from .candidate import (
     RasterFill as LegacyRasterFill,
 )
 from .drawing import Canvas, Drawing, DrawingRegion
-from .drawing_actions import SymmetryAxisInput
 from .fit import Shape
 from .drawing_fill import compose_affine
 from .path_geometry import (
@@ -40,7 +40,7 @@ from .path_geometry import (
     geometry_from_svg_d,
     parse_svg_paths,
 )
-from .optimizer.corners import rebind_prefit_corner_diagnostics, source_ordered_corner_diagnostics
+from .corner_diagnostics import rebind_prefit_corner_diagnostics
 from . import corner_provenance
 from .paint_fitting import canonical_fill as _fill
 from .optimizer.vector_region import VectorRegion
@@ -58,6 +58,180 @@ class WorkingLeafTarget:
     region: VectorRegion
     source_regions: frozenset[str]
     region_path: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class BoundRegionInputs:
+    """One operation's canonical inputs and separately retained observations."""
+
+    drawing: Drawing
+    working: Mapping[str, VectorRegion]
+    paths: Mapping[str, tuple[int, ...]]
+    shapes: Mapping[str, Shape]
+
+    def publish(self, selected: DrawingRegion, *, symbolic: bool = True,
+                diagnostics: Mapping[str, object] | None = None,
+                footprint: SkPath | None = None,
+                shape_metadata: Mapping[str, object] | None = None) -> VectorRegion:
+        from .geometry_native import affine_tuple
+        from .optimizer.symmetry_materialize import relative_source_path
+
+        target = self.working[selected.id]
+        geometry = selected.geometry
+        if not isinstance(geometry, CloneGeometry):
+            return publish_selected_leaf(selected, target)
+        if len(geometry.transforms) != 1:
+            raise ValueError('automatic relationship publication requires one selected transform')
+        source_id = geometry.source_region_id
+        source = self.working[source_id]
+        matrix = affine_tuple(geometry.transforms[0])
+        if symbolic:
+            params = {**(shape_metadata or {}), 'href_obj_id': source.id, 'transform': matrix}
+            source_path, target_path = self.paths[source_id], self.paths[selected.id]
+            if source_path != (*target_path[:-1], source.id) or 'href_region_path' in params:
+                params['href_region_path'] = relative_source_path(target_path, source_path)
+            shape = Shape('use', params)
+        else:
+            shape = transform_working_shape(self.shapes[source_id], matrix)
+        return target.with_current(shape,
+            footprint=footprint if footprint is not None else source.footprint.affine_transform(matrix),
+            diagnostics=selected.diagnostics if diagnostics is None else diagnostics)
+
+
+@dataclass(frozen=True)
+class BoundPathInput:
+    """Canonical command inputs before filled-component publication."""
+
+    target: VectorRegion
+    paths: tuple[PathGeometry, ...]
+
+    def publish(self, paths: Sequence[PathGeometry], *, preserve_subpaths: bool = True,
+                path_text: str | None = None) -> VectorRegion:
+        from .path_topology import component_paths, replace_component_paths
+        from .optimizer.vector_region import to_polygon
+        from .path_geometry import command_token
+
+        paths = tuple(paths)
+        if preserve_subpaths and tuple(path.path.id for path in paths) != tuple(path.path.id for path in self.paths):
+            raise ValueError('path publication changed bound path membership')
+        if path_text is not None:
+            parsed = parse_svg_paths(path_text, region_id='publication',
+                path_ids=tuple(path.path.id for path in paths))
+            if any(tuple(command_token(command) for command in old.path.commands) !=
+                   tuple(command_token(command) for command in new.path.commands)
+                   for old, new in zip(paths, parsed, strict=True)):
+                raise ValueError('path text differs from selected canonical commands')
+        params = {**self.target.current.params,
+                  'd': path_text if path_text is not None else ' '.join(path.to_svg_d() for path in paths)}
+        if (geometry := params.get('canonical_path_geometry')) is not None:
+            by_id = {path.path.id: path for path in paths}
+            params['canonical_path_geometry'] = replace_component_paths(geometry,
+                tuple(by_id[path.path.id] for path in component_paths(geometry))) if preserve_subpaths else paths[0]
+        elif len(paths) == 1:
+            params['canonical_path_geometry'] = paths[0]
+        if not preserve_subpaths:
+            params.pop('fill_rule', None)
+        params['path_ids'] = tuple(path.path.id for path in paths)
+        shape = Shape('path', params)
+        return self.target.with_current(shape, footprint=to_polygon(shape))
+
+
+def _project_cached_paths(geometry, d: str, *, region_id: str, path_ids=None) -> tuple[PathGeometry, ...]:
+    """Validate numeric correspondence and recover source-ordered retained paths."""
+    from .path_topology import component_paths
+    from .path_geometry import command_token
+
+    source = parse_svg_paths(d, region_id=region_id, path_ids=path_ids)
+    retained = {path.path.id: path for path in component_paths(geometry)}
+    paths = []
+    for path in source:
+        values = tuple(command_token(command) for command in path.path.commands)
+        candidates = [retained[path.path.id]] if path.path.id in retained else list(retained.values())
+        matches = []
+        for candidate in candidates:
+            exact = tuple(command_token(command) for command in candidate.path.commands)
+            rounded, = parse_svg_paths(candidate.to_svg_d(), region_id='projection')
+            display = tuple(command_token(command) for command in rounded.path.commands)
+            if values in (exact, display):
+                matches.append(candidate)
+        if len(matches) != 1:
+            raise ValueError('canonical path replay geometry does not match path data')
+        selected = matches[0]
+        paths.append(selected)
+        del retained[selected.path.id]
+    if retained:
+        raise ValueError('canonical path replay geometry does not match path data')
+    return tuple(paths)
+
+
+def bind_path_input(target: VectorRegion) -> BoundPathInput:
+    """Select exact commands without forcing intermediate paths into regions."""
+    if not target.is_leaf or target.current.kind != 'path':
+        raise ValueError('path input binding requires a retained path leaf')
+    params = target.current.params
+    d, identity = str(params['d']), target.drawing_id or f'r{target.id}'
+    geometry = params.get('canonical_path_geometry')
+    paths = _project_cached_paths(geometry, d, region_id=identity, path_ids=params.get('path_ids')) \
+        if geometry is not None else parse_svg_paths(d, region_id=identity, path_ids=params.get('path_ids'))
+    return BoundPathInput(target, paths)
+
+
+def resolved_input_shape(region: VectorRegion) -> Shape:
+    """Bind retained instance geometry for an operation that consumes its shape."""
+    shape = region.current
+    if shape is None:
+        raise ValueError('operation input requires retained leaf geometry')
+    return resolved_instance_shape(shape, region.footprint)
+
+
+def resolved_instance_shape(shape: Shape, footprint: SkPath) -> Shape:
+    """Use the retained instance outline when a selected operation consumes a clone."""
+    if shape.kind == 'use' or 'canonical_clone_geometry' in shape.params:
+        return Shape('path', {'d': footprint.to_svg_d()})
+    return shape
+
+
+def bind_region_inputs(
+    regions: Mapping[str, VectorRegion], *, paths: Mapping[str, tuple[int, ...]] | None = None,
+) -> BoundRegionInputs:
+    """Bind selected leaves without exposing private IDs as canonical handles.
+
+    Symbolic dependencies inside this selection stay symbolic. Dependencies
+    outside it use their retained resolved footprint, without rasterizing or
+    recognition/refitting.
+    """
+    addresses = {key: tuple(paths[key]) if paths is not None else (region.id,)
+                 for key, region in regions.items()}
+    if len(set(addresses.values())) != len(addresses):
+        raise ValueError('operation inputs refer to the same scoped region')
+    prepared = []
+    shapes = {}
+    for number, (key, region) in enumerate(regions.items(), 1):
+        if not region.is_leaf or region.current is None:
+            raise ValueError('automatic input binding requires retained leaf geometry')
+        shape = resolved_input_shape(region)
+        shapes[key] = shape
+        prepared.append(replace(region, id=number, drawing_id=key, current=shape))
+    drawing = drawing_from_vector_regions('automatic-inputs', width=1, height=1, regions=prepared)
+    from .optimizer.symmetry_materialize import UnboundCloneSourceError
+    native = {addresses[key]: region for key, region in regions.items()}
+    keys = {path: key for key, path in addresses.items()}
+    selected = []
+    for region in drawing.regions:
+        original = regions[region.id].current
+        if original.kind == 'use':
+            try:
+                source_path = resolve_source_path(native, addresses[region.id], original.params,
+                    allow_external=True)
+            except UnboundCloneSourceError:
+                source_path = None  # Valid dependency outside this operation's input selection.
+            if source_path is not None:
+                region = replace(region, geometry=CloneGeometry(keys[source_path],
+                    (AffineTransform(*original.params.get('transform', (1, 0, 0, 1, 0, 0))),)))
+        selected.append(region)
+    drawing = replace(drawing, regions=tuple(selected))
+    return BoundRegionInputs(drawing, MappingProxyType(dict(regions)),
+        MappingProxyType(addresses), MappingProxyType(shapes))
 
 
 def working_leaf_targets(regions: Sequence[VectorRegion]) -> dict[str, WorkingLeafTarget]:
@@ -84,58 +258,6 @@ def working_leaf_targets(regions: Sequence[VectorRegion]) -> dict[str, WorkingLe
             raise ValueError("drawing root is missing a stable drawing_id")
         visit(region, drawing_id, drawing_id, (region.id,))
     return result
-
-
-def replace_working_leaf(
-    regions: Sequence[VectorRegion], target_id: str, transform: Callable[[VectorRegion], VectorRegion]
-) -> tuple[VectorRegion, ...]:
-    """Replace one labeled leaf while retaining the rest of the forest by value."""
-    changed = False
-
-    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> VectorRegion:
-        nonlocal changed
-        if region.is_leaf:
-            label = _public_region_id(region, root_label, legacy_label)
-            if label == target_id:
-                changed = True
-                return transform(region)
-            return region
-        children = tuple(
-            visit(child, root_label, f"{legacy_label}-{child.id}")
-            for child in region.children
-        )
-        return region.with_children(children) if children != region.children else region
-
-    replaced = tuple(visit(region, root_region_address(region), root_region_address(region)) for region in regions)
-    if not changed:
-        raise KeyError(target_id)
-    return replaced
-
-
-def remove_working_leaves(regions: Sequence[VectorRegion], removed_ids: frozenset[str]) -> tuple[VectorRegion, ...]:
-    """Remove selected labeled leaves, pruning only now-empty branch nodes."""
-
-    def visit(region: VectorRegion, root_label: str, legacy_label: str) -> VectorRegion | None:
-        if region.is_leaf:
-            label = _public_region_id(region, root_label, legacy_label)
-            return None if label in removed_ids else region
-        children = tuple(
-            child
-            for child in (
-                visit(child, root_label, f"{legacy_label}-{child.id}")
-                for child in region.children
-            )
-            if child is not None
-        )
-        if not children:
-            return None
-        return region if children == region.children else region.with_children(children)
-
-    return tuple(
-        region
-        for root in regions
-        if (region := visit(root, root_region_address(root), root_region_address(root))) is not None
-    )
 
 
 def replace_working_region(
@@ -170,29 +292,6 @@ def shape_from_region_geometry(region: DrawingRegion, metadata: Mapping[str, obj
     return Shape('path', {**metadata, 'd': geometry.to_svg_d(), 'canonical_path_geometry': geometry})
 
 
-def primitive_geometry_from_shape(shape: Shape) -> PrimitiveGeometry:
-    """Decode a working primitive at the canonical boundary, without fitting."""
-    params = shape.params
-    if shape.kind == "circle":
-        return PrimitiveGeometry(CirclePrimitive((params["cx"], params["cy"]), params["r"]))
-    if shape.kind == "ellipse":
-        return PrimitiveGeometry(EllipsePrimitive(
-            (params["cx"], params["cy"]), params["rx"], params["ry"]
-        ))
-    if shape.kind == "rect":
-        origin = (params["x"], params["y"])
-        if "rx" in params or "ry" in params:
-            return PrimitiveGeometry(RoundedRectanglePrimitive(
-                origin, params["w"], params["h"],
-                params.get("rx", params.get("ry", 0.0)),
-                params.get("ry", params.get("rx", 0.0)),
-            ))
-        return PrimitiveGeometry(RectanglePrimitive(origin, params["w"], params["h"]))
-    if shape.kind == "polygon":
-        return PrimitiveGeometry(PolygonPrimitive(tuple(tuple(point) for point in params["points"])))
-    raise TypeError(f"automatic primitive intent requires a typed primitive, got {shape.kind!r}")
-
-
 def shape_from_primitive_geometry(geometry: PrimitiveGeometry) -> Shape:
     """Project selected numeric primitive values; never invoke recognition."""
     primitive = geometry.primitive
@@ -213,47 +312,69 @@ def shape_from_primitive_geometry(geometry: PrimitiveGeometry) -> Shape:
     raise TypeError(f"unsupported typed primitive: {type(primitive).__name__}")
 
 
-def publish_primitive_geometry(
-    target: VectorRegion, geometry: PrimitiveGeometry, *,
-    diagnostics: Mapping[str, object] | None = None,
-) -> VectorRegion:
-    """Publish already-selected geometry while retaining source and paint evidence."""
+def publish_seam_shape(obj: VectorRegion, shape: Shape, other_id: int, candidate, *, selected: str) -> VectorRegion:
     from .optimizer.vector_region import to_polygon
-    shape = shape_from_primitive_geometry(geometry)
-    return target.with_current(shape, footprint=to_polygon(shape), diagnostics=diagnostics)
+
+    return obj.with_current(shape, footprint=to_polygon(shape), diagnostics={'seams': {
+        'accepted': True, 'paired_with': int(other_id), 'selected': selected,
+        'axis': candidate.axis, 'gap_before': abs(candidate.a_value - candidate.b_value),
+        'seam': candidate.seam}})
 
 
-def publish_clone_assignment(
-    source: VectorRegion, target: VectorRegion, *,
-    matrix: tuple[float, float, float, float, float, float], symbolic: bool,
-    family_size: int | None = None, transformed: SkPath | None = None,
+def replace_private_leaves(root: VectorRegion, replacements: Mapping[int, VectorRegion]) -> VectorRegion:
+    """Publish addressed leaf edits without replacing the retained exterior."""
+    if root.is_leaf:
+        return replacements.get(int(root.id), root)
+    children = tuple(replace_private_leaves(child, replacements) for child in root.children)
+    return replace(root, children=children)
+
+
+def publish_collapsed_region(
+    selected: DrawingRegion, target: VectorRegion, *, footprint: SkPath,
 ) -> VectorRegion:
-    """Publish a retained clone choice; selection and detection stay outside."""
-    if source.current is None:
-        raise ValueError("clone source has no geometry")
-    diagnostics: dict[str, object] = {"accepted": True, "matched_source": int(source.id),
-        "fill_preserved": type(target.fill).__name__, "transform": matrix}
-    if family_size is not None:
-        diagnostics["family_size"] = family_size
-    shape = (Shape("use", {"href_obj_id": source.id, "transform": matrix}) if symbolic
-             else transform_working_shape(source.current, matrix))
-    return target.with_current(shape,
-        footprint=transformed if transformed is not None else source.footprint.affine_transform(matrix),
-        diagnostics={"clones": diagnostics})
+    """Retain observations while publishing a selected single painted union."""
+    if selected.is_branch:
+        identities = {selected.id: target.id}
+        def identify(region, number=0):
+            for index, child in enumerate(region.children, 1):
+                identities[child.id] = index
+                identify(child)
+        identify(selected)
+        result = publish_generated_tree(selected, identities=identities,
+            raster_shape=target.raster.shape, retained_rasters={selected.id: target.raster})
+        return replace(result, raster=target.raster, footprint=footprint,
+            source_label=target.source_label, color_hex=target.color_hex,
+            source_regions=target.source_regions, coverage=target.coverage)
+    leaves = target.leaves()
+    shape = shape_from_region_geometry(selected, {'fill_rule': 'evenodd'})
+    shape = Shape(shape.kind, {**shape.params, 'd': footprint.to_svg_d()})
+    consumed = tuple(dict.fromkeys(leaf.id for leaf in leaves))
+    diagnostics = {**selected.diagnostics, 'materialization': {
+        **selected.diagnostics.get('materialization', {}),
+        'consumed_region_ids': consumed,
+        'retired_region_ids': tuple(identity for identity in consumed if identity != target.id),
+        'source_region_remap': tuple((identity, target.id) for identity in consumed),
+    }}
+    return replace(target, current=shape, children=(), footprint=footprint,
+        fill=leaves[0].fill, original=leaves[0].original, diagnostics=diagnostics,
+        source_regions=tuple(sorted(set(target.source_regions).union(
+            *(leaf.source_regions for leaf in leaves)))))
 
 
-def publish_mirror_pair(
-    source: VectorRegion, target: VectorRegion, *, axis: SymmetryAxisInput,
-    matrix: tuple[float, float, float, float, float, float],
-) -> tuple[VectorRegion, VectorRegion]:
-    """Publish a selected mirror without reinterpreting its axis or paint."""
-    if source.current is None:
-        raise ValueError("mirror source has no geometry")
-    return source, target.with_current(transform_working_shape(source.current, matrix),
-        footprint=source.footprint.affine_transform(matrix), diagnostics={"symmetry": {
-            "accepted": True, "mode": "pair", "matched_source": int(source.id),
-            "axis": axis.model_dump(mode="json"),
-        }})
+def publish_selected_leaf(
+    selected: DrawingRegion, target: VectorRegion, *,
+    shape_metadata: Mapping[str, object] | None = None,
+) -> VectorRegion:
+    """Publish concrete canonical leaf geometry, retaining working paint/evidence.
+
+    This boundary does not fit geometry or assign public IDs. Paint, source
+    observations and private numeric identity belong to the retained target.
+    """
+    from .optimizer.vector_region import to_polygon
+    if not selected.is_leaf or not target.is_leaf:
+        raise ValueError('selected geometry publication requires leaf targets')
+    shape = shape_from_region_geometry(selected, shape_metadata or {})
+    return replace(target, current=shape, footprint=to_polygon(shape), diagnostics=selected.diagnostics)
 
 
 def transform_working_shape(
@@ -284,79 +405,6 @@ def transform_working_shape(
         updated = rebind_corner_annotations(replace_component_paths(canonical, aligned), canonical)
         params.update(canonical_path_geometry=updated, d=updated.to_svg_d())
     return Shape("path", params)
-
-
-def restore_corner_annotations(
-    regions: Sequence[VectorRegion], *, target_region_id: str,
-    annotated: PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry,
-) -> tuple[VectorRegion, ...]:
-    """Carry anchors across exact downstream topology without rewriting SVG values."""
-    from .drawing_corner_actions import rebind_corner_annotations
-    from .optimizer.vector_region import to_polygon
-
-    def restore(target: VectorRegion) -> VectorRegion:
-        if target.current is None or target.current.kind != "path":
-            raise ValueError("corner downstream replay target is not a path")
-        params = dict(target.current.params)
-        parsed = geometry_from_svg_d(str(params.get("d", "")), region_id=target_region_id,
-            fill_rule="evenodd" if params.get("fill_rule") == "evenodd" else "nonzero",
-            path_ids=params.get("path_ids"), defer_overlaps=True)
-        params["canonical_path_geometry"] = rebind_corner_annotations(parsed, annotated)
-        shape = Shape("path", params)
-        return target.with_current(shape, footprint=to_polygon(shape))
-
-    return replace_working_region(regions, target_region_id, restore)
-
-
-def apply_region_geometry(
-    selected: DrawingRegion, regions: Sequence[VectorRegion], *,
-    shape_metadata: Mapping[str, Mapping[str, object]] | None = None,
-    ingress_prefit_corners: bool = False,
-) -> tuple[VectorRegion, ...]:
-    """Apply a canonical selection in the shared clone/topology transaction.
-
-    Fresh numeric fits still need the existing pre-fit provenance translation;
-    retained selections instead carry their exact canonical annotations.
-    """
-    from .optimizer.vector_region import to_polygon
-    from .optimizer.symmetry_materialize import materialize_self_symmetry
-    from .drawing_topology import normalize_retained_topology
-    from .path_topology import component_paths
-    metadata = shape_metadata or {}
-    prepared = normalize_retained_topology(materialize_self_symmetry(regions))
-    if selected.is_leaf:
-        shape = shape_from_region_geometry(selected, metadata.get(selected.id, {}))
-        if ingress_prefit_corners and shape.kind == 'path':
-            paths = component_paths(selected.geometry)
-            params = {key: value for key, value in shape.params.items() if key != 'canonical_path_geometry'}
-            shape = Shape('path', {**params, 'path_ids': tuple(path.path.id for path in paths),
-                                  'fill_rule': 'evenodd'})
-    else:
-        all_paths = tuple(path for leaf in selected.leaves() for path in component_paths(leaf.geometry))
-        paths = {path.path.id: path for path in all_paths}
-        topology = selected.diagnostics.get('topology', {})
-        source_order = tuple(topology.get('source_path_ids', tuple(paths)))
-        retired = set(topology.get('retired_path_ids', ()))
-        if (len(paths) != len(all_paths) or len(set(source_order)) != len(source_order)
-                or not set(paths).issubset(source_order)
-                or not (set(source_order) - set(paths)).issubset(retired)
-                or set(paths) & retired):
-            raise ValueError('selected component path ownership is inconsistent')
-        order = tuple(key for key in source_order if key in paths)
-        shape = Shape('path', {'d': ' '.join(paths[key].to_svg_d() for key in order),
-                               'path_ids': order, 'fill_rule': 'evenodd'})
-    result = normalize_retained_topology(replace_working_region(prepared, selected.id,
-        lambda region: region.with_current(shape, footprint=to_polygon(shape), diagnostics=selected.diagnostics)),
-        component_path_orders={selected.id: source_order} if selected.is_branch else None)
-    if selected.is_branch and not ingress_prefit_corners:
-        for leaf in selected.leaves():
-            shape = shape_from_region_geometry(leaf, metadata.get(leaf.id, {}))
-            result = replace_working_region(result, leaf.id,
-                lambda region, leaf=leaf, shape=shape: region.with_current(
-                    shape, footprint=to_polygon(shape), diagnostics=leaf.diagnostics))
-        result = replace_working_region(result, selected.id,
-            lambda region: region.with_diagnostics(selected.diagnostics))
-    return result
 
 
 def rebind_working_corner_provenance(
@@ -434,12 +482,15 @@ def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequen
                 not isinstance(coverage, CoverageField) or (coverage.origin == old_coverage.origin
                     and coverage.canvas_shape == old_coverage.canvas_shape))))
         result[address] = {
-            'id': region.id, 'raster_shape': region.raster.shape,
+            'id': region.id, 'ancestry': path, 'raster_shape': region.raster.shape,
             'raster': None if borrow_raster else region.raster.tobytes(),
             'raster_source': address if borrow_raster else None,
             'source_label': region.source_label, 'color_hex': region.color_hex,
             'original_kind': None if region.original is None else region.original.kind,
-            'original_params': {} if region.original is None else region.original.params,
+            'original_params': {} if region.original is None else {
+                key: value for key, value in region.original.params.items()
+                if key not in {'canonical_path_geometry', 'canonical_clone_geometry'}
+            },
             'coverage': None if values is None or borrow_coverage else values.tobytes(),
             'coverage_source': address if borrow_coverage else None,
             'coverage_shape': None if values is None else values.shape,
@@ -454,19 +505,56 @@ def working_region_evidence(regions: Sequence[VectorRegion], *, baseline: Sequen
     return result
 
 
+def working_shape_metadata(regions: Sequence[VectorRegion], selected: Sequence[DrawingRegion]) -> dict[str, dict[str, object]]:
+    """Retain kernel annotations, never a second copy of canonical geometry."""
+    indexed = index_region_paths(regions)
+    native = {address: indexed[path] for path, address in vector_region_address_index(regions).items()}
+    metadata = {}
+    for root in selected:
+        for leaf in root.leaves():
+            target = native[leaf.id]
+            assert target.current is not None
+            core = ({"d", "href_obj_id", "href_region_path", "transform", "canonical_path_geometry"}
+                if isinstance(leaf.geometry, CloneGeometry) else shape_from_region_geometry(leaf, {}).params)
+            metadata[leaf.id] = {key: value for key, value in target.current.params.items()
+                if key not in core and key != "canonical_clone_geometry"}
+    return metadata
+
+
+def current_shape_for_region(
+    region: DrawingRegion, by_id: Mapping[str, DrawingRegion],
+    native_paths: Mapping[str, tuple[int, ...]], metadata: Mapping[str, object],
+) -> Shape:
+    """Project selected geometry once for numeric consumers and input receipts."""
+    from .geometry_native import region_path, affine_tuple
+    from .optimizer.symmetry_materialize import relative_source_path
+    geometry = region.geometry
+    if not isinstance(geometry, CloneGeometry):
+        return shape_from_region_geometry(region, metadata)
+    if len(geometry.transforms) == 1:
+        source_path = native_paths[geometry.source_region_id]
+        return Shape('use', {**metadata, 'href_obj_id': source_path[-1],
+            'href_region_path': relative_source_path(native_paths[region.id], source_path),
+            'transform': affine_tuple(geometry.transforms[0])})
+    return Shape('path', {**metadata, 'd': region_path(region, by_id).to_svg_d(),
+        'canonical_clone_geometry': geometry})
+
+
 def restore_selected_roots(
     selected: Sequence[DrawingRegion], root_order: Sequence[str], regions: Sequence[VectorRegion], *,
     shape_metadata: Mapping[str, Mapping[str, object]], region_evidence: Mapping[str, Mapping[str, object]],
 ) -> tuple[VectorRegion, ...]:
     """Project an already selected root delta without topology/fitting decisions."""
-    from .geometry_native import region_path, affine_tuple
-    from .optimizer.symmetry_materialize import relative_source_path
+    from .geometry_native import region_path
     from .drawing_fill import serialize_fill
     from .skia_geometry import unary_union
+    from .optimizer.vector_region import to_polygon
     existing = {root.drawing_id: root for root in regions}
     changed = {root.id: root for root in selected}
-    canonical = drawing_from_vector_regions('selected-input', width=1, height=1, regions=regions)
-    all_roots = tuple(canonical.region(identity) if identity not in changed else changed[identity]
+    canonical = (drawing_from_vector_regions('selected-input', width=1, height=1, regions=regions)
+        if regions else None)
+    previous_metadata = working_shape_metadata(regions, canonical.regions) if canonical is not None else {}
+    all_roots = tuple(changed[identity] if identity in changed else canonical.region(identity)
         for identity in root_order)
     previous = index_region_paths(regions)
     addresses = vector_region_address_index(regions)
@@ -489,25 +577,27 @@ def restore_selected_roots(
     def convert(region: DrawingRegion) -> VectorRegion:
         info = region_evidence[region.id]
         baseline = prior.get(region.id)
+        if (region.is_leaf and baseline is not None
+                and info.get('raster_source') == region.id and info.get('coverage_source') == region.id):
+            original = canonical.region(region.id)
+            if (shape_metadata.get(region.id, {}) == previous_metadata.get(region.id, {})
+                    and region == original and region.diagnostics == original.diagnostics
+                    and (not isinstance(region.geometry, CloneGeometry)
+                         or region_path(region, by_id).to_svg_d() == baseline.footprint.to_svg_d())):
+                return baseline
+            if (not isinstance(region.geometry, CloneGeometry)
+                    and _fill(baseline.fill) == region.fill and baseline.z == region.z
+                    and baseline.source_regions == region.source_region_ids):
+                return publish_selected_leaf(region, baseline,
+                    shape_metadata=shape_metadata.get(region.id, {}))
         if region.is_branch:
             children = tuple(convert(child) for child in region.children)
             shape = None
             footprint = unary_union([child.footprint for child in children])
         else:
             children = ()
-            if isinstance(region.geometry, CloneGeometry):
-                geometry = region.geometry
-                if len(geometry.transforms) == 1:
-                    source_path = native_paths[geometry.source_region_id]
-                    shape = Shape('use', {**shape_metadata.get(region.id, {}), 'href_obj_id': source_path[-1],
-                        'href_region_path': relative_source_path(native_paths[region.id], source_path),
-                        'transform': affine_tuple(geometry.transforms[0])})
-                else:
-                    shape = Shape('path', {**shape_metadata.get(region.id, {}),
-                        'd': region_path(region, by_id).to_svg_d(), 'canonical_clone_geometry': geometry})
-            else:
-                shape = shape_from_region_geometry(region, shape_metadata.get(region.id, {}))
-            footprint = region_path(region, by_id)
+            shape = current_shape_for_region(region, by_id, native_paths, shape_metadata.get(region.id, {}))
+            footprint = to_polygon(shape) if info.get('footprint_codec') == 'svg' else region_path(region, by_id)
         original = None if info['original_kind'] is None else Shape(info['original_kind'], dict(info['original_params']))
         fill = (baseline.fill if baseline is not None and _fill(baseline.fill) == region.fill
             else None if region.fill is None else working_fill_from_spec(serialize_fill(region.fill)))
@@ -532,18 +622,84 @@ def publish_region_update(selected: DrawingRegion, regions: Sequence[VectorRegio
     """Project a canonical region update without repeating its geometry decision."""
     from .drawing_relationships import replace_region
     current = drawing_from_vector_regions('relationship', width=1, height=1, regions=regions)
-    updated = replace_region(current, selected)
-    evidence = working_region_evidence(regions, baseline=regions)
-    def inherit(region: DrawingRegion, parent: DrawingRegion | None = None) -> None:
-        if region.id not in evidence:
-            evidence[region.id] = {**evidence[parent.id], 'id': int(region.id.rsplit('-', 1)[-1])}
-        for child in region.children:
-            inherit(child, region)
-    for root in updated.regions:
-        inherit(root)
-    changed = tuple(after for before, after in zip(current.regions, updated.regions) if before is not after)
+    return _publish_drawing_delta(current, replace_region(current, selected), regions, shape_metadata or {})
+
+
+def publish_drawing_update(updated: Drawing, regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
+    """Publish canonical structural changes with their retained observations."""
+    current = drawing_from_vector_regions(updated.drawing_id, width=updated.canvas.width,
+        height=updated.canvas.height, regions=regions)
+    return _publish_drawing_delta(current, updated, regions, {})
+
+
+def generated_tree_observations(
+    selected: DrawingRegion, *, identities: Mapping[str, int], raster_shape: tuple[int, int],
+    retained_rasters: Mapping[str, np.ndarray] | None = None,
+    parent_ancestry: tuple[int, ...] = (),
+):
+    """Capture generated observations without allocating working regions."""
+    from .optimizer.gate import rasterize
+    from .optimizer.vector_region import to_polygon
+    from .drawing_fill import serialize_fill
+
+    observations, metadata = {}, {}
+    def capture(region: DrawingRegion, parent=()) -> np.ndarray:
+        ancestry = (*parent, identities[region.id])
+        shape = None
+        if region.is_branch:
+            children = [capture(child, ancestry) for child in region.children]
+            raster = np.logical_or.reduce(children) if children else np.zeros(raster_shape, bool)
+        else:
+            shape = shape_from_region_geometry(region, {})
+            raster = rasterize(to_polygon(shape), raster_shape)
+        if region.id in (retained_rasters or {}):
+            raster = np.asarray(retained_rasters[region.id], dtype=bool)
+        paint = None if region.fill is None else serialize_fill(region.fill)
+        observations[region.id] = {'id': identities[region.id], 'raster_shape': raster.shape,
+            'ancestry': ancestry,
+            'raster': raster.tobytes(), 'raster_source': None, 'coverage_source': None,
+            'coverage': None, 'original_kind': None if shape is None else shape.kind,
+            'original_params': {} if shape is None else {key: value for key, value in shape.params.items()
+                if key not in {'canonical_path_geometry', 'canonical_clone_geometry'}}, 'source_label': None,
+            'color_hex': paint['color'] if paint is not None and paint['type'] == 'flat' else None,
+            'coverage_shape': None, 'coverage_dtype': None, 'coverage_origin': None, 'coverage_canvas': None}
+        if shape is not None:
+            core = {'d', 'canonical_path_geometry'} if shape.kind == 'path' else set(shape.params)
+            metadata[region.id] = {key: value for key, value in shape.params.items() if key not in core}
+        return raster
+    capture(selected, parent_ancestry)
+    return observations, metadata
+
+
+def publish_generated_tree(
+    selected: DrawingRegion, *, identities: Mapping[str, int], raster_shape: tuple[int, int],
+    retained_rasters: Mapping[str, np.ndarray] | None = None,
+) -> VectorRegion:
+    """Project generated selections for remaining numerical proposal consumers."""
+    observations, metadata = generated_tree_observations(selected, identities=identities,
+        raster_shape=raster_shape, retained_rasters=retained_rasters)
+    observations = {identity: {**info, 'footprint_codec': 'svg'} for identity, info in observations.items()}
+    return restore_selected_roots((selected,), (selected.id,), (), shape_metadata=metadata,
+                                  region_evidence=observations)[0]
+
+
+def _publish_drawing_delta(
+    current: Drawing, updated: Drawing, regions: Sequence[VectorRegion],
+    shape_metadata: Mapping[str, Mapping[str, object]],
+) -> tuple[VectorRegion, ...]:
+    from .replay_state import ReplayState, publish_drawing_state
+    state = publish_drawing_state(ReplayState(current,
+        working_shape_metadata(regions, current.regions), working_region_evidence(regions)),
+        updated, shape_metadata=shape_metadata)
+    # The disposable boundary may borrow existing buffers to preserve working
+    # identity; canonical state itself retains self-contained observations.
+    borrowed = working_region_evidence(regions, baseline=regions)
+    evidence = {identity: borrowed.get(identity, info)
+        for identity, info in state.region_evidence.items()}
+    original_roots = {root.id: root for root in current.regions}
+    changed = tuple(root for root in updated.regions if original_roots.get(root.id) is not root)
     return restore_selected_roots(changed, tuple(root.id for root in updated.regions), regions,
-        shape_metadata=shape_metadata or {}, region_evidence=evidence)
+        shape_metadata=state.shape_metadata, region_evidence=evidence)
 
 
 def vector_region_address_index(
@@ -641,7 +797,7 @@ def drawing_from_vector_regions(
             and "canonical_path_geometry" not in region.current.params
             and isinstance(geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry))
         ):
-            geometry, diagnostics["corners"] = _ingress_corners(
+            geometry, diagnostics["corners"] = corner_provenance.ingress_prefit_corners(
                 geometry,
                 str(region.current.params["d"]),
                 region_id,
@@ -682,52 +838,19 @@ def _geometry(kind: str, params: Mapping[str, object], region_id: str, public_id
                     "canonical path replay geometry must be PathGeometry or "
                     "PathGeometryWithCutouts or CompoundPathGeometry"
                 )
-            if canonical.to_svg_d() != str(params["d"]):
-                raise ValueError("canonical path replay geometry does not match path data")
+            _project_cached_paths(canonical, str(params['d']), region_id=region_id,
+                                  path_ids=params.get('path_ids'))
             return canonical
         fill_rule = "evenodd" if params.get("fill_rule") == "evenodd" else "nonzero"
         return geometry_from_svg_d(str(params["d"]), region_id=region_id, fill_rule=fill_rule, path_ids=params.get("path_ids"), defer_overlaps=True)
     if kind in {"circle", "ellipse", "rect", "polygon"}:
+        from .primitive_fitting import primitive_geometry_from_shape
         return primitive_geometry_from_shape(Shape(kind, dict(params)))
     if kind == "use":
         source_id = public_ids[int(params["href_obj_id"])]
         values = tuple(float(value) for value in params.get("transform", (1, 0, 0, 1, 0, 0)))
         return CloneGeometry(source_id, (AffineTransform(*values),))
     raise ValueError(f"unsupported Python-engine shape kind: {kind!r}")
-
-
-def _ingress_corners(geometry, d: str, region_id: str, evidence: object, *, path_ids: Sequence[str] | None = None):
-    """Attach only matching, pre-fit-declared corners to canonical subpaths."""
-    if not isinstance(evidence, Mapping) or evidence.get("path") != d:
-        diagnostics = dict(evidence) if isinstance(evidence, Mapping) else {"path": d, "spans": []}
-        prior = diagnostics.get("skipped", ())
-        diagnostics["skipped"] = [
-            *(dict(item) for item in prior if isinstance(item, Mapping)),
-            {"reason": "missing_or_stale_provenance"},
-        ]
-        return geometry, diagnostics
-
-    evidence = source_ordered_corner_diagnostics(d, evidence)
-    rebound = rebind_prefit_corner_diagnostics(d, evidence, tolerance=0.02)
-    prior = evidence.get("skipped", ())
-    rebound["skipped"] = [
-        *(dict(item) for item in prior if isinstance(item, Mapping)),
-        *(dict(item) for item in rebound.get("skipped", ()) if isinstance(item, Mapping)),
-    ]
-    source_paths = parse_svg_paths(d, region_id=region_id, path_ids=path_ids)
-    from .path_topology import component_paths, replace_component_paths
-
-    by_id = {path.path.id: path for path in component_paths(geometry)}
-    paths = [by_id[path.path.id] for path in source_paths]
-    bound_paths, skipped, _feature_ids = corner_provenance.bind_prefit_corner_anchors(
-        dict(enumerate(paths)), rebound["spans"], overlap_policy="retain_first",
-    )
-    rebound["skipped"].extend(dict(item) for item in skipped)
-    converted = [bound_paths[index] for index in range(len(paths))]
-    if isinstance(geometry, PathGeometry):
-        return converted[0], rebound
-    by_id = {path.path.id: path for path in converted}
-    return replace_component_paths(geometry, tuple(by_id[path.path.id] for path in component_paths(geometry))), rebound
 
 
 def working_fill_from_spec(spec: Mapping[str, object]):
@@ -750,48 +873,19 @@ def working_fill_from_spec(spec: Mapping[str, object]):
     return LegacyRasterFill({'x': origin[0], 'y': origin[1], 'w': spec['width'], 'h': spec['height']}, spec['png_base64'])
 
 
-def publish_clone_refresh(
-    clone: VectorRegion, source: VectorRegion, *,
-    clone_path: tuple[int, ...], source_path: tuple[int, ...],
-    previous_source_id: int, previous_source_path: tuple[int, ...],
-    refresh_footprint: bool = True,
-) -> VectorRegion:
-    """Publish an exact scoped clone rebinding without rediscovering its source."""
-    from .optimizer.vector_region import to_polygon
-    from .optimizer.symmetry_materialize import relative_source_path
-
-    if clone.current is None or clone.current.kind != "use" or source.current is None:
-        raise ValueError("dependent clone refresh requires bound clone and source geometry")
-    params = {**clone.current.params, "href_obj_id": int(source.id)}
-    if source_path != (*clone_path[:-1], int(source.id)) or "href_region_path" in params:
-        params["href_region_path"] = relative_source_path(clone_path, source_path)
-    diagnostics: dict[str, object] = {"clone_reference_remap": {
-        "previous_source_region_id": previous_source_id,
-        "source_region_id": int(source.id),
-        "previous_source_region_path": previous_source_path,
-        "source_region_path": source_path,
-        "reason": "self_symmetry_materialization",
-    }}
-    for key, field in (("clone", "source_id"), ("clones", "matched_source")):
-        relation = clone.diagnostics.get(key)
-        if isinstance(relation, Mapping):
-            diagnostics[key] = {**relation, field: int(source.id)}
-    footprint = (to_polygon(transform_working_shape(source.current, tuple(clone.current.params["transform"])))
-                 if refresh_footprint else clone.footprint)
-    return clone.with_current(Shape("use", params), footprint=footprint, diagnostics=diagnostics)
-
-
 def refresh_dependent_clones(
     action: RefreshDependentClonesOperation, resolver: RegionResolver,
 ) -> list[VectorRegion]:
     """Refresh the recorded clones and publish their containing roots atomically."""
+    from .optimizer.automatic_replay import apply_clone_reference_update
     replacements_by_path: dict[tuple[int, ...], VectorRegion] = {}
     for refresh in action.clones:
         clone = resolver.resolve(refresh.clone)
         source = resolver.resolve(refresh.source)
         clone_path = tuple(refresh.clone.ancestry)
-        replacements_by_path[clone_path] = publish_clone_refresh(
-            clone, source, clone_path=clone_path, source_path=tuple(refresh.source.ancestry),
+        bindings = bind_region_inputs({'source': source, 'target': clone},
+            paths={'source': tuple(refresh.source.ancestry), 'target': clone_path})
+        replacements_by_path[clone_path] = apply_clone_reference_update(bindings,
             previous_source_id=refresh.previous_source_id,
             previous_source_path=refresh.previous_source_path,
         )

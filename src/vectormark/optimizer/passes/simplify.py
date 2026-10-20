@@ -5,10 +5,12 @@ import numpy as np
 
 from ...skia_geometry import SkPath, unary_union
 from ...fit import Shape
-from ...drawing_simplification import _path_subpaths, _simplified_path_shape
-from ..automatic_replay import SimplifyLineletOperation, draft_input_ref, operation_intent
+from ...drawing_simplification import _path_subpaths
+from ...drawing_adapter import bind_path_input
+from ..automatic_replay import SimplifyLineletOperation, apply_simplification_choice, draft_input_ref, operation_intent
 from ..framework import Proposal
-from ..vector_region import VectorRegion, _parse_subpaths
+from ..vector_region import VectorRegion
+from ...path_sampling import _parse_subpaths
 
 
 def _simplifiable_polygon(flat: object) -> bool:
@@ -24,7 +26,7 @@ def _covering_later_ids(
     del candidate, masks
     if obj.current is None or obj.current.kind != "path":
         return None
-    subpaths = _path_subpaths(obj.current, samples=24)
+    subpaths = _path_subpaths(str(obj.current.params['d']), samples=24)
     if len(subpaths) <= 1:
         return []
     outer_index = max(range(len(subpaths)), key=lambda index: subpaths[index][2])
@@ -107,24 +109,17 @@ def simplify_pass(
             if len(_parse_subpaths(str(obj.current.params.get("d", "")))) > 1:
                 continue
         if obj.current.kind == "path" and obj.current.params.get("fill_rule"):
-            solid = _simplified_path_shape(
-                obj.current,
-                epsilon=epsilon,
-                max_error=max_error,
-                samples=samples,
-                preserve_subpaths=False,
-                cubic=cubic,
-                original=obj.original,
-                check_geometry=False,
-                linelet_only=linelet_only,
-                max_boundary_error=max_boundary_error,
-            )
-            if solid is not None:
+            target_ref = draft_input_ref(obj.id)
+            selected = apply_simplification_choice(SimplifyLineletOperation(
+                target_ref, (), epsilon, max_error, samples, cubic, linelet_only,
+                max_boundary_error, False, False), bind_path_input(obj), required=False)
+            if selected:
+                solid = selected[0].current
                 cover_ids = _covering_later_ids(obj, solid, objects, masks)
                 if cover_ids is not None:
                     by_id = {int(current.id): current for current in objects}
                     proposal_ids = tuple([int(obj.id), *cover_ids])
-                    new_objects = [obj.with_current(solid), *(by_id[obj_id] for obj_id in cover_ids)]
+                    new_objects = [selected[0], *(by_id[obj_id] for obj_id in cover_ids)]
                     target_ref = draft_input_ref(obj.id)
                     cover_refs = tuple(draft_input_ref(obj_id) for obj_id in cover_ids)
                     action = SimplifyLineletOperation(
@@ -145,17 +140,7 @@ def simplify_pass(
                         intent=operation_intent(action, (target_ref, *cover_refs), proposal_ids),
                     ))
                     continue
-        simplified = _simplified_path_shape(
-            obj.current,
-            epsilon=epsilon,
-            max_error=max_error,
-            samples=samples,
-            cubic=cubic,
-            original=obj.original,
-            linelet_only=linelet_only,
-            max_boundary_error=max_boundary_error,
-        )
-        if simplified is None:
+        if obj.current.kind != 'path':
             continue
         target_ref = draft_input_ref(obj.id)
         action = SimplifyLineletOperation(
@@ -170,9 +155,12 @@ def simplify_pass(
             True,
             True,
         )
+        selected = apply_simplification_choice(action, bind_path_input(obj), required=False)
+        if not selected:
+            continue
         proposals.append(Proposal(
             (obj.id,),
-            [obj.with_current(simplified)],
+            selected,
             intent=operation_intent(action, (target_ref,), (obj.id,)),
         ))
 

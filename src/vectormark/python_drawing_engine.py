@@ -6,7 +6,7 @@ does not own a second scene, store, fitter, or action vocabulary.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from typing import Literal, TypedDict
 
 import numpy as np
@@ -22,16 +22,17 @@ from .drawing_engine import (
     DrawingActionRequest, DrawingActionResult, FitPathRequest, FitPathResult,
     PathActionRequest, PathActionResult, RasterImage, TraceDrawingRequest, TraceDrawingResult,
 )
+from .optimizer.assembly_binding import working_regions_from_evidence
 from .drawing_recipe import (
     EffectiveDrawingRecipe, GeometryEvidence, PaintEvidence, ReplayRecord, ResolvedCornerEdit,
     ResolveOriginalPaintOperation, build_geometry_evidence, build_paint_evidence,
-    validate_replay_record,
-)
-from .drawing_refine import auto_refine_with_intent, drawing_summary, stitch_regions_with_intent
-from .drawing_assembly import root_regions
+    validate_replay_record, )
+from .drawing_refine import auto_refine_with_intent, stitch_regions_with_intent
+from .drawing_render import trace_summary
+from .drawing_assembly import assemble_drawing_roots
+from .optimizer.replay_binding import replay_working_regions
 from .drawing_replay import (
-    extend_recipe_with_plan, propose_effective_recipe, raster_pixels,
-)
+    extend_recipe_with_plan, propose_effective_recipe, raster_pixels, )
 from .drawing_trace import PythonTraceEngine, TraceOptions, TraceResult
 from .material_pretrace import preprocess_material_trace
 from .output_settings import DrawingOutputSettings
@@ -163,7 +164,7 @@ class PythonDrawingEngine:
         """Fit traced regions and stitch using the existing operation implementations."""
         output_settings = output_settings or DrawingOutputSettings()
         rgb = raster_pixels(source)
-        rooted = root_regions(trace, rgb, min_region_fraction=min_region_fraction,
+        rooted = assemble_drawing_roots(trace, rgb, min_region_fraction=min_region_fraction,
             preserve_material_labels=True if kind == "geometry-guide" else None,
             allow_gradients=output_settings.allow_gradients if kind == "source" else False)
         trace = rooted.trace
@@ -175,10 +176,11 @@ class PythonDrawingEngine:
             raise ValueError("geometry-guide tracing requires retained source paint")
         paint = paint or build_paint_evidence(source, background=background, output_settings=output_settings)
         geometry = build_geometry_evidence(kind=kind, trace=trace,
-            geometry_source=source, trace_roots=rooted.regions)
+            geometry_source=source, drawing=rooted.drawing,
+            shape_metadata=rooted.shape_metadata, region_evidence=rooted.region_evidence)
         settings = ActionSettings(epsilon=trace.options.simplify_tolerance,
             max_error=trace.options.curve_tolerance, fit_strategy=trace.options.fit_strategy)
-        stitched = stitch_regions_with_intent(trace, geometry.trace_roots, enabled=initial_stitch)
+        stitched = stitch_regions_with_intent(trace, working_regions_from_evidence(geometry), enabled=initial_stitch)
         recipe = EffectiveDrawingRecipe(geometry.revision, geometry.engine_revision, settings,
             steps=(*stitched.batches, ResolveOriginalPaintOperation(scope="retain" if kind == "source" else "all",
                 share_root_gradients=trace.material_pretrace is None)))
@@ -186,7 +188,8 @@ class PythonDrawingEngine:
             evidence=geometry, paint=paint, recipe=recipe)
         return TraceDrawingResult(execution.drawing,
             PythonEngineEvidence(geometry, paint, recipe, execution.replay),
-            diagnostics=drawing_summary(trace, stitched.regions))
+            diagnostics=trace_summary(execution.drawing, asdict(trace.options),
+                execution.replay.path_correspondence))
 
     def refine_automatically(
         self, drawing: Drawing, evidence: PythonEngineEvidence, *,
@@ -195,10 +198,12 @@ class PythonDrawingEngine:
         """Orchestrate existing optimizer passes and retain their accepted operations."""
         validate_replay_record(drawing=drawing, evidence=evidence.geometry,
             paint=evidence.paint, recipe=evidence.recipe, replay=evidence.replay)
-        baseline = propose_effective_recipe(drawing_id=drawing.drawing_id,
-            evidence=evidence.geometry, paint=evidence.paint, recipe=evidence.recipe)
+        # Appended steps replay before the final output-palette projection.
+        # Capture their inputs at that same boundary, not from the published fill.
+        baseline = replay_working_regions(evidence.geometry, evidence.paint, evidence.recipe,
+            finalize_output=False)
         trace = evidence.geometry.trace
-        automatic = auto_refine_with_intent(trace, baseline.regions,
+        automatic = auto_refine_with_intent(trace, baseline,
             rgb=raster_pixels(evidence.paint.source) if evidence.geometry.kind == "source" else None,
             allow_gradients=evidence.paint.output_settings.allow_gradients,
             corner_normalize=corner_normalize, refinement_passes=refinement_passes)

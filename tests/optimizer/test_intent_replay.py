@@ -29,6 +29,7 @@ from vectormark.optimizer.automatic_replay import (
 from vectormark.optimizer.passes.primitives import primitives_pass
 from vectormark.optimizer.trace import trace_regions
 from vectormark.pipeline import Options
+from vectormark.path_geometry import CirclePrimitive, PrimitiveGeometry
 
 
 def _assert_semantic_regions_equal(actual, expected):
@@ -67,7 +68,8 @@ def test_actual_optimizer_records_and_replays_accepted_primitive_without_detecti
     def fail_detector(*_args, **_kwargs):
         raise AssertionError("semantic primitive detection ran during replay")
 
-    monkeypatch.setattr("vectormark.optimizer.passes.primitives.recognize_primitive", fail_detector)
+    monkeypatch.setattr("vectormark.optimizer.passes.primitives.recognize_primitive_geometry", fail_detector)
+    monkeypatch.setattr("vectormark.primitive_fitting.recognize_primitive", fail_detector)
     replayed = replay_batches(objects, result.batches, masks=masks)
 
     assert replayed[0].current == result.objects[0].current
@@ -227,10 +229,13 @@ def test_accepted_operation_preserves_external_masks_for_the_next_batch(monkeypa
 
 def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
     from vectormark.candidate import FlatFill
+    from vectormark.drawing import DrawingRegion
     from vectormark.fit import Shape
     from vectormark.optimizer.framework import Proposal
     from vectormark.optimizer.gate import rasterize
-    from vectormark.drawing_adapter import publish_clone_assignment
+    from vectormark.drawing_adapter import publish_selected_leaf
+    from vectormark.drawing_adapter import bind_region_inputs
+    from vectormark.optimizer.automatic_replay import apply_relationship_choice
     from vectormark.drawing_adapter import transform_working_shape
     from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 
@@ -252,7 +257,7 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
     target = VectorRegion(
         2, target_shape, FlatFill("#abcdef"), 1, footprint=to_polygon(target_shape)
     )
-    primitive = Shape("circle", {"cx": 10.0, "cy": 10.0, "r": 10.0})
+    primitive = PrimitiveGeometry(CirclePrimitive((10.0, 10.0), 10.0))
 
     def snapshot_reader(objects, _masks):
         by_id = {obj.id: obj for obj in objects}
@@ -262,12 +267,13 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
         return [
             Proposal(
                 (1,),
-                [source.with_current(primitive, footprint=to_polygon(primitive))],
+                [publish_selected_leaf(DrawingRegion(id='source', geometry=primitive), source)],
                 intent=primitive_intent(1, primitive, epsilon=1.0),
             ),
             Proposal(
                 (2,),
-                [publish_clone_assignment(by_id[1], by_id[2], matrix=matrix, symbolic=True)],
+                apply_relationship_choice(clone_action,
+                    bind_region_inputs({'source': by_id[1], 'target': by_id[2]})),
                 intent=operation_intent(clone_action, (source_ref, target_ref), (2,)),
             ),
         ]
@@ -428,7 +434,7 @@ def test_linelet_simplify_and_smooth_replay_their_recorded_settings(monkeypatch)
 def captured_corner_normalization():
     from vectormark.candidate import FlatFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     from vectormark.optimizer.passes.corners import corner_normalize_pass
     from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 
@@ -468,7 +474,7 @@ def test_enabled_corner_normalization_replays_recorded_prefit_declaration(
     assert corner_action.declaration is not None
     assert result.objects[0].current.params["d"] != d
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
     replayed = replay_batches([source], result.batches, masks={source.id: mask})
@@ -496,7 +502,7 @@ def test_corner_operation_rejects_missing_or_stale_declaration_before_detection(
     )
     stale_batches = (replace(batch, entries=(stale_record,)), *result.batches[1:])
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
 
@@ -562,7 +568,7 @@ def test_enabled_corner_without_retained_declaration_is_observation_only(
     ]
 
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
     replayed = replay_batches([source], result.batches, masks=masks)
@@ -572,7 +578,7 @@ def test_enabled_corner_without_retained_declaration_is_observation_only(
 def test_authoritative_empty_corner_declaration_replays_without_redetection(monkeypatch):
     from vectormark.candidate import FlatFill
     from vectormark.fit import Shape
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     from vectormark.optimizer.passes.corners import corner_normalize_pass
     from vectormark.optimizer.vector_region import VectorRegion, to_polygon
 
@@ -598,7 +604,7 @@ def test_authoritative_empty_corner_declaration_replays_without_redetection(monk
     assert action.declaration is not None
 
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
     replayed = replay_batches([source], result.batches, masks=masks)

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from vectormark.fit import Shape, recognize_primitive
-from vectormark.optimizer.passes.primitives import _polygon_exterior_points
+from vectormark.primitive_fitting import _polygon_exterior_points
 from vectormark.optimizer.vector_region import to_polygon
 
 

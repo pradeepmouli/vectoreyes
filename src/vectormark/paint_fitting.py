@@ -11,6 +11,8 @@ from .drawing import DrawingRegion
 from .drawing_fill import Fill, FlatFill, GradientStop, LinearGradientFill, RadialGradientFill, RasterFill
 from .fill_fit import fit_fill
 from .immutable_value import freeze_value
+from .output_settings import DrawingOutputSettings
+from .color import quantize
 
 
 @dataclass(frozen=True)
@@ -89,3 +91,38 @@ def fit_region_paint(
         raise ValueError('paint fitting requires a drawing-region leaf')
     result = fit_source_paint(rgb, source_mask=source_mask, visible_mask=visible_mask, allow_gradients=allow_gradients)
     return replace(region, fill=result.fill, diagnostics={**region.diagnostics, 'fill': result.diagnostics})
+
+
+def constrain_output_paint(
+    fill: Fill | None, *, rgb: np.ndarray, sample_mask: np.ndarray,
+    settings: DrawingOutputSettings, palette: np.ndarray | None = None,
+) -> Fill | None:
+    """Apply selected output limits to paint alone, never to geometry."""
+    if settings.allow_gradients and palette is None:
+        return fill
+
+    def flat_source_color() -> str:
+        if sample_mask.shape != rgb.shape[:2]:
+            raise ValueError('paint sample mask must match the RGB canvas')
+        core = ndimage.binary_erosion(sample_mask, iterations=2)
+        return sampled_flat_hex(core if core.any() else sample_mask, rgb)
+
+    def color(value: str) -> str:
+        if palette is None:
+            return value
+        sample = np.asarray([[[int(value[i:i + 2], 16) for i in (1, 3, 5)]]], dtype=np.uint8)
+        red, green, blue = quantize(sample, palette)[0, 0]
+        return f'#{red:02X}{green:02X}{blue:02X}'
+
+    if not settings.allow_gradients and not isinstance(fill, FlatFill):
+        fill = FlatFill(flat_source_color())
+    if isinstance(fill, FlatFill):
+        return FlatFill(color(fill.color))
+    if isinstance(fill, (LinearGradientFill, RadialGradientFill)):
+        stops = tuple(GradientStop(stop.offset, color(stop.color)) for stop in fill.stops)
+        if len({stop.color for stop in stops}) == 1:
+            return FlatFill(stops[0].color)
+        return replace(fill, stops=stops)
+    if isinstance(fill, RasterFill) and palette is not None:
+        return FlatFill(color(flat_source_color()))
+    return fill

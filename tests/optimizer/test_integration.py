@@ -237,7 +237,7 @@ def test_optimizer_threads_epsilon_into_primitives_pass(monkeypatch):
         seen.append(epsilon)
         return None
 
-    monkeypatch.setattr(primitives_module, "recognize_primitive", _recording_recognize)
+    monkeypatch.setattr(primitives_module, "recognize_primitive_geometry", _recording_recognize)
     obj = VectorRegion(
         1,
         Shape("path", {"d": "M0 0 L20 0 L20 20 L0 20 Z"}),
@@ -317,13 +317,14 @@ def test_optimizer_pipeline_reconstructs_mastercard_as_scene_branch():
     assert svg.count("<use") == 2
     assert svg.count("<path") == 1
     assert svg.count('href="#s0-0-geometry"') == 2
-    assert 'fill="#F79E1B"' in svg
-    assert 'fill="#EB001B"' in svg
-    assert 'fill="#FF5F00"' in svg
+    assert 'fill="#f79e1b"' in svg.lower()
+    assert 'fill="#eb001b"' in svg.lower()
+    assert 'fill="#ff5f00"' in svg.lower()
     diagnostics = report.diagnostics.to_dict()
     assert diagnostics["optimizer_fallback"] is None
     assert diagnostics["optimizer_regions"][0]["kind"] == "branch"
     assert diagnostics["optimizer_regions"][0]["children"] == 3
+    assert diagnostics["optimizer_objects"][0]["diagnostics"]["occlusion"]["reconstructed_child"] is True
     assert [obj["shape"] for obj in diagnostics["optimizer_objects"]] == ["circle", "use", "path"]
     assert diagnostics["optimizer_objects"][2]["diagnostics"]["symmetry"]["materialized"] is True
 

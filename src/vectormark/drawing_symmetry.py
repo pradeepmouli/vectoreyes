@@ -8,13 +8,16 @@ Working-region evidence remains a transitional adapter, not a second scene.
 from __future__ import annotations
 import math
 from collections import namedtuple
+from dataclasses import replace
+from collections.abc import Mapping, Sequence
 import numpy as np
+from .drawing import DrawingRegion
 from .drawing_actions import SymmetryAxisInput
 from .fit import Shape, _fmt, fit_path
 from .refine import fit_path_half_fit, half_ellipse_cap_half_fit, symmetric_half_fit
-from .skia_geometry import SkPath
-from .optimizer.symmetry_materialize import remap_symmetry_clones, union_self_symmetry
-from .optimizer.vector_region import VectorRegion, _parse_subpaths, to_polygon
+from .skia_geometry import SkPath, unary_union
+from .path_geometry import parse_svg_paths
+from .path_sampling import _parse_subpaths
 
 Axis2D = namedtuple("Axis2D", "theta cx cy")
 _SELF_AXIS_OVERLAP = 0.75
@@ -26,23 +29,6 @@ def _polygonal_flat(flat: object) -> SkPath | None:
     if isinstance(flat, SkPath) and not flat.is_empty:
         return flat
     return None
-
-
-def _is_geometry_root_leaf(obj: VectorRegion) -> bool:
-    """Whether a single material leaf is itself the trace-owned geometry root."""
-    return (
-        obj.is_leaf
-        and obj.drawing_id is not None
-        and isinstance(obj.diagnostics.get("geometry_seed"), dict)
-    )
-
-
-def _geometry_root_footprint(obj: VectorRegion, fallback: SkPath) -> SkPath:
-    """Prefer a root's immutable trace seed over intermediate leaf rewrites."""
-    if not _is_geometry_root_leaf(obj) or obj.original is None:
-        return fallback
-    seeded = to_polygon(obj.original)
-    return seeded if not seeded.is_empty else fallback
 
 
 def _svg_reflection_matrix(
@@ -252,28 +238,54 @@ def _geometry_to_path_shape(
     return Shape("path", params)
 
 
-def _materialized_self_symmetry_region(
-    obj: VectorRegion,
+def materialize_symmetric_half(
+    region: DrawingRegion,
     *,
     axis: Axis2D,
     half: SkPath,
     reflected_half: SkPath,
     half_shape: Shape,
     residual: float,
-) -> VectorRegion:
+) -> DrawingRegion:
     matrix = _svg_reflection_matrix(axis)
     half_shape = _pin_half_shape_to_axis(half_shape, axis) or half_shape
-    fitted_half = to_polygon(half_shape)
+    fitted_half = SkPath.from_svg_d(half_shape.params['d'])
     if fitted_half.is_empty:
         fitted_half = half
     fitted_reflected_half = fitted_half.affine_transform(matrix)
     if fitted_reflected_half.is_empty:
         fitted_reflected_half = reflected_half
-    return union_self_symmetry(
-        obj,
+    return union_symmetric_regions(
+        region,
         (fitted_half, fitted_reflected_half),
         diagnostics=_self_symmetry_diagnostics(axis, residual)["symmetry"],
     )
+
+
+def union_symmetric_regions(
+    region: DrawingRegion, pieces: Sequence[SkPath], *, diagnostics: Mapping[str, object],
+) -> DrawingRegion:
+    """Publish the selected vector union as canonical filled components."""
+    from .drawing_topology import publish_region_paths
+
+    footprint = unary_union(pieces)
+    if footprint.is_empty:
+        raise ValueError('self-symmetry materialization produced empty geometry')
+    leaves = region.leaves()
+    if any(leaf.fill != leaves[0].fill for leaf in leaves):
+        raise ValueError('self-symmetry materialization requires one shared fill')
+    consumed = tuple(leaf.id for leaf in leaves)
+    merged = {**region.diagnostics,
+        'symmetry': {**diagnostics, 'materialized': True},
+        'materialization': {'operation': 'self_symmetry_union',
+            'consumed_target_ids': consumed,
+            'retired_target_ids': tuple(identity for identity in consumed if identity != region.id),
+            'source_target_remap': tuple((identity, region.id) for identity in consumed)}}
+    paths = parse_svg_paths(footprint.to_svg_d(), region_id=region.id)
+    selected = replace(region, geometry=paths[0], children=(), fill=leaves[0].fill,
+        source_region_ids=tuple(sorted(set(region.source_region_ids).union(
+            *(leaf.source_region_ids for leaf in leaves)))), diagnostics=merged)
+    return publish_region_paths(selected, paths, fill_rule='evenodd')
 
 
 def _axis_diagnostics(axis: Axis2D) -> dict[str, object]:
@@ -415,14 +427,12 @@ def _symmetric_refine_half_shapes(
 
 
 def apply_intrinsic_symmetry(
-    target: VectorRegion, axis: Axis2D, residual: float
-) -> VectorRegion:
-    if target.current is None:
+    target: DrawingRegion, axis: Axis2D, residual: float
+) -> DrawingRegion:
+    if target.geometry is None:
         raise ValueError("intrinsic symmetry target has no geometry")
-    return target.with_current(
-        target.current,
-        diagnostics=_intrinsic_symmetry_diagnostics(axis, residual),
-    )
+    return replace(target, diagnostics={**target.diagnostics,
+        **_intrinsic_symmetry_diagnostics(axis, residual)})
 
 
 def _selected_half_shape(
@@ -476,10 +486,9 @@ def _selected_half_shape(
     return pinned
 
 
-def apply_self_symmetry_choice(
-    snapshot: list[VectorRegion],
-    target: VectorRegion,
-    dependent_clones: tuple[VectorRegion, ...],
+def reconstruct_self_symmetry(
+    target: DrawingRegion,
+    reconstruction_flat: SkPath,
     *,
     axis: Axis2D,
     residual: float,
@@ -489,11 +498,9 @@ def apply_self_symmetry_choice(
     epsilon: float,
     max_error: float,
     cubic: bool,
-) -> list[VectorRegion]:
-    flat = _polygonal_flat(target.footprint)
-    if flat is None:
+) -> DrawingRegion:
+    if _polygonal_flat(reconstruction_flat) is None:
         raise ValueError("recorded self-symmetry target has no polygonal footprint")
-    reconstruction_flat = _geometry_root_footprint(target, flat)
     half = _canonical_half(reconstruction_flat, axis)
     if half is None:
         raise ValueError("recorded self-symmetry axis does not split its bound input")
@@ -509,7 +516,7 @@ def apply_self_symmetry_choice(
         max_error=max_error,
         cubic=cubic,
     )
-    replacement = _materialized_self_symmetry_region(
+    return materialize_symmetric_half(
         target,
         axis=axis,
         half=half,
@@ -517,14 +524,3 @@ def apply_self_symmetry_choice(
         half_shape=shape,
         residual=residual,
     )
-    if not dependent_clones:
-        return [replacement]
-    remaining = [obj for obj in snapshot if int(obj.id) != int(target.id)]
-    candidate = [replacement, *remaining]
-    remapped = remap_symmetry_clones(
-        candidate,
-        {(int(target.id),): (int(target.id),)},
-        before=snapshot,
-    )
-    dependent_ids = {int(obj.id) for obj in dependent_clones}
-    return [replacement, *(obj for obj in remapped[1:] if int(obj.id) in dependent_ids)]

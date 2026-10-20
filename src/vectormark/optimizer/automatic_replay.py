@@ -10,7 +10,7 @@ from typing import Literal, TYPE_CHECKING
 import numpy as np
 
 from ..fit import Shape
-from ..drawing_actions import ActionSettings, OperationOrigin, SymmetryAxisInput
+from ..drawing_actions import ActionSettings, OperationOrigin
 from ..immutable_value import freeze_value
 from ..path_geometry import PrimitiveGeometry
 from ..quality import GeometryAssessment
@@ -19,6 +19,8 @@ from .vector_region import VectorRegion
 from .symmetry_materialize import index_region_paths
 
 if TYPE_CHECKING:
+    from ..drawing_adapter import BoundPathInput, BoundRegionInputs
+    from ..drawing import DrawingRegion
     from .framework import Pass
 
 
@@ -466,12 +468,11 @@ def draft_input_ref(obj_id: int) -> PassInputRegionRef:
     return PassInputRegionRef("", "", (int(obj_id),))
 
 
-def primitive_intent(obj_id: int, primitive: Shape, *, epsilon: float) -> AutomaticIntent:
-    from ..drawing_adapter import primitive_geometry_from_shape
+def primitive_intent(obj_id: int, primitive: PrimitiveGeometry, *, epsilon: float) -> AutomaticIntent:
     target = draft_input_ref(obj_id)
     return AutomaticIntent(
         operation_id="",
-        action=FitPrimitiveOperation(target, primitive_geometry_from_shape(primitive), float(epsilon)),
+        action=FitPrimitiveOperation(target, primitive, float(epsilon)),
         inputs=(target,),
         outputs=(NamedRegionOutput("target", (int(obj_id),)),),
     )
@@ -663,7 +664,8 @@ def _semantic_diagnostics(value: Mapping[object, object]) -> dict[object, object
         "reason",
     }
     return {
-        key: item
+        key: ({field: value for field, value in item.items() if field != 'path'}
+              if key == 'corners' and isinstance(item, Mapping) else item)
         for key, item in value.items()
         if not (
             isinstance(item, Mapping)
@@ -728,66 +730,234 @@ def _stable(value):
 def input_revision(
     objects: list[VectorRegion], masks: Mapping[int, np.ndarray] | None = None
 ) -> str:
-    object_ids = {int(obj.id) for obj in objects}
+    from ..replay_identity import RegionInput, input_records_revision
+
+    def record(obj: VectorRegion) -> RegionInput:
+        return RegionInput(int(obj.id), obj.current, obj.original, obj.fill, float(obj.z),
+            obj.raster, obj.color_hex, tuple(record(child) for child in obj.children),
+            obj.source_label, obj.drawing_id, tuple(obj.source_regions), obj.coverage, obj.diagnostics)
     if masks is None:
         masks = {
             int(obj.id): np.asarray(obj.raster, dtype=bool)
             for obj in objects
             if obj.raster.size
         }
-    relevant_masks = {
-        int(obj_id): np.asarray(mask, dtype=bool)
-        for obj_id, mask in masks.items()
-        if int(obj_id) in object_ids
-    }
-    payload = json.dumps(
-        _stable({"objects": objects, "masks": relevant_masks}),
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return input_records_revision(tuple(record(obj) for obj in objects), masks)
 
 
 def batch_identity(pass_name: str, scope: tuple[int, ...], revision: str, ordinal: int) -> str:
     return hashlib.sha256(f"{pass_name}:{scope}:{revision}:{ordinal}".encode("utf-8")).hexdigest()[:20]
 
 
-class RegionResolver:
+def _select_bound_clone(bindings: BoundRegionInputs, matrix: tuple[float, ...]) -> DrawingRegion:
+    from ..drawing_actions import AssignCloneAction
+    from ..drawing_relationships import assign_clone
+    return assign_clone(bindings.drawing, AssignCloneAction(op='assign_clone',
+        source='source', target='target', transforms=(dict(zip(
+            ('a', 'b', 'c', 'd', 'tx', 'ty'), matrix, strict=True)),)))
+
+
+def apply_occlusion_choice(action: ReconstructOcclusionOperation, resolve, *, path_for=None) -> list[VectorRegion]:
+    """Bind observations, execute canonical reconstruction, publish the selected tree."""
+    from ..candidate import FlatFill
+    from ..drawing_adapter import publish_generated_tree
+    from ..drawing_occlusion import OcclusionSource, reconstruct_occlusion, validate_occlusion_children
+
+    validate_occlusion_children(action)
+    references = tuple(dict.fromkeys((*action.component, *(child.source for child in action.children))))
+    working = {ref: resolve(ref) for ref in references}
+    def address(ref):
+        source = working[ref]
+        if isinstance(source.drawing_id, str):
+            return source.drawing_id
+        if isinstance(ref, PassInputRegionRef):
+            # Public tree addresses are derived at canonical ingress from the
+            # full scoped ancestry, never a bare repeated leaf ID.
+            return 'r' + '-'.join(str(part) for part in ref.ancestry)
+        if path_for is not None:
+            return 'r' + '-'.join(str(part) for part in path_for(ref))
+        raise ValueError('occlusion named output has no retained drawing address')
+    sources = {}
+    for ref, source in working.items():
+        color = source.fill.hex if isinstance(source.fill, FlatFill) else source.color_hex
+        if color is None:
+            raise ValueError('occlusion replay source has no flat paint')
+        sources[ref] = OcclusionSource(int(source.id), address(ref), color, source.raster)
+    branch_ref = next(ref for ref in action.component if working[ref].id == action.branch_id)
+    selected = reconstruct_occlusion(action, sources, region_id=address(branch_ref))
+    identities = {selected.id: action.branch_id}
+    def index(region):
+        for child in region.children:
+            identities[child.id] = int(child.id.rsplit('-', 1)[1])
+            index(child)
+    index(selected)
+    rasters = [np.asarray(working[ref].raster, dtype=bool) for ref in action.component if working[ref].raster.size]
+    raster = np.logical_or.reduce(rasters) if rasters else np.zeros(action.shape_hw, dtype=bool)
+    return [publish_generated_tree(selected, identities=identities, raster_shape=action.shape_hw,
+                                   retained_rasters={selected.id: raster})]
+
+
+def apply_corner_normalization_choice(
+    action: NormalizeCornersOperation, binding: BoundPathInput,
+) -> list[VectorRegion]:
+    """Normalize only the selected declaration, then publish its exact values."""
+    from ..drawing_automatic import select_automatic_paths
+    selected = select_automatic_paths(action, binding.paths, source_text=str(binding.target.current.params['d']))
+    return [binding.publish(selected.paths, path_text=selected.path_text).with_diagnostics(selected.diagnostics or {})]
+
+
+def apply_simplification_choice(
+    action: SimplifyLineletOperation, binding: BoundPathInput, *,
+    covering: tuple[VectorRegion, ...] = (), required: bool = True,
+) -> list[VectorRegion]:
+    """Execute retained path settings; scene coverage is already selected."""
+    from ..drawing_automatic import select_automatic_paths
+    original = binding.target.original
+    selected = select_automatic_paths(action, binding.paths, source_text=str(binding.target.current.params['d']),
+        original=str(original.params['d']) if original is not None and original.kind == 'path' else None,
+        fill_rule=binding.target.current.params.get('fill_rule'))
+    if selected is None:
+        if required:
+            raise ValueError('recorded simplify operation no longer applies to its bound input')
+        return []
+    return [binding.publish(selected.paths, preserve_subpaths=selected.preserve_subpaths), *covering]
+
+
+def apply_smoothing_choice(
+    action: SmoothPathOperation, binding: BoundPathInput, *, required: bool = True,
+) -> list[VectorRegion]:
+    """Publish canonical smoothing against its separate retained observation."""
+    from ..drawing_automatic import select_automatic_paths
+
+    selected = select_automatic_paths(action, binding.paths, source_text=str(binding.target.current.params['d']))
+    if selected is None:
+        if required:
+            raise ValueError("recorded smooth operation no longer applies to its bound input")
+        return []
+    return [binding.publish(selected.paths)]
+
+
+def apply_relationship_choice(
+    action: AssignCloneOperation | MirrorRegionOperation, bindings: BoundRegionInputs, *,
+    footprint: SkPath | None = None,
+) -> list[VectorRegion]:
+    """Orchestrate existing canonical assignment and generic evidence publication."""
+    matrix = action.transform
+    selected = _select_bound_clone(bindings, matrix)
+    source, target = bindings.working['source'], bindings.working['target']
+    if isinstance(action, AssignCloneOperation):
+        from ..replay_inputs import clone_report
+        report = clone_report(int(source.id), type(target.fill).__name__, matrix, action.family_size)
+        return [bindings.publish(selected, symbolic=action.symbolic,
+            diagnostics={'clones': report}, footprint=footprint)]
+    from ..replay_inputs import mirror_report
+    return [source, bindings.publish(selected, symbolic=False, footprint=footprint,
+        diagnostics={'symmetry': mirror_report(int(source.id), action.axis)})]
+
+
+def apply_clone_reference_update(
+    bindings: BoundRegionInputs, *, previous_source_id: int,
+    previous_source_path: tuple[int, ...], refresh_footprint: bool = True,
+) -> VectorRegion:
+    """Rebind an already discovered scoped source through canonical assignment."""
+    from ..drawing_adapter import transform_working_shape
+    from .vector_region import to_polygon
+    clone, source = bindings.working['target'], bindings.working['source']
+    if clone.current is None or clone.current.kind != 'use':
+        raise ValueError('dependent clone refresh requires bound clone and source geometry')
+    matrix = tuple(clone.current.params['transform'])
+    selected = _select_bound_clone(bindings, matrix)
+    diagnostics = {'clone_reference_remap': {
+        'previous_source_region_id': previous_source_id, 'source_region_id': int(source.id),
+        'previous_source_region_path': previous_source_path,
+        'source_region_path': bindings.paths['source'], 'reason': 'self_symmetry_materialization'}}
+    for key, field in (('clone', 'source_id'), ('clones', 'matched_source')):
+        relation = clone.diagnostics.get(key)
+        if isinstance(relation, Mapping):
+            diagnostics[key] = {**relation, field: int(source.id)}
+    footprint = (to_polygon(transform_working_shape(bindings.shapes['source'], matrix))
+        if refresh_footprint else clone.footprint)
+    return bindings.publish(selected, diagnostics=diagnostics, footprint=footprint,
+        shape_metadata=clone.current.params)
+
+
+from ..replay_inputs import ReplayInputResolver
+
+
+class RegionResolver(ReplayInputResolver[VectorRegion]):
     """Resolve revision-bound inputs and named outputs through one path index."""
 
     def __init__(self, objects: list[VectorRegion], batch: ReplayBatch) -> None:
-        self._batch = batch
-        self._inputs = index_region_paths(objects)
-        self._outputs: dict[tuple[str, str], VectorRegion] = {}
+        super().__init__(index_region_paths(objects), batch, lambda region: index_region_paths([region]))
 
-    def resolve(self, ref: RegionRef) -> VectorRegion:
-        if isinstance(ref, PassInputRegionRef):
-            if ref.batch_id != self._batch.batch_id or ref.input_revision != self._batch.input_revision:
-                raise ValueError("automatic replay input binding does not belong to this batch revision")
-            try:
-                return self._inputs[tuple(ref.ancestry)]
-            except KeyError as exc:
-                raise ValueError(f"automatic replay input path is absent: {ref.ancestry!r}") from exc
-        key = (ref.operation_id, ref.output_name)
-        try:
-            region = self._outputs[key]
-        except KeyError as exc:
-            raise ValueError(f"automatic replay output is absent or forward-referenced: {key!r}") from exc
-        if not ref.descendant_ancestry:
-            return region
-        descendants = index_region_paths([region])
-        path = (int(region.id), *ref.descendant_ancestry)
-        try:
-            return descendants[path]
-        except KeyError as exc:
-            raise ValueError(f"automatic replay output descendant is absent: {path!r}") from exc
+    def bind_inputs(self, references: Mapping[str, RegionRef]) -> BoundRegionInputs:
+        from ..drawing_adapter import bind_region_inputs
+        regions = {key: self.resolve(ref) for key, ref in references.items()}
+        paths = {key: self.path(ref) for key, ref in references.items()}
+        return bind_region_inputs(regions, paths=paths)
 
-    def register(self, operation_id: str, output: NamedRegionOutput, region: VectorRegion) -> None:
-        key = (operation_id, output.name)
-        if key in self._outputs:
-            raise ValueError(f"duplicate automatic replay named output: {key!r}")
-        self._outputs[key] = region
+def apply_seam_constraints(action, resolver):
+    from ..drawing_seams import SeamInput, execute_seam_constraints
+    from ..drawing_adapter import transform_working_shape, publish_seam_shape, replace_private_leaves
+
+    inputs = {}
+    def bind(ref):
+        key = tuple(ref.ancestry)
+        if key in inputs:
+            return
+        region = resolver.resolve(ref)
+        owner = resolver.resolve(PassInputRegionRef(ref.batch_id, ref.input_revision, (key[0],)))
+        shape = region.current
+        if shape is None:
+            raise ValueError('seam replay target has no geometry')
+        if shape.kind == 'use':
+            source_id = int(shape.params.get('href_obj_id', -1))
+            sources = [leaf for leaf in owner.leaves() if int(leaf.id) == source_id]
+            if len(sources) != 1 or sources[0].current is None:
+                raise ValueError('seam replay clone source is absent or ambiguous')
+            shape = transform_working_shape(sources[0].current, shape.params['transform'])
+        inputs[key] = SeamInput(shape, int(region.id), int(owner.id),
+            (float(owner.z), float(region.z), int(owner.id), int(region.id)), owner.footprint)
+    for pair in action.pairs:
+        bind(pair.left)
+        bind(pair.right)
+    updates = execute_seam_constraints(action, inputs)
+    replacements = {}
+    for key, update in updates.items():
+        ref = PassInputRegionRef(action.roots[0].batch_id, action.roots[0].input_revision, key)
+        region = resolver.resolve(ref)
+        replacements.setdefault(key[0], {})[region.id] = publish_seam_shape(region,
+            update.shape, update.paired_with, update.candidate, selected=update.selected)
+    return [replace_private_leaves(resolver.resolve(root), replacements.get(root.ancestry[0], {}))
+        for root in action.roots]
+
+
+def apply_intrinsic_symmetry_choice(target, axis, residual):
+    from ..drawing_symmetry import apply_intrinsic_symmetry
+    from .symmetry_materialize import _canonical_symmetry_input
+
+    selected = apply_intrinsic_symmetry(_canonical_symmetry_input(target), axis, residual)
+    return target.with_diagnostics(selected.diagnostics)
+
+
+def apply_self_symmetry_choice(snapshot, target, dependent_clones, **settings):
+    from ..drawing_symmetry import reconstruct_self_symmetry
+    from ..drawing_adapter import publish_collapsed_region
+    from ..geometry_native import region_path
+    from .symmetry_materialize import (
+        _canonical_symmetry_input, _geometry_root_footprint, remap_symmetry_clones,
+    )
+
+    selected = reconstruct_self_symmetry(_canonical_symmetry_input(target),
+        _geometry_root_footprint(target, target.footprint), **settings)
+    replacement = publish_collapsed_region(selected, target, footprint=region_path(selected, {}))
+    if not dependent_clones:
+        return [replacement]
+    remaining = [obj for obj in snapshot if int(obj.id) != int(target.id)]
+    remapped = remap_symmetry_clones([replacement, *remaining],
+        {(int(target.id),): (int(target.id),)}, before=snapshot)
+    dependent_ids = {int(obj.id) for obj in dependent_clones}
+    return [replacement, *(obj for obj in remapped[1:] if int(obj.id) in dependent_ids)]
 
 
 def _execute_action(
@@ -797,52 +967,42 @@ def _execute_action(
     resolver: RegionResolver,
 ) -> list[VectorRegion]:
     if isinstance(action, FitPrimitiveOperation):
-        from ..drawing_adapter import publish_primitive_geometry
+        from ..drawing import DrawingRegion
+        from ..drawing_adapter import publish_selected_leaf
         target = resolver.resolve(action.target)
-        return [publish_primitive_geometry(target, action.primitive)]
+        selected = DrawingRegion(id=target.drawing_id or f'automatic-{target.id}',
+            geometry=action.primitive, diagnostics=target.diagnostics)
+        return [publish_selected_leaf(selected, target)]
     if isinstance(action, NormalizeRetainedTopologyOperation):
-        from ..drawing_topology import apply_retained_topology
+        from .topology_binding import apply_retained_topology
 
         return apply_retained_topology(action, snapshot)
     if isinstance(action, AssignCloneOperation):
-        from ..drawing_adapter import publish_clone_assignment
-
-        source = resolver.resolve(action.source)
-        target = resolver.resolve(action.target)
-        return [publish_clone_assignment(
-            source,
-            target,
-            matrix=action.transform,
-            symbolic=action.symbolic,
-            family_size=action.family_size,
-        )]
+        return apply_relationship_choice(action,
+            resolver.bind_inputs({'source': action.source, 'target': action.target}))
     if isinstance(action, SimplifyLineletOperation):
-        from ..drawing_simplification import apply_simplification
+        from ..drawing_adapter import bind_path_input
 
-        return apply_simplification(action, resolver)
+        return apply_simplification_choice(action, bind_path_input(resolver.resolve(action.target)),
+            covering=tuple(resolver.resolve(ref) for ref in action.covering))
     if isinstance(action, SmoothPathOperation):
-        from ..drawing_smoothing import apply_smoothing
+          from ..drawing_adapter import bind_path_input
 
-        return apply_smoothing(action, resolver)
+          return apply_smoothing_choice(action, bind_path_input(resolver.resolve(action.target)))
     if isinstance(action, NormalizeCornersOperation):
-        from ..drawing_corner_actions import apply_retained_corner_normalization
+        from ..drawing_adapter import bind_path_input
 
-        return apply_retained_corner_normalization(action, resolver)
+        return apply_corner_normalization_choice(action, bind_path_input(resolver.resolve(action.target)))
     if isinstance(action, DeclareIntrinsicSymmetryOperation):
-        from ..drawing_symmetry import Axis2D, apply_intrinsic_symmetry
+        from ..drawing_symmetry import Axis2D
 
         target = resolver.resolve(action.target)
-        return [apply_intrinsic_symmetry(target, Axis2D(*action.axis), action.residual)]
+        return [apply_intrinsic_symmetry_choice(target, Axis2D(*action.axis), action.residual)]
     if isinstance(action, MirrorRegionOperation):
-        from ..drawing_adapter import publish_mirror_pair
-
-        source = resolver.resolve(action.source)
-        target = resolver.resolve(action.target)
-        return list(publish_mirror_pair(source, target,
-            axis=SymmetryAxisInput(point=(float(action.axis[1]), float(action.axis[2])),
-                angle_degrees=math.degrees(float(action.axis[0]))), matrix=action.transform))
+        return apply_relationship_choice(action,
+            resolver.bind_inputs({'source': action.source, 'target': action.target}))
     if isinstance(action, ReconstructSelfSymmetryOperation):
-        from ..drawing_symmetry import Axis2D, apply_self_symmetry_choice
+        from ..drawing_symmetry import Axis2D
 
         target = resolver.resolve(action.target)
         dependent = tuple(resolver.resolve(ref) for ref in action.dependent_clones)
@@ -860,12 +1020,8 @@ def _execute_action(
             cubic=action.cubic,
         )
     if isinstance(action, ReconstructOcclusionOperation):
-        from ..drawing_occlusion import apply_occlusion_reconstruction
-
-        return apply_occlusion_reconstruction(action, resolver)
+        return apply_occlusion_choice(action, resolver.resolve, path_for=resolver.path)
     if isinstance(action, ApplySeamConstraintsOperation):
-        from ..drawing_seams import apply_seam_constraints
-
         return apply_seam_constraints(action, resolver)
     if isinstance(action, RefreshDependentClonesOperation):
         from ..drawing_adapter import refresh_dependent_clones
@@ -914,6 +1070,19 @@ def _scope_objects(roots: list[VectorRegion], scope: tuple[int, ...]) -> list[Ve
     return current
 
 
+def _bound_batch_input(
+    objects: list[VectorRegion], batch: ReplayBatch, root_masks: Mapping[int, np.ndarray],
+) -> tuple[list[VectorRegion], dict[int, np.ndarray], dict[int, np.ndarray]]:
+    """Validate the shared semantic receipt and bind exact raster inputs."""
+    from .framework import _masks_from_objects
+    from ..replay_identity import validate_batch_revision
+    scoped = _scope_objects(objects, batch.scope)
+    current_masks = _masks_from_objects(scoped, root_masks)
+    pass_masks = {obj_id: mask.copy() for obj_id, mask in current_masks.items()}
+    validate_batch_revision(input_revision(scoped, pass_masks), batch)
+    return scoped, current_masks, pass_masks
+
+
 def replay_batches(
     objects: list[VectorRegion],
     batches: tuple[ReplayBatch, ...],
@@ -927,14 +1096,8 @@ def replay_batches(
         for obj_id, mask in (masks or {}).items()
     }
     for batch in batches:
-        scoped = _scope_objects(roots, batch.scope)
-        from .framework import _assign_replacement_masks, _masks_from_objects
-
-        current_masks = _masks_from_objects(scoped, root_masks)
-        pass_masks = {obj_id: mask.copy() for obj_id, mask in current_masks.items()}
-        if input_revision(scoped, pass_masks) != batch.input_revision:
-            passes = ", ".join(dict.fromkeys(entry.pass_name for entry in batch.entries))
-            raise ValueError(f"automatic replay input revision mismatch ({passes or 'empty batch'}, scope={batch.scope})")
+        scoped, current_masks, pass_masks = _bound_batch_input(roots, batch, root_masks)
+        from .framework import _assign_replacement_masks
         snapshot = list(scoped)
         pass_original_by_id = {int(obj.id): obj for obj in snapshot}
         current = list(scoped)

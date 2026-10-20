@@ -1,0 +1,49 @@
+{
+  "entry": "visa",
+  "svg": "visa.svg",
+  "revision": 1,
+  "sha256": "2e37f70f22f4fe005ffe2c52b2231e0f8b864b756c768ae9bd26a20922b0dd88",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Visa_Inc._logo_(2005%E2%80%932014).svg",
+    "title": "File:Visa Inc. logo (2005–2014).svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/9/98/Visa_Inc._logo_%282005%E2%80%932014%29.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2017-01-18T15:46:21Z",
+    "upstream_sha1": "bf8374f101ff983f5516f312d569789ad3737094",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<a href=\"https://en.wikipedia.org/wiki/Visa_Inc.\" class=\"extiw\" title=\"w:Visa Inc.\">Visa Inc.</a>",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"http://www.visa.com\">http://www.visa.com</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      1000.046,
+      323.653
+    ],
+    "width": "1000.046",
+    "height": "323.65302"
+  },
+  "raster": {
+    "path": "../input/visa.png",
+    "sha256": "56859423cc84cc997a638044a64798e7f142b5e4756465d5479f34d1eda7e309"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

@@ -1,12 +1,11 @@
 import numpy as np
 import pytest
 
-from vectormark.fit import Shape
 from vectormark import drawing_simplification as simplify_module
 
 
 def _path(d):
-    return Shape("path", {"d": d, "fill_rule": "evenodd"})
+    return d
 
 
 def _parts(shape, **kwargs):
@@ -64,7 +63,7 @@ def test_rejects_cutout_crossing_exterior_even_within_distance_budget(monkeypatc
     shape = _path(f"{outer} {hole}")
     assert simplify_module._boundary_max_deviation(_path(hole), _path(crossing)) < 1
     monkeypatch.setattr(simplify_module, "_candidate_parts", lambda *args, **kw: [outer, crossing])
-    assert simplify_module._simplified_path_shape(shape, epsilon=1, max_error=1, samples=16) is None
+    assert simplify_module.simplify_path_data(shape, epsilon=1, max_error=1, samples=16, fill_rule='evenodd') is None
 
 
 def test_retained_boundary_keeps_high_precision_coordinates(monkeypatch):
@@ -84,6 +83,6 @@ def test_topology_check_honors_fill_rule_when_cutout_winding_changes(fill_rule, 
     outer = "M0 0 L100 0 L100 100 L0 100 Z"
     hole = "M20 20 L20 80 L80 80 L80 20 Z"
     reversed_hole = "M20 20 L80 20 L80 80 L20 80 Z"
-    before = Shape("path", {"d": f"{outer} {hole}", "fill_rule": fill_rule})
-    after = Shape("path", {"d": f"{outer} {reversed_hole}", "fill_rule": fill_rule})
-    assert simplify_module._same_subpath_topology(before, after) is expected
+    before = f"{outer} {hole}"
+    after = f"{outer} {reversed_hole}"
+    assert simplify_module._same_subpath_topology(before, after, fill_rule=fill_rule) is expected

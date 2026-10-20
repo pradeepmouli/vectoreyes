@@ -13,6 +13,8 @@ Example:
 
 from __future__ import annotations
 
+from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 import argparse
 import base64
 from collections.abc import Mapping
@@ -30,14 +32,14 @@ from vectormark._fitcurve import cubic_inflects
 from vectormark.contour import region_contours
 from vectormark.drawing_adapter import drawing_from_vector_regions
 from vectormark.drawing_render import render_path_map
-from vectormark.drawing_refine import auto_refine, labeled_drawing_svg, render_drawing, stitch_regions
-from vectormark.drawing_assembly import root_regions
+from vectormark.drawing_refine import auto_refine, stitch_regions
+from vectormark.optimizer.assembly_binding import assemble_working_roots
 from vectormark.emit import render_svg_doc, resolve_fill
 from vectormark.fit import _fmt
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
-from vectormark.optimizer.corners import path_corner_diagnostics
-from vectormark.optimizer.vector_region import _parse_subpaths
+from vectormark.corner_diagnostics import path_corner_diagnostics
+from vectormark.path_sampling import _parse_subpaths
 
 
 def _parse_args() -> argparse.Namespace:
@@ -294,7 +296,7 @@ def _stage_parameters(
         return trace_fit
     if name == "boundary_assemble_material":
         # This is a drawing-construction threshold, not a trace option.  Keep
-        # the report honest about the value passed to ``root_regions`` below.
+        # the report honest about the value passed to ``assemble_working_roots`` below.
         return {
             "min_region_fraction": min_region_fraction,
             "filter_timing": "after material_union",
@@ -422,16 +424,16 @@ def main() -> None:
     def capture_decomposition_stage(name, regions, fills) -> None:
         decomposition_snapshots.append((name, _region_polyline_svg(trace, regions, fills), None))
 
-    rooted = root_regions(
+    rooted = assemble_working_roots(
         trace,
         rgb,
         min_region_fraction=options.min_region_fraction,
         on_decomposition_stage=capture_decomposition_stage,
     )
     trace, raw_roots = rooted.trace, rooted.regions
-    raw_rendered = render_drawing(trace, raw_roots)
+    raw_rendered = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(raw_roots)))
     v0 = stitch_regions(trace, raw_roots)
-    v0_rendered = render_drawing(trace, v0)
+    v0_rendered = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(v0)))
     pass_snapshots = [
         ("source", _source_svg(rgb), None),
     ]
@@ -454,7 +456,7 @@ def main() -> None:
     ])
 
     def capture_auto_pass(name, regions) -> None:
-        rendered = render_drawing(trace, regions)
+        rendered = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)))
         pass_snapshots.append((name, rendered.svg, dict(rendered.report)))
 
     auto = v0 if args.v0_only else auto_refine(
@@ -464,9 +466,9 @@ def main() -> None:
         corner_normalize=options.corner_normalize,
         on_pass=capture_auto_pass,
     )
-    v0_svg = render_drawing(trace, v0).svg
-    auto_svg = render_drawing(trace, auto).svg
-    labels_svg = labeled_drawing_svg(trace, auto)
+    v0_svg = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(v0))).svg
+    auto_svg = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(auto))).svg
+    labels_svg = _canonical_labels(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(auto)))
     width, height = trace.width, trace.height
 
     frames = (
@@ -519,7 +521,7 @@ def main() -> None:
             corner_normalize=options.corner_normalize,
         )
         print(debug_dir / "index.html")
-    print(f"{output} targets={len(render_drawing(trace, auto).report['targets'])}")
+    print(f"{output} targets={len(_canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(auto))).report['targets'])}")
 
 
 if __name__ == "__main__":

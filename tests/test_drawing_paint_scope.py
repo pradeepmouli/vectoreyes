@@ -1,6 +1,6 @@
 import numpy as np
 
-from vectormark import drawing_paint as paint
+from vectormark.optimizer import paint_binding as paint
 from vectormark.candidate import FlatFill
 from vectormark.fit import Shape
 from vectormark.optimizer.gate import rasterize
@@ -20,7 +20,7 @@ def forest(*, fills=(None, None)):
             raster=rasterize(footprint, (10, 20)),
             drawing_id=f"r{root_id}-1",
         )
-        roots.append(VectorRegion.branch(id=root_id, children=(leaf,)))
+        roots.append(VectorRegion.branch(id=root_id, children=(leaf,), drawing_id=f'r{root_id}'))
     return tuple(roots)
 
 
@@ -43,7 +43,8 @@ def test_refill_keeps_source_paint_separate_for_repeated_local_child_ids():
 
 def test_invalidation_preserves_unchanged_children_with_same_local_id():
     roots = forest(fills=(FlatFill("#C8141E"), FlatFill("#1428D2")))
-    result = paint._invalidate_changed_fills(roots, roots)
+    result = paint.refill_changed_regions_from_source(roots, roots,
+        np.zeros((10, 20, 3), np.uint8), allow_gradients=False)
     assert result[0] is roots[0]
     assert result[1] is roots[1]
 
@@ -53,10 +54,11 @@ def test_invalidation_only_clears_the_changed_scoped_child():
     leaf = roots[1].children[0]
     changed = leaf.with_current(Shape("rect", dict(x=12, y=1, w=6, h=7)))
     current = (roots[0], roots[1].with_children((changed,)))
-    result = paint._invalidate_changed_fills(roots, current)
+    result = paint.refill_changed_regions_from_source(roots, current,
+        np.full((10, 20, 3), [20, 40, 210], np.uint8), allow_gradients=False)
     assert result[0] is roots[0]
-    assert result[1].children[0].fill is None
-    assert result[1].children[0].diagnostics["fill"]["reason"] == "geometry_changed"
+    assert result[1].children[0].fill == FlatFill('#1428D2')
+    assert result[1].children[0].diagnostics['fill']['status'] == 'refit'
     assert leaf.fill is not None
 
 

@@ -1153,6 +1153,293 @@ undefined-name checks; replay's six existing unused imports remain outside this
 fix. Standalone engine/replay/MCP imports and diff check pass. No native rebuild,
 performance or visual certification is implied; resvg-py remains unavailable.
 
+#### Canonical export and reporting boundary — 2026-10-19
+
+Deleted the working-region renderer, its result type, region-map wrapper, and
+parallel trace summary/paint/diagnostic projections from `drawing_refine`.
+Corpus/debug consumers now project their still-private working results into a
+canonical `Drawing` before calling `drawing_render`; no legacy export aliases
+remain. The canonical serializer also enforces the existing unmaterialized
+self-symmetry rejection without repairing geometry during export.
+
+Trace diagnostics now reuse the canonical geometry summary and fill serializer
+from the actual published v0 drawing, including its exact path correspondence.
+A palette-limit regression showed why this matters: the old summary reported
+pre-limit blue paint while the published drawing had already selected white.
+The trace envelope remains, but command/geometry and paint data come from the
+same canonical models as normal MCP reports.
+
+SVG byte layout for corpus/debug output now follows the existing canonical
+renderer, including its clone clips and geometry definition IDs. This is not
+an algorithm or fitting change; topology, independent clone paint, cutouts,
+and no-render-time-reconstruction tests cover the migration.
+
+This retires the parallel presentation adapters, not every `VectorRegion`:
+optimizer proposals, replay batches, and action publication
+still use private working records. Migrating those evidence/execution boundaries
+remains open; do not replace the old type with a compatibility alias or claim
+that private execution migration is complete.
+
+Verification: the adapter-removal and published-paint regressions failed before
+their fixes; 167 focused tests and the full 1,192-test suite pass. Native wheel
+compilation and compiled regression checks pass. A compiled MCP radish auto run
+publishes both versions and retrieves all artifacts; its v0/v1 SVGs are byte-
+identical to the preceding compiled run. No live deployment was performed.
+
+#### Canonical source evidence — 2026-10-19
+
+`GeometryEvidence` no longer retains a `VectorRegion` forest. It stores the
+canonical source `Drawing`, immutable raster/coverage observations, original
+source observations, numeric ownership, and non-geometric kernel annotations.
+Its revision binds those values and the trace/fit receipts together. Snapshot
+loads detach nested canonical values; disposable kernel inputs cannot alias the
+retained command objects. No `trace_roots` compatibility accessor remains.
+
+Source capture and selected-operation capture share the same annotation
+projection. Clone source/transform data live only in canonical clone geometry,
+not in parallel shape metadata. Replay correspondence reads source ownership
+directly from retained observations, without reconstructing a working forest.
+
+Initial stitching and legacy numerical execution still create disposable
+working inputs explicitly. Seam/corner rewrites discard superseded canonical
+caches when changing path data; receipt capture occurs after canonical ingress,
+with strict dependency checks preserved. This removes duplicate retained scene
+state, not the remaining transient optimizer kernels or their adapters.
+
+Verification: 1,194 full-suite tests passed; the final clone-metadata change also
+passes 66 focused tests. Native rebuild and four compiled evidence regressions
+pass. The final compiled MCP radish auto run publishes v0/v1 and retrieves all
+artifacts without errors, with both SVGs byte-identical to the preceding build.
+No live deployment was performed.
+
+#### Automatic primitive kernel and selected-leaf publication — 2026-10-19
+
+`recognize_primitive_geometry(footprint, epsilon=...)` now belongs to
+`primitive_fitting` and returns `PrimitiveGeometry | None`, with no working
+region input. The optimizer primitive pass orchestrates this kernel, canonical
+leaf publication, and the existing proposal quality policy. Recorded primitive
+intents retain the typed geometry directly; replay never repeats recognition.
+Primitive decoding moved out of the adapter into the same numeric module,
+including the occlusion caller, with no compatibility re-export.
+
+Deleted the primitive-only `publish_primitive_geometry` route. Canonical path
+and primitive selections share `publish_selected_leaf`; source observations,
+private IDs and paint remain on the working evidence, while selected diagnostics
+replace rather than merge retired annotations. The shared root publisher reuses
+this route when observations and paint are unchanged.
+
+Ruling: retain the working Shape-to-footprint codec at this temporary boundary.
+Switching to native Skia primitive footprints changed rounded-rectangle quality
+decisions in the integration suite. Changing that policy is outside this
+ownership migration. Canonical geometry remains authoritative; the generic
+working projection and automatic relationship-publication dependencies remain open.
+
+#### Canonical path smoothing — 2026-10-19
+
+Smoothing now consumes typed `PathGeometry` values through `smooth_paths`;
+`smooth_region` applies the same kernel without changing retained component
+membership. Numeric tangent projection and its all-or-nothing error budget are
+unchanged. Command IDs and anchors survive exact command correspondence,
+including quadratic-to-cubic elevation. No raster evidence, working `Shape`,
+or optimizer record enters the geometry kernel.
+
+Automatic proposals and replay share `apply_smoothing_choice`. Their temporary
+`BoundPathInput` codec binds source-ordered commands without prematurely
+classifying intermediate disconnected paths as a single filled component. It
+publishes matching SVG text and canonical cache while retaining paint, source
+evidence, private identity, and shape metadata. Deleted `_smoothed_shape` and
+the working-record `apply_smoothing` entry point, without aliases.
+
+New proposal/replay tests reproduced a real stale-cache defect: smoothing
+previously changed `d` while retaining the old canonical path. The full suite
+also exposed a premature component-classification error in the first binding
+implementation; a disconnected-path regression reproduced it, and the explicit
+path input boundary fixes it without merging or splitting regions. Broader
+working-evidence migration remains open.
+
+Verification: five new regression/contract tests passed after observed failures;
+72 focused/integration tests passed. Fresh full suite: 1,217 passed (953 existing
+warnings); 113 selected tests passed against the rebuilt native package (98
+dependency warnings), with compiled smoothing, binding, and replay modules
+explicitly checked. Targeted F401/F821 and whitespace checks pass. Optional
+resvg-py remains absent from the source test environment; native smoke testing
+uses the isolated runtime with scoring dependencies. No commit or live deploy.
+Native MCP radish (24.63s) and Vbird (87.38s) retrieved v0/v1 artifacts with empty
+error reports; all four SVGs are byte-identical to the canonical-bindings build.
+The verified wheel is installed only in the isolated smoke runtime.
+
+#### Relationship migration status clarification — 2026-10-19
+
+The combined follow-up below supersedes the working-record symmetry execution
+boundary described in this historical checkpoint; clone discovery/selection
+and its existing canonical relationship operation were not reimplemented.
+
+Clone and symmetry operation ownership is already implemented: canonical
+`assign_clone`/`set_region_symmetry` live in `drawing_relationships`, and retained
+intrinsic/self-symmetry execution lives in `drawing_symmetry`. Do not repeat those
+migrations. The remaining relationship work is representation-boundary cleanup:
+at the preceding checkpoint, automatic proposals/replay still called `publish_clone_assignment`,
+`publish_mirror_pair`, and `publish_clone_refresh` in `drawing_adapter`.
+
+This remaining boundary is now implemented: `BoundRegionInputs` binds automatic
+input snapshots and named-output descendants to canonical selections while
+retaining separate source observations and full scoped addresses. Automatic
+clone and mirrored-copy choices call the existing canonical `assign_clone`;
+dependent clone refresh uses the same binding/publication route. Deleted all
+three relationship-specific publication helpers, without compatibility aliases.
+
+Symbolic dependencies within the selected inputs remain symbolic, preserving
+canonical cycle detection and transform composition. References outside the
+selected inputs use retained resolved geometry, without retracing. A typed
+missing-source error distinguishes this partial-input case from malformed or
+ambiguous references; full-scene resolution remains fail-closed. Independent
+target paint, scoped references, detector thresholds, and the existing numeric
+shape/footprint publication policy are preserved.
+
+The generic working-evidence bridge and shape codec remain explicit migration
+work. This does not claim complete `VectorRegion` retirement or a new clone or
+symmetry algorithm.
+
+Verification: 1,205 full-suite tests passed (953 dependency warnings); 169 tests,
+including optimizer integration and recipe replay, passed against the rebuilt
+native package. New recognition/topology/annotation tests were observed failing
+before implementation. Radish and Vbird compiled MCP runs retrieved v0/v1
+artifacts without errors, with SVG bytes unchanged from the prior partition
+checkpoint. Targeted F401/F821 checks pass except two pre-existing unused
+imports in the integration test module (its F821 check passes). No commit or
+live deployment was performed.
+
+Binding/publication follow-up verification: 1,212 full-suite tests passed (953
+dependency warnings), and all 123 focused tests passed against both source and
+the rebuilt native package. Seven new binding tests cover scoped local-ID
+collisions, alias rejection, symbolic cycles, named-output descendants,
+independent paint, baked reflection, and both clone footprint-refresh policies.
+Targeted F401/F821 checks and whitespace validation pass. The source environment
+lacks optional resvg-py, so its render-Delta-E scoring is disabled; native MCP
+validation uses the isolated runtime with scoring dependencies installed.
+Another 66 compiled integration/recipe tests passed (189 compiled tests total).
+Compiled MCP radish (28.61s) and Vbird (86.62s) retrieved v0/v1 artifacts without
+errors; all four SVGs are byte-identical to the preceding canonical-primitives
+checkpoint. Wheel `289c4b1-canonical-bindings` was installed only into the
+isolated smoke runtime. No commit or live deployment was performed.
+
+#### Canonical merge/split execution — 2026-10-19
+
+`drawing_partition.merge_regions` and `split_region` now consume and return a
+canonical `Drawing`. Geometry decisions no longer construct `VectorRegion`
+trees or allocate globally numbered split children. Merge membership follows
+the actual region tree; split children use stable parent-local addresses.
+Disconnected outputs pass through the shared canonical component publisher.
+
+The shared drawing-delta publisher separately retains merged source observations
+and creates component sampling observations. Unchanged siblings remain intact;
+source paint is refitted on the resulting visible leaves. Deleted the now-unused
+`replace_working_leaf` and `remove_working_leaves` implementations rather than
+leaving compatibility entry points.
+
+The generic working-evidence projection and automatic geometry kernels remain
+open migration work. Numeric divider sampling still imports its existing helper
+functions from the optimizer module; this is not complete optimizer independence.
+
+Verification: 1,200 full-suite tests passed (953 existing dependency warnings),
+45 merge/split/refinement tests passed against the installed native wheel, and
+targeted lint/whitespace checks passed. Compiled MCP radish and Vbird auto runs
+retrieved v0/v1 artifacts without errors; both SVG versions are byte-identical
+to the preceding canonical-publication build. No live deployment was performed.
+
+#### Canonical operation publication — 2026-10-19
+
+Manual path/primitive fitting, direct path edits, fill and paint ordering now
+publish canonical selected subtrees through the shared publication boundary.
+Deleted the one-off `apply_region_geometry`, `_with_fill`, `_with_z`, and the
+private detection compatibility alias. Pre-fit corner ingress now belongs to
+`corner_provenance`, shared by direct canonical fitting and source projection;
+the adapter's `_ingress_corners` implementation is removed.
+
+Canonical source-leaf replacement expands dependent clones by retained component
+slot, preserving transforms and independent paint. Shared publication owns new
+component observation rasters and keeps unchanged siblings intact. Geometry-
+preserving paint/order updates retain path receipts; clone reuse additionally
+checks the resolved footprint so source edits cannot leave stale clone bounds.
+Implicit sparse child addresses now remain stable instead of being renumbered
+as a side effect of assigning paint.
+
+This removes the parallel per-operation publication routes. The generic working
+projection and automatic kernels still need their own migration; this is not a
+claim that the `VectorRegion` working model has been retired completely.
+
+Verification: 1,198 full-suite tests pass, alongside 153 focused and 72 additional
+publication/provenance/clone tests. Native rebuild and the three new compiled
+regressions pass. Compiled MCP radish trace/refine and a same-paint/order manual
+plan retrieve all artifacts without errors; the manual plan preserves SVG bytes.
+No live deployment was performed.
+
+#### Combined canonical kernel and boundary pass — 2026-10-19
+
+The combined migration replaces working-record execution in simplification,
+declared-corner normalization, occlusion and self-symmetry. Simplification and
+normalization consume typed source-ordered paths; occlusion and symmetry return
+canonical regions, preserving real cutouts and disconnected components. Seam
+execution consumes explicit shape, paint-order and exterior-boundary observations
+instead of a region resolver. Terminal output-color/gradient arithmetic lives in
+the shared paint engine. Discovery and quality selection remain orchestration.
+
+Shared curve/arc sampling moved to `path_sampling`; corner diagnostic projection
+moved out of the optimizer into `corner_diagnostics`. Deleted the old owners and
+working-record kernel entry points without re-export aliases. Canonical path
+binding preserves sparse command IDs, source path order, numeric values and
+anchors through fitting and component publication. It validates geometry rather
+than requiring identical numeric text spelling.
+
+Cross-operation regressions found and corrected in this pass:
+
+- Synthetic closure IDs could collide with sparse retained command IDs.
+- Component publication reparsed and renumbered already-canonical commands.
+- Nested immutable diagnostic mappings were stringified in JSON reports.
+- Named-output occlusion inputs lacked their full scoped source address.
+- A disconnected, already-materialized symmetry union was mistaken for an
+  unresolved symmetry group during rendering.
+- A symmetry union tried to resolve external instance sources inside its selected
+  subtree, despite already having the retained resolved instance geometry.
+
+Simplification retains a path when explicit corner ownership cannot survive exact
+correspondence, rather than silently deleting that declaration. Retired command
+IDs are not aliases for newly renumbered endpoints. Renderer and report tests
+distinguish JSON lists from immutable tuples, color casing from paint changes,
+and SVG definitions from painted elements. Detector thresholds, fit budgets and
+sampling policy are unchanged.
+
+This is a combined execution/boundary migration, not complete removal of the
+private optimizer model. Generic working projection, topology/paint observation
+bookkeeping, root assembly and recipe orchestration still have `VectorRegion`
+consumers. The parent whole-branch review and later plan slices remain open.
+Verification at the preceding frozen checkpoint: 1,244 source tests passed; the
+full compiled run passed 1,240 tests with four existing Python/native evidence-
+revision snapshot mismatches. An isolated installation of the previous verified
+wheel produces exactly the same four native hashes. Fitted SVG and corner fields
+are identical; these baselines were not replaced. Compiled MCP Radish (22.22s)
+and Vbird (83.07s) retrieved v0/v1 artifacts without errors, and all four SVGs
+are byte-identical to the preceding smoothing build. The external-instance fix
+then passed 61 focused checks; final rebuilt-package results follow. No commit
+or live deployment is implied.
+
+Final frozen-code verification: **1,245 source tests passed** (953 warnings,
+116.50s). Wheel `289c4b1-combined-closure` rebuilt successfully and was installed
+only into the isolated smoke runtime. All twelve changed kernel/binding modules
+were explicitly verified as compiled extensions before the full native run:
+**1,241 passed, four unchanged receipt-hash failures** (953 warnings, 115.06s).
+The final native hashes again match the previous verified native wheel exactly;
+this is not a clean full native-suite signoff. Targeted F401/F821 and whitespace
+checks pass. Optional resvg-py is absent from the source environment but present
+in the native smoke runtime.
+
+Final compiled MCP Radish (21.23s) and Vbird (81.69s) retrieved both trace v0 and
+refine v1 with empty artifact error reports. All four SVGs are byte-identical to
+the preceding smoothing build. Reports are retained under
+`native-combined-closure/{radish,vbird}/index.html` in this session's visualization
+directory. No live deployment, commit, corpus replacement or full working-model
+retirement is claimed; the remaining generic bridge and parent review stay open.
+
 Use the existing contract direction:
 
 | Method | Input | Output |
@@ -1732,3 +2019,428 @@ Start with Slice 1, then the isolated corner fixes in Slice 2. Present:
 
 Planning does not authorize deployment, corpus replacement, commits, PR creation,
 or an automatic native rewrite. Those follow the user's implementation direction.
+
+## Canonical topology normalization — 2026-10-19
+
+Added `normalize_drawing_topology(Drawing)` for atomic component publication and
+clone dependency traversal. Existing paths, sparse command IDs, annotations,
+fills, transforms, and source component slots survive without refitting. Shared
+`expand_clone_components` replaces duplicate region-replacement expansion and
+fixes multi-transform working clones whose source becomes a component group.
+
+Disposable normalization and correspondence receipt code now lives in
+`optimizer/topology_binding.py` as `normalize_working_topology`; callers were
+migrated without compatibility re-exports. This temporary boundary does not
+complete working-model or generic bridge retirement. Seven new regression cases
+observed genuine RED before implementation; the focused publication/replay group
+passes 82 cases. Full source suite: 1,252 passed. Compiled suite: 1,248 passed
+with the same four pre-existing receipt-fingerprint failures (all four audit
+values unchanged from the preceding wheel). Compiled MCP radish/Vbird runs have
+no artifact errors; all four trace/refine SVGs are byte-identical to the preceding
+build. No live deployment, commit, or corpus replacement was performed.
+
+## Canonical root assembly and evidence boundary — 2026-10-19
+
+`assemble_drawing_roots` now builds a `Drawing` directly from the existing fit
+results and source paint, binds pre-fit corner declarations, publishes components,
+and retains immutable source observations and root-path evidence. It does not
+construct `VectorRegion` records or round-trip through the working normalizer.
+`build_geometry_evidence` now snapshots canonical drawing/metadata/observations;
+the Python engine uses that path directly. Neither assembly nor recipe values
+imports the working region class.
+
+The remaining optimizer/report input codecs are explicitly scoped to
+`optimizer/assembly_binding.py`; no old entry-point aliases are retained. The
+working-to-evidence factory is needed only by optimizer-oriented test fixtures
+and lives in `tests/_working_evidence.py`, not the packaged engine. Replay still
+uses disposable inputs for its existing working orchestration; this change
+removes the root-construction round trip, not the entire replay bridge.
+
+Three new canonical assembly/snapshot cases observed RED-to-GREEN. The focused
+assembly, engine, source evidence, topology and recipe group passes 120 tests.
+The final full source suite passes 1,255 tests. Corpus-cache integration failures
+were corrected using a cache-local immutable-mapping pickle codec; retained
+canonical mappings remain immutable. One test now compares hex colors by value
+rather than casing. The compiled wheel is installed only in the isolated test
+runtime. MCP radish (21.82s) and Vbird (84.70s) have no artifact errors; all four
+trace/refine SVGs are byte-identical to the canonical-topology checkpoint.
+Final compiled suite: 1,251 passed, with exactly the four known receipt-fingerprint
+failures; their audit values are unchanged. Targeted F401/F821 and diff checks
+pass. No live deployment, commit, or corpus replacement. Full replay-loop and
+optimizer working-model retirement remain unfinished.
+
+## Canonical replay-loop state — 2026-10-19
+
+The recipe loop now carries `ReplayState`: one canonical `Drawing` plus immutable
+kernel annotations and source observations. Grouped automatic batches, corner
+executors and remaining working handlers receive disposable projections only at
+their boundary; their outputs are captured back into detached canonical values
+before the next step. `ReplayExecution` no longer exposes a second working
+forest. `replay_drawing` replaces the old working-valued entry point without an
+alias. Remaining working consumers explicitly use `optimizer/replay_binding.py`.
+
+Proposal capture crosses the same canonical boundary as execution between direct
+operations/stages, preserving strict dependency rejection without false failures
+from temporary representation differences. Numeric batch receipts remain strict.
+The redundant SVG spelling in corner diagnostic `path` is observational for input
+hashing; current geometry and all corner declarations remain fingerprinted.
+Original-shape observations discard derived canonical cache objects rather than
+retaining a second geometry authority. Capture deep-detaches cached commands.
+
+Retain-only replay and terminal output-paint constraints operate directly on
+canonical geometry without synthetic raster/working-record fields. The terminal
+pass shares the existing numeric color limiter and does not change geometry.
+Focused verification: 136 passed, including new canonical-only replay, semantic
+identity, detached-command and output-palette checks. Full source: 1,260 passed.
+Compiled: 1,256 passed with exactly the four known receipt-fingerprint failures,
+whose audit values remain unchanged. All seven changed execution modules were
+verified as native extensions before the compiled suite.
+
+Compiled MCP radish/Vbird return no artifact errors; all four trace/refine SVGs
+are byte-identical to the assembly checkpoint. Concurrent runs took 37.10s and
+116.00s. A separate instrumented radish run took 24.37s: five working projections
+totalled 5.6ms, five captures 8.3ms, and two terminal paint calls 1.94s. These are
+not controlled before/after performance benchmarks. Targeted lint/diff checks
+pass. No commit, live deployment, restart, or corpus replacement. This migrates
+loop state, not every remaining working executor or proposal builder.
+
+## Canonical source-paint replay — 2026-10-19
+
+`drawing_paint` now owns one canonical implementation for source-paint
+invalidation/refitting, visible surfaces, shared self-symmetry paint, shared root
+gradients and terminal output constraints. It consumes `Drawing` and retained
+source coverage, not `VectorRegion`, mutable `Shape`, or original-shape codecs.
+Recipe all/changed source-paint steps retain canonical state directly. Geometry,
+source observations and kernel annotations are not rewritten by paint replay.
+
+Remaining working callers use `optimizer/paint_binding`: it binds existing
+geometry/coverage, calls that same policy and publishes only fills/diagnostics.
+Unchanged leaves preserve identity; modified leaves retain their original shape,
+footprint and raster objects. No compatibility aliases are retained in the
+canonical module. Existing private invalidation tests now verify the public
+changed-refill result; their repeated-child-ID and ownership checks remain.
+
+Four new canonical tests observed RED-to-GREEN, including replay without working
+observations, occluded sampling, unchanged-fill preservation and source-support
+sampling. Forty-nine focused paint/replay/topology checks pass. Final full
+source: 1,264 passed (134.88s); compiled: 1,260 passed plus exactly the same four
+known `test_fit_output_and_source_receipt_remain_identical` fingerprint failures
+(2/3 × rounded/serif, 128.85s). Their four-case audit values are unchanged. An
+obsolete test patch point moved to the shared numeric fitter, retaining its
+zero-refit guard. All four changed execution modules were verified as native.
+
+Compiled MCP Radish/Vbird succeed without artifact errors; all four v0/v1 SVGs
+are byte-identical to the preceding replay checkpoint. Runs use the checkpoint's
+exact recorded trace settings (Radish 8 colors; Vbird 64), taking 23.49s/93.58s.
+An initial Vbird comparison used 8 colors and was not comparable; no engine fix
+was needed. These are smoke timings, not controlled performance benchmarks.
+Targeted F401/F821 and diff checks pass. The native build is isolated only.
+Remaining geometry handlers/proposal builders and the parent review are not
+declared complete. No commit, live deployment/restart or corpus replacement.
+
+## Canonical selected-operation replay — 2026-10-19
+
+`selected_outcomes` retains changed canonical roots and applies their ordered
+delta directly to `ReplayState`. Unchanged roots retain identity; retired
+subtree annotations and observations are removed. Borrowed raster/coverage is
+resolved against the pinned prior state before later operations can consume it.
+No working geometry, original-shape codec or fitting is needed to apply a saved
+result. Public binding/command validation and generated-output registration now
+consume canonical state/drawings as well.
+
+Selected public-operation dependencies use the full canonical geometry,
+annotations and source observations (not temporary drawing IDs). Existing
+automatic/corner/changed-paint numeric receipt hashes remain strict and unchanged.
+Unreleased recipes captured with the former selected-input hash must be regenerated;
+no compatibility alias or weakened dependency check is retained.
+
+Remaining working proposal handlers capture/project at the explicit
+`optimizer/replay_binding.retain_working_operation_outcome` boundary. The former
+private selected-outcome adapters were removed, not re-exported. This removes
+the chosen-result replay round trip, not all working proposal execution.
+
+Six new cases observed RED-to-GREEN; 103 focused replay tests pass. Full source:
+1,270 passed (159.72s). Compiled: 1,266 passed and exactly the same four known
+`test_fit_output_and_source_receipt_remain_identical` fingerprint failures
+(2/3 × rounded/serif, 147.45s); their four-case audit values are unchanged. All
+three changed execution modules were verified as native extensions.
+
+Exact-settings MCP Radish/Vbird have no artifact errors and all four v0/v1 SVGs
+are byte-identical to the paint checkpoint. Radish additionally replays a real
+two-operation plan to v1.0 without changing its SVG; capture has no errors.
+Smoke timings were 34.53s (Radish including that trial) and 99.75s (Vbird), not
+controlled performance benchmarks. Targeted F401/F821 and diff checks pass.
+The build is isolated; no commit or live deployment/restart. Remaining actual
+handler/proposal boundaries and parent review stay open.
+
+## Canonical proposal-loop state — 2026-10-19
+
+`extend_recipe_with_plan` now carries `ReplayState` between actions and direct
+stages, sharing canonical selected-result capture and source-paint handling with
+replay. Empty plans do not project a working scene. Paint assignment and complete
+paint ordering call the existing canonical actions directly; they require neither
+original-shape records nor retained rasters. Geometry, detection and source-corner
+preparation still use disposable projections at their actual handler boundary.
+No fitting algorithm, tolerance or numeric receipt policy changes in this pass.
+
+Two new cases observed RED-to-GREEN and 99 focused replay tests pass. Final source:
+1,272 passed (161.82s). The final isolated native wheel has 1,268 passed and only
+the same four known 2/3 × rounded/serif receipt-fingerprint failures (143.06s).
+Their four-case audit values remain identical to the selected-result checkpoint;
+the four execution/binding modules were verified as native extensions.
+
+Exact-settings MCP Radish/Vbird capture has no artifact errors and all four v0/v1
+SVGs are byte-identical to the selected-result checkpoint. Radish's real two-op
+manual plan also replays to v1.0 with an identical SVG and no artifact errors.
+Smoke timings were 29.56s (Radish including the manual trial) and 97.16s (Vbird),
+not controlled benchmarks. Targeted F401/F821 and diff checks pass. The initial
+trial wheel/source run were superseded by the final test-helper cleanup; only
+the final wheel was installed, in the isolated runtime.
+The selected-result working capture helper now has no production consumers and
+has moved to `tests/_working_evidence.py`, without a packaged compatibility alias.
+This completes proposal-loop state migration, not the remaining geometry/corner/
+automatic handler projections. No commit or live deployment/restart.
+
+## Canonical geometry proposal handlers — 2026-10-19
+
+Region path/primitive fitting, alignment, clone assignment, explicit symmetry and
+merge/split now call their existing canonical actions directly. The shared
+`publish_drawing_state` owns observation inheritance and annotation invalidation;
+the remaining working publication adapter delegates to it rather than duplicating
+those rules. Source rasters are read independently of the original-shape codec.
+
+Five new cases observed missing-codec failures before the change and then passed.
+The broader run exposed the existing implicit unmaterialized self-symmetry
+preparation requirement. That remains an explicit scoped working boundary until
+its clone-remapping/numeric receipts migrate; it is not silently omitted. After
+preserving it and verifying a null symmetry observation is not a relationship,
+139 focused tests pass. The MCP executor-error test now injects into the canonical
+primitive handler instead of the bypassed working dispatcher; its error assertions
+are unchanged. Seven focused error/new-case checks pass.
+
+Final source: 1,278 passed (262.80s). Final compiled wheel: 1,274 passed and exactly
+the same four known 2/3 × rounded/serif receipt-fingerprint failures (232.26s).
+The four-case audit is identical to the prior checkpoint. Five execution/binding
+modules load as native extensions. Exact-settings MCP Radish/Vbird have no artifact
+errors, with all four v0/v1 SVGs byte-identical to the canonical-proposal checkpoint;
+Radish's two-operation manual plan also preserves its v1 SVG exactly. Timings under
+concurrent validation load are 88.40s/128.27s, not performance benchmarks.
+F401/F821 and diff checks pass. Initial trial runs were superseded by the null-marker
+guard and updated error-injection point; final validation uses the corrected source
+and `canonical-geometry-proposal-final` wheel in the isolated runtime only.
+
+Direct path source correspondence, corner, automatic execution and unmaterialized
+self-symmetry preparation boundaries remain open, as does the parent review. No
+fitting policy change, commit or live deployment/restart.
+
+## Canonical path correspondence and corner replay — 2026-10-19
+
+Direct path operations now call the canonical path executor with retained source
+spans and lineage metadata. The recipe's working public-action dispatcher was
+deleted, not aliased. Display/source command and feature lookup consume ReplayState
+directly, including source-bound corner preparation against base-version commands.
+Corner recipes publish canonical geometry/state; their seam downstream batches
+remain explicit temporary inputs, and existing numeric input receipts stay strict.
+The corner recipe builder no longer uses working replay for ordinary selection,
+raw execution, receipt rebinding or final validation.
+
+Three new cases observed RED-to-GREEN for codec-free path removal/correspondence
+and canonical corner publication. The topology-remap fixture now supplies its
+already-captured canonical state to the changed private lookup; assertions are
+unchanged. One new lineage expectation was corrected to the existing remove-op
+renumbering semantics rather than changing the operation. The first full run found
+seven guards on the deleted dispatcher and a real missing component `path_ids`
+annotation. Guards now target canonical proposal dispatch with the same assertions;
+shared publication derives IDs/fill rule for newly generated concrete path leaves,
+without treating clones as paths. Existing component-cache assertions remain intact.
+The final focused group has 129 passing tests.
+
+Final source: 1,281 passed (145.16s). Compiled: 1,277 passed and exactly the same
+four known 2/3 × rounded/serif receipt-fingerprint failures (134.87s). The four-case
+audit is identical to the preceding checkpoint; seven execution/binding modules
+were verified as native extensions. Exact-settings MCP Radish/Vbird have no
+artifact errors and all four v0/v1 SVGs are byte-identical to the geometry-proposal
+checkpoint. Radish additionally replays a real path `keep` plus fill plan to v1.0
+with an identical SVG. Smoke timings are 29.94s/91.86s, not controlled benchmarks.
+F401/F821 and diff checks pass. The initial trial build/runs were superseded by
+the component-publication fix; the final `canonical-path-corner-final` wheel was
+built and tested only in the isolated runtime.
+Automatic batch execution and unmaterialized self-symmetry preparation remain open;
+numeric receipt projection and downstream seam rebinding are not declared retired.
+No commit or live deployment/restart.
+
+## Canonical basic automatic replay — 2026-10-19
+
+`drawing_automatic.replay_automatic_batches` owns the canonical recipe boundary.
+Eligible root-leaf groups containing only retained primitive choices and corner
+observations install those choices directly, without numeric action execution or
+semantic detection. Input validation remains the exact numeric receipt check,
+shared with the old executor. Accepted diagnostic payloads are shared as well.
+Mixed, scoped, named-output-input and other geometry families remain explicit
+`optimizer/replay_binding.replay_numeric_batches` calls; this is not full automatic
+executor retirement or a performance claim. Producer registration now reads the
+already-canonical ancestry map, removing its extra whole-scene capture helper.
+
+Four new cases observed missing-entry-point RED and then passed, covering empty
+programs, retained primitives, stale input rejection and geometry-preserving
+observations with exact numeric-receipt parity. Fixture setup was corrected to
+provide stable engine IDs and an explicit observation receipt rather than relying
+on corner detection after canonical capture. 121 focused tests pass (6.90s).
+Final source: 1,285 passed (130.17s). Compiled: 1,281 passed and only the same
+four known 2/3 × rounded/serif receipt-fingerprint failures (131.62s); their
+four-case audit values remain identical. Nine execution/binding modules load as
+native extensions. Exact-settings MCP Radish/Vbird have no artifact errors and
+all four v0/v1 SVGs are byte-identical to the path/corner checkpoint. Radish's
+path-keep-plus-fill plan also replays to v1.0 with an identical SVG. Smoke timings
+are 28.16s/92.40s, not controlled benchmarks. F401/F821 and diff checks pass.
+The wheel is installed in the isolated test runtime only; no commit or live
+deployment/restart. Other automatic geometry/proposal families, self-symmetry
+preparation, numeric receipt projection and seam rebinding remain open, as does
+the parent review.
+
+## Remaining adapter inventory — 2026-10-20
+
+This inventory supersedes earlier shorthand such as "remaining clone/symmetry
+families". Their geometry implementations are already shared engine operations;
+they must not be listed as algorithms still needing migration.
+
+| Boundary | Actual remaining responsibility | Status |
+| --- | --- | --- |
+| `drawing_automatic.replay_automatic_batches` | Install selected geometry and diagnostics in canonical state | Direct single-leaf replay includes scoped children, primitive sequences, simplify, smooth, declared corner normalization, intrinsic symmetry and observations |
+| `replay_identity.bind_automatic_inputs` and `canonical_input_revision` | Validate semantic input receipts and source-mask bindings | Direct from retained state; obsolete working-region receipt wrappers deleted |
+| `optimizer/replay_binding.replay_numeric_batches` | Preserve multi-region transactions, named-output dependencies, replacement masks and complex publication | Explicit boundary around already-shared relationship, topology, occlusion and seam operations; not a second implementation of those algorithms |
+| `drawing_replay._batch_inputs_from_start` and `_rebase_downstream_batches` | Rebind downstream seam endpoints after corner declarations | Still consumes working snapshots; current exact-geometry restriction remains unchanged |
+| `drawing_refine` / optimizer framework and proposal passes | Discover, score and record automatic choices from raster observations | Working proposal boundary remains; canonical Drawing is still authoritative between recipe steps |
+| `drawing_adapter` and optimizer binding modules | Project canonical selections and source observations into the above consumers | Remove consumers before deleting these codecs; relocating them is not retirement |
+
+The direct path route and proposal route now share `select_automatic_paths`;
+the operation settings and numerical kernels are not duplicated. Primitive
+replacement explicitly retires old path annotations, matching working publication.
+No fit thresholds, acceptance rules or detector behavior changed.
+
+Ruling: keep whole-group numeric replay for scoped or otherwise unsupported
+transactions. A two-parent fixture with repeated child IDs showed why: after a
+child becomes a primitive, the historical receipt contains the preserved parent
+footprint and mask snapshot, whereas canonical projection derives that footprint
+from the children. Enabling the direct route caused the next exact receipt check
+to reject the result. Do not bypass that check or change footprint semantics as
+an incidental adapter cleanup. The scoped regression retains exact result and
+receipt parity through the explicit transaction boundary.
+
+The first full-suite run also exposed the same receipt coupling without a parent:
+four integration checks failed after primitive replacement because a later empty
+batch hashes the optimizer's SVG primitive footprint, not Skia's native conic
+encoding. Primitive groups with any later batch therefore retain whole-group
+numeric execution as well. This preserves the existing validation contract; it
+does not retry after a validation failure or weaken stale-input detection.
+
+This closes the redundant direct path-publication round trip, not all transient
+working-record use. Full retirement requires one explicit receipt/transaction
+contract change, followed by migration of the remaining consumers above; it does
+not require reimplementing clone, symmetry, topology or seam geometry.
+
+Verification: six additional regression cases cover the three direct path
+choices, intrinsic symmetry, primitive-annotation retirement and repeated scoped
+child IDs. The targeted integration rerun passed 55 tests; the final full source
+suite passed 1,291 tests (965 warnings, 132.09s). F401/F821 and diff checks pass.
+The optional renderer is absent in this source environment, so this is not a
+render-scored quality or native-wheel certification. No native rebuild, commit,
+deployment, server restart or corpus overwrite was performed for this cleanup.
+
+### Semantic receipt follow-up — 2026-10-20
+
+The earlier whole-group guards for scoped children and primitive sequences are
+now removed. Their root cause was an input-identity contract that hashed derived
+footprint encodings, including stale parent footprints. The new internal
+`vectormark.replay.input.v2` payload hashes typed region inputs, selected geometry,
+original source geometry, raster/coverage observations, fill, ordering, identity,
+and semantic diagnostics, but not a disposable footprint. Numeric proposal
+recording and canonical replay share that contract and its validation error.
+No legacy-receipt fallback is retained; prior internal receipts must be recorded
+again, consistent with the unreleased API policy.
+
+`canonical_input_revision` and automatic input binding construct no VectorRegion
+objects. The old `automatic_batch_masks` and `replay_state_input_revision` names
+are deleted, with callers moved to the canonical owner. A shared leaf Shape codec
+serves existing numerical consumers and receipt projection; cloning/paint codecs
+are not duplicated. This retires receipt projection, not the remaining complex
+transaction executor or proposal-discovery boundary.
+
+Final verification: 1,298 source tests pass (138.59s); compiled wheel has 1,294
+passing tests and only the same four known 2/3 × rounded/serif feature-fingerprint
+failures (126.89s), with all four fingerprint pairs unchanged from the preceding
+native build. Six changed modules were verified as native extensions; 88 focused
+compiled checks pass. Lint and diff checks pass. Real in-process FastMCP requests
+reused the exact Radish/Vbird inputs and settings: all four v0/v1 SVGs are
+byte-identical to the preceding automatic-replay checkpoint. Smoke timings were
+18.77s/82.18s, not controlled benchmarks. Reports/SVGs are separate artifacts under
+`native-canonical-receipts`; corpus outputs were not overwritten. The verified
+wheel is installed only in the isolated test runtime, not the live MCP server.
+
+### Canonical seam rebinding and transaction outputs — 2026-10-20
+
+Seam input templates, endpoint correspondence and downstream receipt rebasing now
+retain ReplayState snapshots instead of projecting entire working scenes. Scoped
+endpoint lookup uses full region ancestry. Exact command-topology rejection is
+unchanged; annotation restoration publishes typed geometry without rounding its
+coordinates or changing siblings. Intermediate seam templates deliberately skip
+terminal topology normalization, matching their prior execution order.
+
+ReplayInputResolver now owns revision validation and named-output addressing for
+both canonical and remaining numerical transactions. Pass inputs remain snapshots;
+named inputs read raw producer selections before accepted-operation diagnostics
+are appended. Eligible leaf transactions now include symbolic clone assignment,
+using the existing assign_clone operation and preserving independent target paint
+and observations. No fitting or clone-detection algorithm changes are included.
+
+This does not retire the working transaction boundary for structural multi-region
+operations, inline clones, covering simplification, or proposal discovery.
+The final source suite passes 1,305 tests (983 warnings, 130.70s). The compiled
+suite passes 1,301 with only the same four known feature-fingerprint failures
+(120.95s); their hash values match the preceding receipt build exactly. Six
+changed modules are confirmed native extensions. Lint and diff checks pass.
+Exact-settings FastMCP Radish and Vbird checks retain all four v0/v1 SVGs byte for
+byte (18.60s/77.08s, not controlled performance measurements). Artifacts are
+separate under `native-canonical-seam-multi`. The final wheel is installed only
+in the isolated test runtime. No commit or live deployment is included.
+
+### Structural automatic transaction publication — 2026-10-20
+
+Canonical replay now publishes multiple selected replacements, retires consumed
+roots, preserves pass-snapshot mask ownership and registers generated descendant
+outputs. This enables covering simplification, inline clone copies, mirrored
+pairs and occlusion reconstruction without a working scene. Existing geometry
+operations and numeric affine projection policy are reused, not reimplemented.
+
+The numerical proposal framework and canonical replay share one replacement-mask
+assignment kernel, including preserved input masks, split rasterization and union
+ownership. Generated-tree observation capture is also shared; its canonical path
+does not allocate VectorRegion objects. An explicit empty metadata projection is
+preserved rather than gaining public-path defaults during replay. Scoped output
+observations retain their full parent ancestry, and newly generated named children
+can feed later inline-copy operations in the same batch.
+
+Eight regression cases cover these routes and compare geometry, source observations
+and exact receipts with the existing executor while prohibiting working-scene
+execution. The first four and two subsequent scope/named-source failures were
+observed before their fixes. A final clone-instance case also exposed the need
+to retain resolved instance-outline projection and corner-ingress diagnostics,
+rather than reclassifying the copy as its concrete source primitive. Both
+consumers now share the instance projection policy. A structural snapshot-isolation
+case then verified that a later pass input restores original observations even
+after that identity was replaced by a generated branch. Canonical transaction
+inputs now bind immutable geometry/observation/metadata bundles; named outputs
+capture their own bundles before publication diagnostics are added. Closure source
+verification passes 1,313 tests (983 warnings, 144.97s); 64 focused compiled checks
+pass. The full native suite has 1,309 passes and only the same four known
+2/3 × rounded/serif feature-fingerprint failures (983 warnings, 141.53s), with
+all twelve printed fingerprint tokens unchanged from the prior seam/multi build.
+Five changed modules are confirmed native extensions. Exact-settings FastMCP
+Radish/Vbird v0/v1 SVGs remain byte-identical (21.37s/92.18s; not controlled
+benchmarks). Closure artifacts are under `native-canonical-structural-closure`;
+the corrected wheel is installed only in the isolated runtime. Earlier structural
+wheels and intermediate verification results are superseded. Lint and diff checks
+pass. Structural self-symmetry, seam/topology and
+dependent-reference refresh transaction families, plus proposal discovery, still
+retain an explicit numerical boundary; this is not whole-model retirement.
+No commit, live deployment or corpus overwrite is included.

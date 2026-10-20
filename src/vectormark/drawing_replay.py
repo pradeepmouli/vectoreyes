@@ -17,20 +17,21 @@ from .corner_recipe import (
     RemoveCorner,
     ReplaceCorner,
 )
-from .drawing import Drawing
-from .path_topology import component_paths
-from .drawing_adapter import (
-    apply_region_geometry, drawing_from_vector_regions, vector_region_address_index,
-    restore_selected_roots, working_region_evidence,
-    publish_region_update, restore_corner_annotations, shape_from_region_geometry,
-)
+from .drawing import Drawing, DrawingRegion, _walk_regions
+from .drawing_corner_actions import EditablePathGeometry
+from .drawing_adapter import current_shape_for_region
+from .fit import Shape
 from .drawing_actions import (
     ActionSettings,
-    ActionSettingsOverride,
     AddCornerAction,
     DrawingPlan,
     FitPathDrawingAction,
     FitPrimitiveAction,
+    AlignAction,
+    AssignCloneAction,
+    SetSymmetryAction,
+    MergeAction,
+    SplitAction,
     RemoveCornerAction,
     ReplaceCornerAction,
     SetFillAction,
@@ -38,6 +39,17 @@ from .drawing_actions import (
     StitchAction,
     UpdateGeometryAction,
 )
+from .optimizer.replay_binding import (
+    capture_replay_state, working_regions_from_state,
+)
+from .replay_state import ReplayState, publish_drawing_state, retained_region_raster
+from .replay_identity import canonical_input_revision, scoped_input_regions
+from .selected_outcomes import apply_selected_outcome, retain_selected_outcome, selected_input_revision, region_ancestries
+from . import drawing_region_actions, drawing_relationships, drawing_partition, path_operations
+from .drawing_topology import normalize_drawing_topology
+from .drawing_automatic import replay_automatic_batches
+from .drawing_relationships import replace_region
+from .drawing_plan import PlanValidationError
 from .drawing_recipe import (
     EvidenceTargetBinding,
     EffectiveDrawingRecipe,
@@ -48,7 +60,6 @@ from .drawing_recipe import (
     NamedOutputBinding,
     ReplayRecord,
     RecipeOperation,
-    SelectedOperationOutcome,
     RecipeStep,
     ResolvedCornerEdit,
     ResolveOriginalPaintOperation,
@@ -58,14 +69,13 @@ from .drawing_recipe import (
     operation_outcome_dependencies,
     snapshot_geometry_evidence,
     snapshot_paint_evidence,
+    _snapshot_canonical,
     validate_replay_record,
 )
 from .drawing_paint import (
-    apply_output_fill_settings, refill_all_regions_from_source, refill_changed_regions_from_source,
+    constrain_drawing_output_paint, refill_drawing_from_source, source_paint_masks,
 )
 from .drawing_refine import (
-    DrawingRegions,
-    refine,
     ordered_path_operation_stages,
     resolved_action_settings,
     run_detection_with_intent,
@@ -83,23 +93,18 @@ from .optimizer.automatic_replay import (
     PathEndpointRef,
     ReplayBatch,
     bind_intent,
-    input_revision,
-    replay_batches,
 )
-from .drawing_topology import normalize_retained_topology
-from .optimizer.symmetry_materialize import materialize_self_symmetry
-from .optimizer.vector_region import VectorRegion, _parse_subpaths
+from .optimizer.topology_binding import normalize_working_topology
+from .path_sampling import _parse_subpaths
 from .drawing_seams import _command_id as seam_command_id
 from .drawing_seams import _path_id as seam_path_id
 from .path_geometry import AffineTransform
 from .path_geometry import (
-    CloneGeometry,
     CornerAnchor,
     PathGeometry,
     PathGeometryWithCutouts,
     CompoundPathGeometry,
     PathGeometryWithSymmetry,
-    PrimitiveGeometry,
     parse_svg_paths,
 )
 from . import drawing_corner_actions
@@ -107,12 +112,10 @@ from .drawing_corner_actions import displayed_corner_id as _displayed_corner_id
 
 
 @dataclass(frozen=True)
-class ReplayExecution:
+class ReplayExecution(ReplayState):
     """A canonical output and its executor-issued binding receipt."""
 
-    drawing: Drawing
     replay: ReplayRecord
-    regions: DrawingRegions
 
 
 @dataclass(frozen=True)
@@ -137,20 +140,20 @@ def raster_pixels(source) -> np.ndarray:
     return np.array(pixels[:, :, :3], copy=True)
 
 
-def replay_regions(
+def replay_drawing(
     evidence: GeometryEvidence,
     paint: PaintEvidence,
     recipe: EffectiveDrawingRecipe,
     *, finalize_output: bool = True,
-) -> DrawingRegions:
+) -> ReplayState:
     """Replay exact actions on a fresh evidence snapshot, never a parent drawing."""
-    regions, _producers, _corner_replays = _replay_regions_with_producers(
+    state, _producers, _corner_replays = _replay_drawing_with_producers(
         evidence, paint, recipe, finalize_output=finalize_output
     )
-    return regions
+    return state
 
 
-def _replay_regions_with_producers(
+def _replay_drawing_with_producers(
     evidence: GeometryEvidence,
     paint: PaintEvidence,
     recipe: EffectiveDrawingRecipe,
@@ -159,7 +162,7 @@ def _replay_regions_with_producers(
     rebind_from_index: int = 0,
     finalize_output: bool = True,
 ) -> tuple[
-    DrawingRegions,
+    ReplayState,
     dict[str, _ProducedTarget],
     list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
 ]:
@@ -167,16 +170,16 @@ def _replay_regions_with_producers(
         raise ValueError("effective recipe evidence revision mismatch")
     if recipe.engine_revision != evidence.engine_revision:
         raise ValueError("effective recipe engine revision mismatch")
-    regions = tuple(normalize_retained_topology(evidence.trace_roots))
+    state = ReplayState(_snapshot_canonical(evidence.drawing), evidence.shape_metadata, evidence.region_evidence)
     producers: dict[str, _ProducedTarget] = {}
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]] = []
-    paint_input: DrawingRegions | None = None
+    paint_input: ReplayState | None = None
     index = 0
     while index < len(recipe.steps):
         step = recipe.steps[index]
         if isinstance(step, ReplayBatch):
             if paint_input is None:
-                paint_input = regions
+                paint_input = state
             batches = []
             while index < len(recipe.steps) and isinstance(
                 recipe.steps[index], ReplayBatch
@@ -185,14 +188,8 @@ def _replay_regions_with_producers(
                 if rebound_steps is not None:
                     rebound_steps.append(recipe.steps[index])
                 index += 1
-            group_masks = {
-                int(root.id): np.asarray(root.raster, dtype=bool).copy()
-                for root in regions
-            }
-            regions = tuple(normalize_retained_topology(replay_batches(
-                list(regions), tuple(batches), masks=group_masks
-            )))
-            _register_automatic_outputs(tuple(batches), regions, producers)
+            state = replay_automatic_batches(state, tuple(batches))
+            _register_automatic_outputs(tuple(batches), state, producers)
             continue
         if isinstance(step, ResolveOriginalPaintOperation):
             if (
@@ -201,7 +198,7 @@ def _replay_regions_with_producers(
                 and step.scope == "changed"
                 and paint_input is not None
             ):
-                step = replace(step, input_revision=input_revision(list(paint_input)))
+                step = replace(step, input_revision=canonical_input_revision(paint_input))
             if evidence.geometry_to_paint != AffineTransform():
                 raise ValueError(
                     "non-identity geometry-to-paint refill requires an exact sampler"
@@ -210,18 +207,20 @@ def _replay_regions_with_producers(
             if step.scope == "retain":
                 pass
             elif step.scope == "all":
-                regions = refill_all_regions_from_source(
-                    regions,
-                    rgb,
+                state = replace(state, drawing=refill_drawing_from_source(
+                    state.drawing, rgb, source_masks=source_paint_masks(state.region_evidence),
+                    invalidate_all=True,
                     share_root_gradients=step.share_root_gradients,
                     allow_gradients=paint.output_settings.allow_gradients,
-                )
+                ))
             else:
                 if paint_input is None:
                     raise ValueError("changed paint resolution has no preceding geometry input")
-                if input_revision(list(paint_input)) != step.input_revision:
+                if canonical_input_revision(paint_input) != step.input_revision:
                     raise ValueError("changed paint resolution input revision mismatch")
-                regions = refill_changed_regions_from_source(paint_input, regions, rgb, allow_gradients=paint.output_settings.allow_gradients)
+                state = replace(state, drawing=refill_drawing_from_source(
+                    state.drawing, rgb, source_masks=source_paint_masks(state.region_evidence),
+                    before=paint_input.drawing, allow_gradients=paint.output_settings.allow_gradients))
             paint_input = None
             if rebound_steps is not None:
                 rebound_steps.append(step)
@@ -229,10 +228,10 @@ def _replay_regions_with_producers(
             continue
         if isinstance(step, ApplyCornerRecipeOperation):
             if rebound_steps is not None and index >= rebind_from_index:
-                step = replace(step, input_revision=input_revision(list(regions)))
+                step = replace(step, input_revision=canonical_input_revision(state))
             if paint_input is None:
-                paint_input = regions
-            regions, corner_replay = _execute_corner_recipe(step, evidence, regions)
+                paint_input = state
+            state, corner_replay = _execute_corner_recipe(step, evidence, state)
             corner_replays.append((step, corner_replay))
             if rebound_steps is not None:
                 rebound_steps.append(step)
@@ -243,29 +242,39 @@ def _replay_regions_with_producers(
             if self_contained_paint and paint_input is not None:
                 raise ValueError("public paint action follows unresolved geometry paint")
             if not self_contained_paint and paint_input is None:
-                paint_input = regions
+                paint_input = state
             _validate_operation_bindings(
                 step,
-                regions,
-                drawing_id="recipe-binding",
+                state,
                 evidence_revision=evidence.revision,
                 producers=producers,
             )
-            before_operation = regions
-            regions = _execute_public_operation(
-                evidence, paint, step, regions, rgb=None,
-                recipe=replace(recipe, steps=recipe.steps[:index]),
-                corner_replays=corner_replays,
-            )
-            _register_public_outputs(step, before_operation, regions, producers)
+            before_operation = state
+            if step.selected_outcome is not None:
+                expected = operation_outcome_dependencies(step, evidence=evidence,
+                    paint=paint, upstream=replace(recipe, steps=recipe.steps[:index]),
+                    input_revision=selected_input_revision(state))
+                if expected != step.selected_outcome.dependency_revision:
+                    raise ValueError("selected operation dependencies changed; submit a new proposal")
+                state = apply_selected_outcome(step.selected_outcome, state)
+            else:
+                state = _propose_public_operation(
+                    evidence, paint, step, state,
+                    recipe=replace(recipe, steps=recipe.steps[:index]),
+                    corner_replays=corner_replays,
+                )
+            _register_public_outputs(step, before_operation.drawing, state.drawing, producers)
             if rebound_steps is not None:
                 rebound_steps.append(step)
             index += 1
             continue
         raise TypeError(f"unsupported effective recipe step: {type(step).__qualname__}")
     if finalize_output:
-        regions = apply_output_fill_settings(regions, raster_pixels(paint.source), paint.output_settings)
-    return regions, producers, corner_replays
+        state = replace(state, drawing=constrain_drawing_output_paint(
+            state.drawing, raster_pixels(paint.source), paint.output_settings))
+    state = replace(state, drawing=replace(state.drawing,
+        background=paint.background, output_settings=paint.output_settings))
+    return state, producers, corner_replays
 
 
 def _path_geometry(
@@ -298,18 +307,29 @@ def _path_geometries(
     return ()
 
 
+def restore_corner_annotations(state: ReplayState, *, target_region_id: str,
+                               annotated: EditablePathGeometry) -> ReplayState:
+    """Restore declared features without projecting or rounding the selected paths."""
+    target = state.drawing.region(target_region_id)
+    if not _path_geometries(target.geometry):
+        raise ValueError('corner downstream replay target is not a path')
+    target = replace(target, geometry=drawing_corner_actions.rebind_corner_annotations(target.geometry, annotated))
+    return publish_drawing_state(state, replace_region(state.drawing, target),
+        shape_metadata=state.shape_metadata)
+
+
 def _execute_corner_recipe(
     application: ApplyCornerRecipeOperation,
     evidence: GeometryEvidence,
-    regions: DrawingRegions,
-) -> tuple[DrawingRegions, CornerRecipeReplay]:
+    state: ReplayState,
+) -> tuple[ReplayState, CornerRecipeReplay]:
     if application.evidence_revision != evidence.revision:
         raise ValueError("corner recipe application evidence binding is stale")
-    if _region_ancestries(regions, "corner-binding").get(
+    if region_ancestries(state).get(
         application.target_region_id
     ) != application.region_ancestry:
         raise ValueError("corner recipe application region binding is stale")
-    if input_revision(list(regions)) != application.input_revision:
+    if canonical_input_revision(state) != application.input_revision:
         raise ValueError("corner recipe application input revision is stale")
     matches = tuple(
         item
@@ -321,71 +341,27 @@ def _execute_corner_recipe(
     if len(matches) != 1:
         raise ValueError("corner recipe source binding is absent or ambiguous")
     source = matches[0]
-    current = next(
-        leaf
-        for root in regions
-        for leaf in root.leaves()
-        if leaf.drawing_id == application.target_region_id
-    )
-    if current.current is None or current.current.kind != "path":
+    current = state.drawing.region(application.target_region_id)
+    if not current.is_leaf or not _path_geometries(current.geometry):
         raise ValueError("corner recipe target is not a path")
-    drawing = drawing_from_vector_regions(
-        "corner-execution", width=1.0, height=1.0, regions=regions
-    )
+    drawing = state.drawing
     updated, replay = drawing_corner_actions.apply_region_corner_recipe(
         drawing.region(application.target_region_id), path_id=application.target_path_id,
         recipe=application.recipe, evidence=source.fit,
     )
     replaced = updated.geometry
     path_ids = tuple(path.path.id for path in _path_geometries(replaced))
-    result = publish_region_update(updated, regions, shape_metadata={updated.id: {
+    result = publish_drawing_state(state, replace_region(drawing, updated), shape_metadata={updated.id: {
         'path_ids': path_ids, 'fill_rule': replaced.fill_rule if isinstance(replaced, CompoundPathGeometry)
         else 'evenodd' if isinstance(replaced, PathGeometryWithCutouts) else 'nonzero',
     }})
     if application.downstream_batches:
-        masks = {
-            int(root.id): np.asarray(root.raster, dtype=bool).copy()
-            for root in result
-        }
-        result = tuple(normalize_retained_topology(replay_batches(
-            list(result), application.downstream_batches, masks=masks
-        )))
-        result = restore_corner_annotations(
-            result,
-            target_region_id=application.target_region_id,
-            annotated=replaced,
-        )
+        result = replay_automatic_batches(result, application.downstream_batches)
+        result = restore_corner_annotations(result, target_region_id=application.target_region_id, annotated=replaced)
     return result, replay
 
 
-def _region_ancestries(
-    regions: DrawingRegions, drawing_id: str
-) -> dict[str, tuple[int, ...]]:
-    drawing = drawing_from_vector_regions(
-        drawing_id,
-        width=1.0,
-        height=1.0,
-        regions=regions,
-    )
-    result: dict[str, tuple[int, ...]] = {}
-
-    def visit(source, canonical, ancestry: tuple[int, ...]) -> None:
-        result[canonical.id] = ancestry
-        for source_child, canonical_child in zip(
-            source.children, canonical.children, strict=True
-        ):
-            visit(
-                source_child,
-                canonical_child,
-                (*ancestry, int(source_child.id)),
-            )
-
-    for source, canonical in zip(regions, drawing.regions, strict=True):
-        visit(source, canonical, (int(source.id),))
-    return result
-
-
-def _action_region_roles(action, regions: DrawingRegions) -> tuple[tuple[str, str], ...]:
+def _action_region_roles(action, region_ids) -> tuple[tuple[str, str], ...]:
     payload = action.model_dump(exclude_none=True)
     roles: list[tuple[str, str]] = []
     for field_name in ("source", "target", "reference"):
@@ -403,7 +379,7 @@ def _action_region_roles(action, regions: DrawingRegions) -> tuple[tuple[str, st
     if isinstance(action, StitchAction) and action.targets is None:
         roles.extend(
             (f"targets.{index}", region_id)
-            for index, region_id in enumerate(_region_ancestries(regions, "binding"))
+            for index, region_id in enumerate(region_ids)
         )
     return tuple(dict.fromkeys(roles))
 
@@ -428,10 +404,7 @@ def _action_command_roles(action) -> tuple[tuple[str, str], ...]:
     return tuple(roles)
 
 
-def _command_owners(regions: DrawingRegions) -> dict[str, str]:
-    drawing = drawing_from_vector_regions(
-        "recipe-command-binding", width=1.0, height=1.0, regions=regions
-    )
+def _command_owners(drawing: Drawing) -> dict[str, str]:
     owners: dict[str, str] = {}
     for root in drawing.regions:
         for leaf in root.leaves():
@@ -459,14 +432,14 @@ def bind_recipe_operation(
     action,
     settings,
     evidence_revision: str,
-    regions: DrawingRegions,
+    state: ReplayState,
     producers: dict[str, _ProducedTarget] | None = None,
 ) -> RecipeOperation:
     """Bind an accepted public action to exact current region ancestry."""
-    ancestries = _region_ancestries(regions, "binding")
+    ancestries = region_ancestries(state)
     producers = producers or {}
     bindings = []
-    for role, region_id in _action_region_roles(action, regions):
+    for role, region_id in _action_region_roles(action, ancestries):
         try:
             ancestry = ancestries[region_id]
         except KeyError as exc:
@@ -488,7 +461,7 @@ def bind_recipe_operation(
                 target_region_id=region_id,
             )
         )
-    command_owners = _command_owners(regions)
+    command_owners = _command_owners(state.drawing)
     for role, command_id in _action_command_roles(action):
         try:
             region_id = command_owners[command_id]
@@ -525,16 +498,15 @@ def bind_recipe_operation(
 
 def _validate_operation_bindings(
     operation: RecipeOperation,
-    regions: DrawingRegions,
+    state: ReplayState,
     *,
-    drawing_id: str,
     evidence_revision: str,
     producers: dict[str, _ProducedTarget],
 ) -> None:
-    ancestries = _region_ancestries(regions, drawing_id)
-    command_owners = _command_owners(regions)
+    ancestries = region_ancestries(state)
+    command_owners = _command_owners(state.drawing)
     expected = [
-        *((role, value, None) for role, value in _action_region_roles(operation.action, regions)),
+        *((role, value, None) for role, value in _action_region_roles(operation.action, ancestries)),
         *((role, command_owners.get(value), value) for role, value in _action_command_roles(operation.action)),
     ]
     if any(region_id is None for _role, region_id, _command in expected):
@@ -581,12 +553,12 @@ def _validate_operation_bindings(
 
 def _register_automatic_outputs(
     batches: tuple[ReplayBatch, ...],
-    regions: DrawingRegions,
+    state: ReplayState,
     producers: dict[str, _ProducedTarget],
 ) -> None:
     by_ancestry = {
         ancestry: region_id
-        for region_id, ancestry in _region_ancestries(regions, "automatic-output").items()
+        for region_id, ancestry in region_ancestries(state).items()
     }
     for batch in batches:
         for record in batch.operations:
@@ -600,110 +572,92 @@ def _register_automatic_outputs(
 
 def _register_public_outputs(
     operation: RecipeOperation,
-    before: DrawingRegions,
-    current: DrawingRegions,
+    before: Drawing,
+    current: Drawing,
     producers: dict[str, _ProducedTarget],
 ) -> None:
-    previous = set(_region_ancestries(before, "public-output"))
-    for region_id in set(_region_ancestries(current, "public-output")) - previous:
+    previous = {region.id for root in before.regions for region in _walk_regions(root)}
+    for region_id in {region.id for root in current.regions for region in _walk_regions(root)} - previous:
         producers[region_id] = _ProducedTarget(operation.id, region_id)
 
 
-def _execute_public_operation(
-    evidence: GeometryEvidence,
-    paint: PaintEvidence,
-    operation: RecipeOperation,
-    regions: DrawingRegions,
-    *,
-    rgb: np.ndarray | None,
-    recipe: EffectiveDrawingRecipe,
+def _propose_public_operation(
+    evidence: GeometryEvidence, paint: PaintEvidence, operation: RecipeOperation,
+    state: ReplayState, *, recipe: EffectiveDrawingRecipe,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
-) -> DrawingRegions:
-    if operation.selected_outcome is not None:
-        expected = operation_outcome_dependencies(
-            operation, evidence=evidence, paint=paint, upstream=recipe,
-            input_revision=input_revision(list(regions)),
-        )
-        if expected != operation.selected_outcome.dependency_revision:
-            raise ValueError("selected operation dependencies changed; submit a new proposal")
-        return _apply_selected_outcome(operation.selected_outcome, regions)
+) -> ReplayState:
+    """Execute canonical actions directly; project only remaining working handlers."""
     action = operation.action
-    if isinstance(action, (AddCornerAction, ReplaceCornerAction, RemoveCornerAction)):
-        raise ValueError("corner edits must use their source-bound recipe executor")
-    if isinstance(action, StitchAction):
-        raise ValueError("stitch must retain accepted concrete seam operations")
-    if isinstance(action, UpdateGeometryAction) and any(
-        item.op in {"simplify", "normalize_corners"} for item in action.ops
-    ):
-        raise ValueError(
-            "semantic path cleanup must retain accepted concrete operations"
-        )
-    action = action.model_copy(update={"settings": ActionSettingsOverride()})
-    plan = DrawingPlan(
-        version="vectormark.plan.v1",
-        drawing_id="recipe-execution",
-        base_version="v0",
-        settings=ActionSettingsOverride(**operation.settings.model_dump()),
-        ops=(action,),
-    )
-    return refine(
-        evidence.trace,
-        regions,
-        plan,
-        rgb=rgb,
-        fit_sources=(
-            _fit_source_spans(evidence, regions, action, corner_replays, recipe)
-            if isinstance(action, UpdateGeometryAction) else None
-        ),
-    )
-
-
-def _apply_selected_outcome(
-    outcome: SelectedOperationOutcome, regions: DrawingRegions,
-) -> DrawingRegions:
-    return restore_selected_roots(outcome.regions, outcome.root_order, regions,
-        shape_metadata=outcome.shape_metadata, region_evidence=outcome.region_evidence)
-
-
-def _retain_selected_outcome(
-    operation: RecipeOperation, before: DrawingRegions, after: DrawingRegions,
-    *, evidence: GeometryEvidence, paint: PaintEvidence, upstream: EffectiveDrawingRecipe,
-) -> tuple[RecipeOperation, DrawingRegions]:
-    drawing = drawing_from_vector_regions("selected-operation", width=1, height=1, regions=after)
-    prior = {root.drawing_id: input_revision([root]) for root in before}
-    selected = tuple(root for root, native_root in zip(drawing.regions, after)
-        if prior.get(root.id) != input_revision([native_root]))
-    native = {leaf.drawing_id: leaf for root in after for leaf in root.leaves()}
-    metadata = {}
-    for root in selected:
-        for leaf in root.leaves():
-            target = native[leaf.id]
-            assert target.current is not None
-            core_params = {} if isinstance(leaf.geometry, CloneGeometry) else shape_from_region_geometry(leaf, {}).params
-            metadata[leaf.id] = {key: value for key, value in target.current.params.items()
-                if key not in core_params and key != "canonical_clone_geometry"}
-    outcome = SelectedOperationOutcome(
-        dependency_revision=operation_outcome_dependencies(
-            operation, evidence=evidence, paint=paint, upstream=upstream,
-            input_revision=input_revision(list(before)),
-        ),
-        regions=selected, root_order=tuple(root.id for root in drawing.regions), shape_metadata=metadata,
-        region_evidence=working_region_evidence(tuple(root for root in after if root.drawing_id in {item.id for item in selected}), baseline=before),
-    )
-    # Capture and reuse traverse the same representation boundary, so following
-    # steps bind to exactly the same geometry and metadata in either case.
-    return replace(operation, selected_outcome=outcome), _apply_selected_outcome(outcome, before)
+    if isinstance(action, SetFillAction):
+        updated = drawing_region_actions.set_region_fill(state.drawing.region(action.target), action)
+        return replace(state, drawing=replace_region(state.drawing, updated))
+    if isinstance(action, SetZOrderAction):
+        return replace(state, drawing=drawing_region_actions.set_drawing_z_order(state.drawing, action))
+    if any(not region.is_leaf and isinstance(symmetry := region.diagnostics.get('symmetry'), Mapping)
+            and symmetry.get('mode') == 'self' and not symmetry.get('materialized')
+            for root in state.drawing.regions for region in _walk_regions(root)):
+        # The remaining self-symmetry preparation boundary owns scoped clone
+        # remapping and its numeric receipts; do not silently skip it here.
+        from .optimizer.symmetry_materialize import materialize_self_symmetry
+        state = capture_replay_state(normalize_working_topology(
+            materialize_self_symmetry(working_regions_from_state(state))), paint.canvas)
+    drawing = state.drawing
+    if isinstance(action, (FitPathDrawingAction, FitPrimitiveAction)):
+        execute = (drawing_region_actions.fit_region_path if isinstance(action, FitPathDrawingAction)
+            else drawing_region_actions.fit_region_primitive)
+        try:
+            updated = execute(drawing.region(action.target), action,
+                raster=retained_region_raster(state, action.target), settings=operation.settings)
+        except ValueError as error:
+            raise PlanValidationError('/ops/0/target', str(error)) from error
+        drawing = replace_region(drawing, updated)
+    elif isinstance(action, (AlignAction, AssignCloneAction, SetSymmetryAction)):
+        execute = (drawing_relationships.align_region if isinstance(action, AlignAction)
+            else drawing_relationships.assign_clone if isinstance(action, AssignCloneAction)
+            else drawing_relationships.set_region_symmetry)
+        drawing = replace_region(drawing, execute(drawing, action))
+    elif isinstance(action, MergeAction):
+        drawing = drawing_partition.merge_regions(drawing, action)
+    elif isinstance(action, SplitAction):
+        try:
+            drawing = drawing_partition.split_region(drawing, action)
+        except ValueError as error:
+            raise PlanValidationError('/ops/0/divider', str(error)) from error
+    elif isinstance(action, UpdateGeometryAction):
+        if any(item.op in {'simplify', 'normalize_corners'} for item in action.ops):
+            raise ValueError('semantic path cleanup must retain accepted concrete operations')
+        target = drawing.region(action.target)
+        try:
+            updated, receipt = path_operations.apply_region_path_operations(
+                drawing, action, settings=operation.settings,
+                fit_sources=_fit_source_spans(evidence, state, action, corner_replays, recipe),
+                source_text=target.geometry.to_svg_d(),
+                previous_lineage=state.shape_metadata.get(target.id, {}).get('path_command_lineage'))
+        except ValueError as error:
+            raise PlanValidationError('/ops/0/ops', str(error)) from error
+        metadata = dict(receipt)
+        if 'fill_rule' in state.shape_metadata.get(target.id, {}):
+            metadata['fill_rule'] = state.shape_metadata[target.id]['fill_rule']
+        return publish_drawing_state(state, normalize_drawing_topology(replace_region(drawing, updated)),
+            shape_metadata={updated.id: metadata})
+    elif isinstance(action, (AddCornerAction, ReplaceCornerAction, RemoveCornerAction)):
+        raise ValueError('corner edits must use their source-bound recipe executor')
+    elif isinstance(action, StitchAction):
+        raise ValueError('stitch must retain accepted concrete seam operations')
+    else:
+        raise ValueError(f'unsupported public recipe action: {action.op}')
+    return publish_drawing_state(state, normalize_drawing_topology(drawing))
 
 
 def _fit_source_spans(
     evidence: GeometryEvidence,
-    regions: DrawingRegions,
+    state: ReplayState,
     action: UpdateGeometryAction,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
     recipe: EffectiveDrawingRecipe,
 ) -> dict[str, np.ndarray]:
     """Resolve fitted public boundaries to exact original material spans."""
-    drawing = drawing_from_vector_regions("fit-source", width=1.0, height=1.0, regions=regions)
+    drawing = state.drawing
     target = next((leaf for root in drawing.regions for leaf in root.leaves() if leaf.id == action.target), None)
     if target is None:
         raise ValueError("fit source region is absent")
@@ -724,7 +678,7 @@ def _fit_source_spans(
         else:
             end_id = fit.target
             start_id = ids[ids.index(end_id) - 1]
-        record = _path_record_for_display(evidence, regions, action.target, path_id, corner_replays, recipe)
+        record = _path_record_for_display(evidence, state, action.target, path_id, corner_replays, recipe)
         try:
             source_start = _source_command_from_correspondence(record.correspondence, path.path.boundary_command_id(start_id))
             source_end = _source_command_from_correspondence(record.correspondence, path.path.boundary_command_id(end_id))
@@ -744,19 +698,16 @@ def _fit_source_spans(
 
 def _path_record_for_display(
     evidence: GeometryEvidence,
-    regions: DrawingRegions,
+    state: ReplayState,
     target_region_id: str,
     target_path_id: str,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
     recipe: EffectiveDrawingRecipe,
 ) -> PathReplayCorrespondence:
-    drawing = drawing_from_vector_regions(
-        "path-correspondence", width=1.0, height=1.0, regions=regions
-    )
     matching = tuple(
         record
         for record in _path_replay_records(
-            evidence, recipe, regions, drawing, corner_replays
+            evidence, recipe, state, state.drawing, corner_replays
         )
         if record.output_region_id == target_region_id
         and record.output_path_id == target_path_id
@@ -768,7 +719,7 @@ def _path_record_for_display(
 
 def _source_path_for_target(
     evidence: GeometryEvidence,
-    regions: DrawingRegions,
+    state: ReplayState,
     target_region_id: str,
     target_path_id: str,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
@@ -776,7 +727,7 @@ def _source_path_for_target(
 ) -> PathGeometry:
     record = _path_record_for_display(
         evidence,
-        regions,
+        state,
         target_region_id,
         target_path_id,
         corner_replays,
@@ -795,16 +746,14 @@ def _source_path_for_target(
 
 def _source_command_for_display(
     evidence: GeometryEvidence,
-    regions: DrawingRegions,
+    state: ReplayState,
     target_region_id: str,
     target_path_id: str,
     command_id: str,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
     recipe: EffectiveDrawingRecipe,
 ) -> str:
-    drawing = drawing_from_vector_regions(
-        "corner-command", width=1.0, height=1.0, regions=regions
-    )
+    drawing = state.drawing
     target = next((leaf for root in drawing.regions for leaf in root.leaves()
                    if leaf.id == target_region_id), None)
     geometry = None if target is None else _path_geometry(target.geometry, target_path_id)
@@ -813,7 +762,7 @@ def _source_command_for_display(
     command_id = geometry.path.boundary_command_id(command_id)
     record = _path_record_for_display(
         evidence,
-        regions,
+        state,
         target_region_id,
         target_path_id,
         corner_replays,
@@ -880,50 +829,43 @@ def _source_command_from_correspondence(
     return next(iter(candidates))
 
 
-def _scoped_regions(
-    regions: DrawingRegions, scope: tuple[int, ...]
-) -> tuple[VectorRegion, ...]:
-    current = tuple(regions)
-    for region_id in scope:
-        matches = tuple(item for item in current if int(item.id) == int(region_id))
-        if len(matches) != 1:
-            raise ValueError("corner downstream replay scope is absent or ambiguous")
-        current = tuple(matches[0].children)
-    return current
-
-
 def _region_at_ancestry(
-    regions: DrawingRegions, ancestry: tuple[int, ...]
-) -> VectorRegion:
-    current = tuple(regions)
-    selected: VectorRegion | None = None
-    for region_id in ancestry:
-        matches = tuple(item for item in current if int(item.id) == int(region_id))
-        if len(matches) != 1:
-            raise ValueError("downstream seam region ancestry is absent or ambiguous")
-        selected = matches[0]
-        current = tuple(selected.children)
-    if selected is None:
+    state: ReplayState, ancestry: tuple[int, ...]
+) -> DrawingRegion:
+    if not ancestry:
         raise ValueError("downstream seam region ancestry must not be empty")
-    return selected
+    current = scoped_input_regions(state, ancestry[:-1])
+    matches = tuple(region for region in current
+        if int(state.region_evidence[region.id]['id']) == ancestry[-1])
+    if len(matches) != 1:
+        raise ValueError('downstream seam region ancestry is absent or ambiguous')
+    return matches[0]
+
+
+def _seam_input_shape(state: ReplayState, region: DrawingRegion) -> Shape:
+    if not region.is_leaf:
+        raise ValueError('downstream seam endpoint target has no geometry')
+    indexed = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
+    return current_shape_for_region(region, indexed, region_ancestries(state),
+        state.shape_metadata.get(region.id, {}))
 
 
 def _rebind_initial_endpoint_refs(
     value: object,
     *,
     batch_scope: tuple[int, ...],
-    template_input: DrawingRegions,
-    replay_input: DrawingRegions,
+    template_input: ReplayState,
+    replay_input: ReplayState,
 ) -> object:
     if isinstance(value, PathEndpointRef):
         ancestry = (*batch_scope, *value.region.ancestry)
         old_region = _region_at_ancestry(template_input, ancestry)
         new_region = _region_at_ancestry(replay_input, ancestry)
-        if old_region.current is None or new_region.current is None:
-            raise ValueError("downstream seam endpoint target has no geometry")
-        if value.path_id != seam_path_id(old_region.current):
+        old_shape = _seam_input_shape(template_input, old_region)
+        new_shape = _seam_input_shape(replay_input, new_region)
+        if value.path_id != seam_path_id(old_shape):
             return value
-        old_paths = _parse_subpaths(str(old_region.current.params.get("d", "")))
+        old_paths = _parse_subpaths(str(old_shape.params.get("d", "")))
         matches = tuple(
             (subpath_index, command_index)
             for subpath_index, subpath in enumerate(old_paths)
@@ -934,7 +876,7 @@ def _rebind_initial_endpoint_refs(
         if len(matches) != 1:
             raise ValueError("downstream seam endpoint command is absent or ambiguous")
         subpath_index, command_index = matches[0]
-        new_paths = _parse_subpaths(str(new_region.current.params.get("d", "")))
+        new_paths = _parse_subpaths(str(new_shape.params.get("d", "")))
         try:
             command, values = new_paths[subpath_index][command_index]
         except IndexError as exc:
@@ -949,7 +891,7 @@ def _rebind_initial_endpoint_refs(
             )
         return replace(
             value,
-            path_id=seam_path_id(new_region.current),
+            path_id=seam_path_id(new_shape),
             command_id=seam_command_id(
                 subpath_index, command_index, command, values
             ),
@@ -981,36 +923,24 @@ def _rebind_initial_endpoint_refs(
 
 
 def _rebase_downstream_batches(
-    templates: tuple[tuple[ReplayBatch, DrawingRegions], ...],
-    regions: DrawingRegions,
+    templates: tuple[tuple[ReplayBatch, ReplayState], ...],
+    state: ReplayState,
     *,
     target_region_id: str,
     output_revision: str,
 ) -> tuple[ReplayBatch, ...]:
-    current = tuple(regions)
+    current = state
     rebased: list[ReplayBatch] = []
     for batch_index, (template, template_input) in enumerate(templates):
-        revision = input_revision(list(_scoped_regions(current, template.scope)))
+        revision = canonical_input_revision(current, template.scope)
         batch_id = "corner.downstream." + sha256(
             f"{template.batch_id}:{output_revision}:{batch_index}".encode("utf-8")
         ).hexdigest()[:20]
         entries = []
-        input_leaf = next(
-            leaf
-            for root in template_input
-            for leaf in root.leaves()
-            if leaf.drawing_id == target_region_id
-        )
-        output_leaf = next(
-            leaf
-            for root in current
-            for leaf in root.leaves()
-            if leaf.drawing_id == target_region_id
-        )
-        if input_leaf.current is None or output_leaf.current is None:
-            raise ValueError("corner downstream replay target has no geometry")
-        if str(input_leaf.current.params.get("d", "")) != str(
-            output_leaf.current.params.get("d", "")
+        input_shape = _seam_input_shape(template_input, template_input.drawing.region(target_region_id))
+        output_shape = _seam_input_shape(current, current.drawing.region(target_region_id))
+        if str(input_shape.params.get("d", "")) != str(
+            output_shape.params.get("d", "")
         ):
             raise ValueError(
                 "corner edit changes geometry with downstream compound seam stages; "
@@ -1037,27 +967,19 @@ def _rebase_downstream_batches(
             ))
         batch = replace(template, batch_id=batch_id, input_revision=revision,
                         entries=tuple(entries))
-        masks = {
-            int(root.id): np.asarray(root.raster, dtype=bool).copy()
-            for root in current
-        }
-        current = tuple(replay_batches(list(current), (batch,), masks=masks))
+        current = replay_automatic_batches(current, (batch,), finalize_topology=False)
         rebased.append(batch)
     return tuple(rebased)
 
 
 def _batch_inputs_from_start(
-    batches: tuple[ReplayBatch, ...], regions: DrawingRegions
-) -> tuple[tuple[ReplayBatch, DrawingRegions], ...]:
-    current = tuple(regions)
-    result: list[tuple[ReplayBatch, DrawingRegions]] = []
+    batches: tuple[ReplayBatch, ...], state: ReplayState
+) -> tuple[tuple[ReplayBatch, ReplayState], ...]:
+    current = state
+    result: list[tuple[ReplayBatch, ReplayState]] = []
     for batch in batches:
         result.append((batch, current))
-        masks = {
-            int(root.id): np.asarray(root.raster, dtype=bool).copy()
-            for root in current
-        }
-        current = tuple(replay_batches(list(current), (batch,), masks=masks))
+        current = replay_automatic_batches(current, (batch,), finalize_topology=False)
     return tuple(result)
 
 
@@ -1096,14 +1018,12 @@ def extend_recipe_with_plan(
     # Output palette constraints are terminal, not recipe steps. Capture new
     # operations from the same intermediate state full replay will encounter,
     # before its final output-color conversion changes the paint revision.
-    regions, producers, corner_replays = _replay_regions_with_producers(
+    state, producers, corner_replays = _replay_drawing_with_producers(
         evidence, paint, base_recipe, finalize_output=False
     )
-    base_regions = regions
+    base_state = state
     base_corner_replays = corner_replays
-    base_drawing = drawing_from_vector_regions(
-        "corner-action", width=1.0, height=1.0, regions=base_regions
-    )
+    base_drawing = base_state.drawing
     steps = list(base_recipe.steps)
     submitted_edits: list[ResolvedCornerEdit] = []
     operation_offset = len(base_recipe.operations)
@@ -1116,12 +1036,10 @@ def extend_recipe_with_plan(
                 settings=base_recipe.settings,
                 steps=tuple(steps),
             )
-            ancestry = _region_ancestries(regions, "corner-action").get(action.target)
+            ancestry = region_ancestries(state).get(action.target)
             if ancestry is None:
                 raise ValueError(f"corner action target is absent: {action.target!r}")
-            drawing = drawing_from_vector_regions(
-                "corner-action", width=1.0, height=1.0, regions=regions
-            )
+            drawing = state.drawing
             target = next(
                 (
                     leaf
@@ -1150,7 +1068,7 @@ def extend_recipe_with_plan(
                     anchor.id == action.feature_id for anchor in base_geometry.anchors
                 )
                 record = _path_record_for_display(
-                    evidence, base_regions if use_base else regions,
+                    evidence, base_state if use_base else state,
                     action.target, action.path_id,
                     base_corner_replays if use_base else corner_replays,
                     base_recipe if use_base else current_recipe,
@@ -1174,12 +1092,12 @@ def extend_recipe_with_plan(
                     action.entry_command_id in base_command_ids
                     and action.exit_command_id in base_command_ids
                 )
-                command_regions = base_regions if use_base_commands else regions
+                command_state = base_state if use_base_commands else state
                 command_replays = base_corner_replays if use_base_commands else corner_replays
                 command_recipe = base_recipe if use_base_commands else current_recipe
                 source_entry = _source_command_for_display(
                     evidence,
-                    command_regions,
+                    command_state,
                     action.target,
                     action.path_id,
                     action.entry_command_id,
@@ -1188,7 +1106,7 @@ def extend_recipe_with_plan(
                 )
                 source_exit = _source_command_for_display(
                     evidence,
-                    command_regions,
+                    command_state,
                     action.target,
                     action.path_id,
                     action.exit_command_id,
@@ -1197,7 +1115,7 @@ def extend_recipe_with_plan(
                 )
                 source_path = _source_path_for_target(
                     evidence,
-                    regions,
+                    state,
                     action.target,
                     action.path_id,
                     corner_replays,
@@ -1222,7 +1140,7 @@ def extend_recipe_with_plan(
                 exit_command_id = action.exit_command_id
                 if use_base_commands:
                     current_record = _path_record_for_display(
-                        evidence, regions, action.target, action.path_id,
+                        evidence, state, action.target, action.path_id,
                         corner_replays, current_recipe,
                     )
 
@@ -1258,11 +1176,11 @@ def extend_recipe_with_plan(
             )
             submitted_edits.extend(resolved)
             steps = list(current_recipe.steps)
-            regions, producers, corner_replays = _replay_regions_with_producers(
+            state, producers, corner_replays = _replay_drawing_with_producers(
                 evidence, paint, current_recipe, finalize_output=False
             )
             continue
-        before = regions
+        before = state
         detection = (
             action.op
             if action.op in {"detect_primitives", "detect_symmetry", "detect_clones", "stitch"}
@@ -1275,7 +1193,7 @@ def extend_recipe_with_plan(
         )
         if detection is not None:
             recorded = run_detection_with_intent(
-                regions,
+                working_regions_from_state(state),
                 evidence.trace,
                 detection,
                 target,
@@ -1284,8 +1202,8 @@ def extend_recipe_with_plan(
             )
             steps.extend(replace(batch, settings=settings, origin="agent")
                          for batch in recorded.batches)
-            regions = recorded.regions
-            _register_automatic_outputs(recorded.batches, regions, producers)
+            state = capture_replay_state(recorded.regions, paint.canvas)
+            _register_automatic_outputs(recorded.batches, state, producers)
         else:
             stages = (
                 ordered_path_operation_stages(action.ops)
@@ -1295,7 +1213,7 @@ def extend_recipe_with_plan(
             for stage_index, (stage_name, stage_actions) in enumerate(stages):
                 if stage_name != "direct":
                     recorded = run_detection_with_intent(
-                        regions,
+                        working_regions_from_state(state),
                         evidence.trace,
                         stage_name,
                         action.target,
@@ -1304,9 +1222,9 @@ def extend_recipe_with_plan(
                     )
                     steps.extend(replace(batch, settings=settings, origin="agent")
                                  for batch in recorded.batches)
-                    regions = recorded.regions
+                    state = capture_replay_state(recorded.regions, paint.canvas)
                     _register_automatic_outputs(
-                        recorded.batches, regions, producers
+                        recorded.batches, state, producers
                     )
                     continue
                 direct_action = (
@@ -1321,33 +1239,33 @@ def extend_recipe_with_plan(
                     action=direct_action,
                     settings=settings,
                     evidence_revision=evidence.revision,
-                    regions=regions,
+                    state=state,
                     producers=producers,
                 )
-                before_operation = regions
-                regions = _execute_public_operation(
-                    evidence, paint, operation, regions, rgb=None,
+                before_operation = state
+                state = _propose_public_operation(
+                    evidence, paint, operation, state,
                     recipe=replace(base_recipe, steps=tuple(steps)),
                     corner_replays=corner_replays,
                 )
-                operation, regions = _retain_selected_outcome(
-                    operation, before_operation, regions, evidence=evidence,
+                operation, state = retain_selected_outcome(
+                    operation, before_operation, state, evidence=evidence,
                     paint=paint, upstream=replace(base_recipe, steps=tuple(steps)),
                 )
                 steps.append(operation)
                 _register_public_outputs(
-                    operation, before_operation, regions, producers
+                    operation, before_operation.drawing, state.drawing, producers
                 )
         if action.op not in {"set_fill", "set_z_order"}:
             paint_step = ResolveOriginalPaintOperation(
                 scope="changed",
                 share_root_gradients=evidence.trace.material_pretrace is None,
-                input_revision=input_revision(list(before)),
+                input_revision=canonical_input_revision(before),
             )
             steps.append(paint_step)
-            regions = refill_changed_regions_from_source(
-                before, regions, raster_pixels(paint.source), allow_gradients=paint.output_settings.allow_gradients
-            )
+            state = replace(state, drawing=refill_drawing_from_source(state.drawing,
+                raster_pixels(paint.source), source_masks=source_paint_masks(state.region_evidence),
+                before=before.drawing, allow_gradients=paint.output_settings.allow_gradients))
     return RecipeExtension(EffectiveDrawingRecipe(
         evidence_revision=base_recipe.evidence_revision,
         engine_revision=base_recipe.engine_revision,
@@ -1375,20 +1293,18 @@ def extend_recipe_with_corner_edits(
         raise ValueError("corner selection evidence revision is stale")
     if selection.recipe_revision != base_recipe.revision:
         raise ValueError("corner selection recipe revision is stale")
-    regions, _producers, corner_replays = _replay_regions_with_producers(
+    state, _producers, corner_replays = _replay_drawing_with_producers(
         evidence, paint, base_recipe, finalize_output=False
     )
     by_ancestry = {
         ancestry: region_id
-        for region_id, ancestry in _region_ancestries(regions, "corner-selection").items()
+        for region_id, ancestry in region_ancestries(state).items()
     }
     try:
         target_region_id = by_ancestry[tuple(selection.region_ancestry)]
     except KeyError as exc:
         raise ValueError("corner selection region ancestry is stale") from exc
-    drawing = drawing_from_vector_regions(
-        "corner-selection", width=1.0, height=1.0, regions=regions
-    )
+    drawing = state.drawing
     selected = tuple(
         leaf
         for root in drawing.regions
@@ -1401,7 +1317,7 @@ def extend_recipe_with_corner_edits(
     if geometry is None:
         raise ValueError("corner selection path ID is stale")
     source_path = _source_path_for_target(
-        evidence, regions, target_region_id, selection.path_id, corner_replays, base_recipe
+        evidence, state, target_region_id, selection.path_id, corner_replays, base_recipe
     )
     command_ids = {
         command.id for path in (geometry, source_path) for command in path.path.commands
@@ -1425,7 +1341,7 @@ def extend_recipe_with_corner_edits(
         raise ValueError("corner selection has ambiguous inherited recipes")
     path_record = _path_record_for_display(
         evidence,
-        regions,
+        state,
         target_region_id,
         selection.path_id,
         corner_replays,
@@ -1496,18 +1412,17 @@ def extend_recipe_with_corner_edits(
         pre_application_recipe = replace(
             base_recipe, steps=tuple(steps[:application_index])
         )
-        pre_application_regions = replay_regions(
+        pre_application_state = replay_drawing(
             evidence, paint, pre_application_recipe, finalize_output=False
         )
         prior_raw_application = replace(application, downstream_batches=())
-        prior_raw_regions, _prior_raw_replay = _execute_corner_recipe(
-            prior_raw_application, evidence, pre_application_regions
+        prior_raw_state, _prior_raw_replay = _execute_corner_recipe(
+            prior_raw_application, evidence, pre_application_state
         )
-        downstream_templates = _batch_inputs_from_start(
-            application.downstream_batches, prior_raw_regions
-        )
+        downstream_templates = (_batch_inputs_from_start(application.downstream_batches,
+            prior_raw_state) if application.downstream_batches else ())
     else:
-        downstream_templates_list: list[tuple[ReplayBatch, DrawingRegions]] = []
+        downstream_templates_list: list[tuple[ReplayBatch, ReplayState]] = []
         downstream_indexes: set[int] = set()
         for step_index, step in enumerate(base_recipe.steps):
             if not (
@@ -1521,7 +1436,7 @@ def extend_recipe_with_corner_edits(
                 continue
             prefix = replace(base_recipe, steps=base_recipe.steps[:step_index])
             downstream_templates_list.append(
-                (step, replay_regions(evidence, paint, prefix, finalize_output=False))
+                (step, replay_drawing(evidence, paint, prefix, finalize_output=False))
             )
             downstream_indexes.add(step_index)
         downstream_templates = tuple(downstream_templates_list)
@@ -1531,7 +1446,7 @@ def extend_recipe_with_corner_edits(
             if step_index not in downstream_indexes
         ]
         pre_application_recipe = replace(base_recipe, steps=tuple(steps))
-        pre_application_regions = replay_regions(
+        pre_application_state = replay_drawing(
             evidence, paint, pre_application_recipe, finalize_output=False
         )
 
@@ -1541,18 +1456,18 @@ def extend_recipe_with_corner_edits(
         region_ancestry=selection.region_ancestry,
         target_region_id=target_region_id,
         target_path_id=path_record.binding.target_path_id,
-        input_revision=input_revision(list(pre_application_regions)),
+        input_revision=canonical_input_revision(pre_application_state),
         settings=settings,
     )
-    raw_regions, raw_replay = _execute_corner_recipe(
-        raw_application, evidence, pre_application_regions
+    raw_state, raw_replay = _execute_corner_recipe(
+        raw_application, evidence, pre_application_state
     )
     downstream_batches = _rebase_downstream_batches(
         downstream_templates,
-        raw_regions,
+        raw_state,
         target_region_id=target_region_id,
         output_revision=raw_replay.output_revision,
-    )
+    ) if downstream_templates else ()
     revised_application = replace(
         raw_application, downstream_batches=downstream_batches
     )
@@ -1564,7 +1479,7 @@ def extend_recipe_with_corner_edits(
             ResolveOriginalPaintOperation(
                 scope="changed",
                 share_root_gradients=evidence.trace.material_pretrace is None,
-                input_revision=input_revision(list(pre_application_regions)),
+                input_revision=canonical_input_revision(pre_application_state),
             ),
         ))
     revised = EffectiveDrawingRecipe(
@@ -1578,7 +1493,7 @@ def extend_recipe_with_corner_edits(
     # their receipts while executing the revised recipe, then validate the
     # resulting immutable recipe through the ordinary strict replay path.
     rebound_steps: list[RecipeStep] = []
-    _replay_regions_with_producers(
+    _replay_drawing_with_producers(
         evidence,
         paint,
         revised,
@@ -1587,7 +1502,7 @@ def extend_recipe_with_corner_edits(
     )
     revised = replace(revised, steps=tuple(rebound_steps))
     # Execute now so no malformed recipe can reach store publication.
-    replay_regions(evidence, paint, revised)
+    replay_drawing(evidence, paint, revised)
     return revised, tuple(resolved)
 
 
@@ -1641,16 +1556,10 @@ def propose_effective_recipe(
         float(evidence.trace.height),
     ):
         raise ValueError("paint and geometry evidence canvases must match")
-    regions, _producers, corner_replays = _replay_regions_with_producers(
+    state, _producers, corner_replays = _replay_drawing_with_producers(
         evidence, paint, recipe
     )
-    drawing = drawing_from_vector_regions(
-        drawing_id,
-        width=paint.canvas.width,
-        height=paint.canvas.height,
-        regions=regions,
-    )
-    drawing = replace(drawing, background=paint.background, output_settings=paint.output_settings)
+    drawing = replace(state.drawing, drawing_id=drawing_id)
     replay = ReplayRecord(
         evidence_revision=evidence.revision,
         recipe_revision=recipe.revision,
@@ -1659,10 +1568,10 @@ def propose_effective_recipe(
         paint_revision=paint.revision,
         action_results=_operation_result_records(recipe),
         path_correspondence=_path_replay_records(
-            evidence, recipe, regions, drawing, corner_replays
+            evidence, recipe, state, drawing, corner_replays
         ),
     )
-    return ReplayExecution(drawing, replay, regions)
+    return ReplayExecution(drawing, state.shape_metadata, state.region_evidence, replay)
 
 
 def reproduce_effective_recipe(
@@ -1945,23 +1854,19 @@ def _correspondence_command_count(
 def _path_replay_records(
     evidence: GeometryEvidence,
     recipe: EffectiveDrawingRecipe,
-    regions: DrawingRegions,
+    state: ReplayState,
     drawing: Drawing,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
 ) -> tuple[PathReplayCorrespondence, ...]:
-    ancestries = _region_ancestries(regions, drawing.drawing_id)
-    source_address_index = vector_region_address_index(evidence.trace_roots)
+    ancestries = {region_id: tuple(info['ancestry']) for region_id, info in state.region_evidence.items()}
     source_ancestries = {
-        region_id: ancestry
-        for ancestry, region_id in source_address_index.items()
+        region_id: info['ancestry']
+        for region_id, info in evidence.region_evidence.items()
     }
-    if len(source_ancestries) != len(source_address_index):
+    if len(set(source_ancestries.values())) != len(source_ancestries):
         raise ValueError("source region ownership is ambiguous")
     leaves = {
         leaf.id: leaf for root in drawing.regions for leaf in root.leaves()
-    }
-    working_leaves = {
-        leaf.drawing_id: leaf for root in regions for leaf in root.leaves()
     }
     records: list[PathReplayCorrespondence] = []
     subpath_indices: dict[tuple[str, str], int] = {}
@@ -2005,14 +1910,14 @@ def _path_replay_records(
             output_ancestry,
             output_subpath_index,
         ) = mapping_result
-        working = working_leaves[application.target_region_id]
-        lineage = None if working.current is None else working.current.params.get("path_command_lineage")
+        leaf = leaves[application.target_region_id]
+        lineage = state.shape_metadata.get(leaf.id, {}).get('path_command_lineage')
         command_indexes = _compose_public_path_lineage(
             command_indexes,
             path_id=application.target_path_id,
             lineage=lineage if isinstance(lineage, Mapping) else None,
             input_d=corner_replay.fit.geometry.to_svg_d(),
-            output_d="" if working.current is None else str(working.current.params["d"]),
+            output_d=leaf.geometry.to_svg_d(),
         )
         if (
             output_ancestry != ancestries[application.target_region_id]
@@ -2058,8 +1963,7 @@ def _path_replay_records(
             continue
         leaf, output_subpath_index, geometry = outputs[0]
         ancestry = source_ancestries[root.region_id]
-        working = working_leaves[leaf.id]
-        lineage = None if working.current is None else working.current.params.get("path_command_lineage")
+        lineage = state.shape_metadata.get(leaf.id, {}).get('path_command_lineage')
         retained_d = str(lineage["input_d"]) if isinstance(lineage, Mapping) else geometry.to_svg_d()
         retained_path_d = (
             parse_svg_paths(retained_d, region_id=leaf.id)[output_subpath_index].to_svg_d()
@@ -2085,7 +1989,7 @@ def _path_replay_records(
             path_id=root.path_id,
             lineage=lineage if isinstance(lineage, Mapping) else None,
             input_d=retained_d,
-            output_d="" if working.current is None else str(working.current.params["d"]),
+            output_d=leaf.geometry.to_svg_d(),
         )
         correspondence = _remap_correspondence_to_geometry(
             root.fit.correspondence,

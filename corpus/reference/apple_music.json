@@ -1,0 +1,49 @@
+{
+  "entry": "apple_music",
+  "svg": "apple_music.svg",
+  "revision": 1,
+  "sha256": "e17c3c7ad50b7a0b2b7dbade1493518338c76766c0513abd84f615d1c5048153",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Apple_Music_icon.svg",
+    "title": "File:Apple Music icon.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/5/5f/Apple_Music_icon.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2022-12-19T07:39:58Z",
+    "upstream_sha1": "492090cfed8ad7eaf5a97e8fbd09752f5e6b1468",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Apple Inc.",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://www.apple.com/apple-music/\">https://www.apple.com/apple-music/</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      361.0,
+      361.0
+    ],
+    "width": "361px",
+    "height": "361px"
+  },
+  "raster": {
+    "path": "../input/apple_music.png",
+    "sha256": "9e32744e67a8b00efb376d2bcede98235c3f6496e3b957e7dd079860dac247bd"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

@@ -121,7 +121,7 @@ def test_single_quadratic_and_noncurve_spans_are_not_refit(d):
 
 def test_svg_normalizer_routes_through_canonical_corner_operation(monkeypatch):
     import vectormark.corner_normalization as canonical
-    from vectormark.optimizer.corners import normalize_corners_path_d, path_corner_diagnostics
+    from vectormark.corner_diagnostics import normalize_corners_path_d, path_corner_diagnostics
 
     calls = []
     operation = canonical.normalize_path_corners
@@ -138,7 +138,7 @@ def test_svg_normalizer_routes_through_canonical_corner_operation(monkeypatch):
 
 
 def test_empty_legacy_declaration_does_not_require_canonical_path_ingress():
-    from vectormark.optimizer.corners import normalize_corners_path_d, path_corner_diagnostics
+    from vectormark.corner_diagnostics import normalize_corners_path_d, path_corner_diagnostics
 
     d = "M0 0 Q1 1 0 0 Z"
     declaration = path_corner_diagnostics(d)

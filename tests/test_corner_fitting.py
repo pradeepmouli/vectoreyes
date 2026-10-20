@@ -61,7 +61,7 @@ def test_corner_span_rejects_invalid_error_budget(max_error):
 
 def test_corner_normalization_delegates_to_typed_span_kernel(monkeypatch):
     import vectormark.corner_fitting as fitting
-    from vectormark.optimizer.corners import normalize_corners_path_d, path_corner_diagnostics
+    from vectormark.corner_diagnostics import normalize_corners_path_d, path_corner_diagnostics
 
     calls = []
     execute = fitting.fit_corner_span

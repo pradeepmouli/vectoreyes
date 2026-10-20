@@ -15,7 +15,8 @@ from vectormark.skia_geometry import SkPath
 
 
 def test_engine_applies_recorded_self_symmetry_without_selecting_another_fit():
-    from vectormark.drawing_symmetry import Axis2D, apply_self_symmetry_choice
+    from vectormark.drawing_symmetry import Axis2D
+    from vectormark.optimizer.automatic_replay import apply_self_symmetry_choice
 
     angles = np.linspace(0, 2 * math.pi, 32, endpoint=False)
     footprint = SkPath(
@@ -52,7 +53,8 @@ def test_engine_applies_recorded_self_symmetry_without_selecting_another_fit():
 
 
 def test_engine_rejects_unknown_recorded_symmetry_fitter_without_mutation():
-    from vectormark.drawing_symmetry import Axis2D, apply_self_symmetry_choice
+    from vectormark.drawing_symmetry import Axis2D
+    from vectormark.optimizer.automatic_replay import apply_self_symmetry_choice
 
     target = VectorRegion(
         1, Shape("path", {"d": "M0 0 L10 0 L10 10 L0 10 Z"}), FlatFill("#123456")
@@ -75,7 +77,7 @@ def test_engine_rejects_unknown_recorded_symmetry_fitter_without_mutation():
 
 
 def test_engine_applies_recorded_axis_seam_to_both_regions_and_preserves_paint():
-    from vectormark.drawing_seams import apply_seam_constraints
+    from vectormark.optimizer.automatic_replay import apply_seam_constraints
 
     first = VectorRegion(
         1, Shape("rect", {"x": 0, "y": 0, "w": 10, "h": 10}), FlatFill("#123456")

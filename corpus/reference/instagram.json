@@ -1,0 +1,44 @@
+{
+  "entry": "instagram",
+  "svg": "instagram.svg",
+  "revision": 1,
+  "sha256": "8060ef38a7f4c25ea5e8bf5df005a4472de35f56836c64442341a9e590591e56",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Instagram_logo_2016.svg",
+    "title": "File:Instagram logo 2016.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Instagram_logo_2016.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2021-04-03T19:06:22Z",
+    "upstream_sha1": "96654a8a3126a62538a14a356eb855acfe531268",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<a class=\"external text\" href=\"https://en.wikipedia.org/wiki/Instagram\">Instagram</a>",
+    "Credit": "<a rel=\"nofollow\" class=\"external text\" href=\"https://freepnglogo.com/instagram-logo-png-transparent\">Instagram Logo PNG</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [],
+    "width": "132.004",
+    "height": "132"
+  },
+  "raster": {
+    "path": "../input/instagram.png",
+    "sha256": "44e420a63b0bdef96198b3f710c8b8216e3bc14be556d8ccd729fb1a3258b64b"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

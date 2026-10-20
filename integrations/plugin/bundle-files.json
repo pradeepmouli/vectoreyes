@@ -1,0 +1,19 @@
+{
+  "generated_by": "scripts/build_agent_plugin.py",
+  "files": {
+    "plugin.json": "ff948db580e93e4571999b2328045789179dc6cbc200e8ab2bd21d3739dfb3cf",
+    ".claude-plugin/plugin.json": "aec97370588da2154615091473f1f40f843ecbd28f30597a409257fefec0e611",
+    ".codex-plugin/plugin.json": "43b85290716c52c103ea44b8cd210cfdf9e9a424318bdeb6c7c741dc1ccd2251",
+    "mcp.json": "791117beb40afd436283e210eac80727fdb2fedfcbfe41014733e6d6fea0ec3a",
+    ".mcp.json": "ac25efefb1d42a680e04dc3a39f4f948992b1a9895ad25b0a430fd04376fb3ca",
+    "README.md": "c788bec50a4147bd5ecb7362fbf4c877fbdc43efd4c012adfe8931e95a16ade7",
+    "LICENSE": "9a641e3fa68c7411926dc0fe6530d9e95988992f722fd91b71a811c52972e87a",
+    "skills/designer-reconstruction/SKILL.md": "e7cd3b65867513716ad75551da6a5b96cf0e1a6a7a25d62a0f3d42e1bc5eb8f1",
+    "skills/designer-reconstruction/examples/curve-plan.json": "be158b555c467ce84ab8f17784c39332f7055388516624f755561f34c36554d0",
+    "skills/designer-reconstruction/examples/primitive-plan.json": "7660e4d9cafd1cadb2cec418aee0c3db8c71c5acbe7e5e2f7f3d11df245720a6",
+    "skills/designer-reconstruction/examples/simple-logo.md": "241998f8672de39cca3c3a4818900c46e5df162ca7d6d15e4e2bfe84976b24af",
+    "skills/designer-reconstruction/references/direct-fallback.md": "9f5b9983ae326e5ebed5e354faefe3a624df6ada9264761501d8f8a41e43273f",
+    "skills/designer-reconstruction/references/evaluation-loop.md": "4e1fa2dbe8bc8c01ffda0921c5428800a63f2cdd23b94a49a0995c3dd19d7f80",
+    "skills/designer-reconstruction/references/trace-presets.md": "e8fee83efe22b41f5efeb8c85d5e02b932a8b4ef6ade20b51c491257cd67485c"
+  }
+}

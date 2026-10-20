@@ -101,7 +101,7 @@ def test_typed_matcher_rejects_missing_source_subpath():
 
 def test_svg_diagnostics_delegate_endpoint_matching_to_typed_operation(monkeypatch):
     import vectormark.corner_matching as matching
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
 
     calls = []
     execute = matching.match_prefit_corner_spans
@@ -116,7 +116,7 @@ def test_svg_diagnostics_delegate_endpoint_matching_to_typed_operation(monkeypat
 
 
 def test_arc_endpoint_can_receive_declared_point_corner():
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
 
     result = path_corner_diagnostics("M0 0 A5 5 0 0 1 10 0 L10 10 L0 10 Z", declared_corners=((10, 0),))
     assert result["spans"]

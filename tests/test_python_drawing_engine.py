@@ -5,12 +5,12 @@ import pytest
 
 from vectormark.drawing_actions import DrawingPlan
 from vectormark.drawing_engine import TraceDrawingRequest, RasterImage
+from vectormark.optimizer.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe, ResolveOriginalPaintOperation,
-    build_geometry_evidence, build_paint_evidence, drawing_revision,
-)
+    build_paint_evidence, drawing_revision, )
 from vectormark.drawing_refine import stitch_regions_with_intent
-from vectormark.drawing_assembly import root_regions
+from vectormark.optimizer.assembly_binding import assemble_working_roots
 from vectormark.drawing_replay import propose_effective_recipe
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
@@ -23,22 +23,50 @@ def source():
     return rgb, RasterImage(32, 32, "rgb8", rgb.tobytes())
 
 
+def test_automatic_refinement_records_before_final_output_palette():
+    from vectormark.optimizer.replay_binding import replay_working_regions
+    from vectormark.output_settings import DrawingOutputSettings
+    from vectormark.optimizer.automatic_replay import input_revision
+
+    _, raster = source()
+    engine = PythonDrawingEngine()
+    baseline = engine.trace_drawing(TraceDrawingRequest(
+        "drw_palette", raster,
+        TraceOptions(max_sampling_colors=2, remove_background="off"),
+        min_region_fraction=0, initial_stitch=False,
+        output_settings=DrawingOutputSettings(max_output_colors=1, allow_gradients=False),
+    ))
+    state = baseline.evidence
+    before_output = replay_working_regions(state.geometry, state.paint, state.recipe, finalize_output=False)
+    after_output = replay_working_regions(state.geometry, state.paint, state.recipe)
+    assert input_revision(list(before_output)) != input_revision(list(after_output))
+
+    refined = engine.refine_automatically(baseline.drawing, state)
+    replayed = propose_effective_recipe(drawing_id="drw_palette", evidence=state.geometry,
+        paint=state.paint, recipe=refined.evidence.recipe)
+    assert drawing_revision(replayed.drawing) == drawing_revision(refined.drawing)
+    assert refined.drawing.output_settings.max_output_colors == 1
+
+
 @pytest.mark.parametrize("strategy", ["quadratic", "progressive", "progressive_allow_lines"])
 @pytest.mark.parametrize("stitch", [False, True])
 @pytest.mark.parametrize("trace_level", ["pixel", "subpixel"])
 def test_engine_v0_matches_existing_operations(strategy, stitch, trace_level):
+    from vectormark.drawing_assembly import assemble_drawing_roots
+    from vectormark.drawing_recipe import build_geometry_evidence
     rgb, raster = source()
     options = TraceOptions(max_sampling_colors=2, remove_background="off", fit_strategy=strategy, trace_level=trace_level)
     trace = PythonTraceEngine().trace(rgb, options, geometry_rgb=rgb)
-    rooted = root_regions(trace, rgb, min_region_fraction=0, allow_gradients=False)
+    rooted = assemble_drawing_roots(trace, rgb, min_region_fraction=0, allow_gradients=False)
     evidence = build_geometry_evidence(kind="source", trace=rooted.trace,
-        geometry_source=raster, trace_roots=rooted.regions)
+        geometry_source=raster, drawing=rooted.drawing,
+        shape_metadata=rooted.shape_metadata, region_evidence=rooted.region_evidence)
     from vectormark.output_settings import DrawingOutputSettings
     output = DrawingOutputSettings(allow_gradients=False)
     paint = build_paint_evidence(raster, output_settings=output)
     settings = ActionSettings(epsilon=options.simplify_tolerance,
         max_error=options.curve_tolerance, fit_strategy=strategy)
-    stitched = stitch_regions_with_intent(rooted.trace, evidence.trace_roots, enabled=stitch)
+    stitched = stitch_regions_with_intent(rooted.trace, working_regions_from_evidence(evidence), enabled=stitch)
     recipe = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, settings,
         steps=(*stitched.batches, ResolveOriginalPaintOperation(scope="retain", share_root_gradients=True)))
     expected = propose_effective_recipe(drawing_id="drw_engine", evidence=evidence, paint=paint, recipe=recipe)
@@ -122,7 +150,7 @@ def test_source_pretrace_labels_keep_existing_merge_policy():
     options = TraceOptions(max_sampling_colors=3, remove_background="off", min_region_size=1)
     pretrace = MaterialPretraceResult(rgb, rgb, rgb, rgb, 3, 3, (), 3)
     trace = replace(PythonTraceEngine().trace(rgb, options), material_pretrace=pretrace)
-    assert len(root_regions(trace, rgb, min_region_fraction=0).regions) == 2
+    assert len(assemble_working_roots(trace, rgb, min_region_fraction=0).regions) == 2
     result = PythonDrawingEngine().fit_trace("drw_proxy", trace, raster,
         min_region_fraction=0, initial_stitch=False)
     assert len(result.drawing.regions) == 2

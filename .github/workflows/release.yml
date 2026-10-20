@@ -17,14 +17,53 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: astral-sh/setup-uv@v7   # v7 is the latest *moving* major (Node 24); setup-uv has no `v8` tag, only v8.x
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: integrations/mcp-app/package-lock.json
+      - name: Build MCP review UI
+        run: |
+          npm --prefix integrations/mcp-app ci
+          npm --prefix integrations/mcp-app run build
       - name: Build distributions
         run: uv build
+      - name: Verify and package shared agent plugin
+        run: |
+          uv run --no-project python scripts/build_agent_plugin.py --check
+          uv run --no-project python scripts/build_agent_plugin.py --output build/plugin --archive build/vectormark-plugin.zip
+      - name: Verify installed wheel widget
+        run: |
+          uv venv /tmp/vectormark-wheel-check --python 3.13
+          for wheel in dist/*.whl; do
+            uv pip install --python /tmp/vectormark-wheel-check/bin/python "${wheel}[server,scoring]" pytest
+          done
+          expected=$(sha256sum integrations/mcp-app/dist/mcp-app.html | cut -d ' ' -f 1)
+          cd /tmp
+          /tmp/vectormark-wheel-check/bin/python - "$expected" <<'PY'
+          import hashlib
+          import importlib.machinery
+          import sys
+          import vectormark.fit
+          from vectormark.mcp_server import logo_widget
+          assert any(vectormark.fit.__file__.endswith(suffix)
+                     for suffix in importlib.machinery.EXTENSION_SUFFIXES)
+          assert hashlib.sha256(logo_widget().encode("utf-8")).hexdigest() == sys.argv[1]
+          PY
+      - name: Test installed compiled engine
+        run: /tmp/vectormark-wheel-check/bin/python -m pytest tests --import-mode=importlib -q
       - name: Check metadata
         run: uvx twine check dist/*
       - uses: actions/upload-artifact@v7
         with:
           name: dist
           path: dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vectormark-plugin
+          path: build/vectormark-plugin.zip
 
   publish:
     name: Publish to PyPI

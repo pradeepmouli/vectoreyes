@@ -1,5 +1,9 @@
 """Topology truth must survive retained publication, not only SVG rendering."""
 
+from dataclasses import asdict as _trace_options
+from vectormark.drawing_render import trace_summary as _canonical_trace
+from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_render import render_drawing as _canonical_render
 import numpy as np
 import pytest
 
@@ -13,7 +17,7 @@ from vectormark.optimizer.vector_region import VectorRegion
 from vectormark.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
 from vectormark.path_geometry import parse_svg_paths, ArcCommand, CubicCommand
 from vectormark.path_topology import classify_filled_paths, component_paths
-from vectormark.drawing_topology import normalize_retained_topology
+from vectormark.optimizer.topology_binding import normalize_working_topology
 
 
 OUTER = "M0 0 L12 0 L12 12 L0 12 Z"
@@ -36,7 +40,8 @@ def _trace():
 def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
     from vectormark.drawing_engine import RasterImage
     from vectormark.drawing_actions import ActionSettings
-    from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_geometry_evidence, build_paint_evidence
+    from tests._working_evidence import capture_working_geometry_evidence
+    from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
     from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
 
     source = RasterImage(48, 24, 'rgb8', bytes([255]) * 48 * 24 * 3)
@@ -44,7 +49,7 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
     reference = VectorRegion.from_shape(id=2,
         shape=Shape('path', {'d': 'M20 0 L20 10 L24 3 L24 1 Z'}),
         fill=FlatFill('#123456'), z=1, raster=np.zeros((24, 48), bool), drawing_id='r2')
-    evidence = build_geometry_evidence(kind='source', trace=_trace(), geometry_source=source, trace_roots=(root, reference))
+    evidence = capture_working_geometry_evidence(kind='source', trace=_trace(), geometry_source=source, trace_roots=(root, reference))
     paint = build_paint_evidence(source)
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
         ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
@@ -57,7 +62,8 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
     ]})
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     replay = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
-    actual = next(region for region in replay.regions if region.drawing_id == 'r1')
+    from vectormark.optimizer.replay_binding import working_regions_from_state
+    actual = next(region for region in working_regions_from_state(replay) if region.drawing_id == 'r1')
     assert actual.is_branch and len(actual.children) == 2
     for child in actual.children:
         cache = child.current.params['canonical_path_geometry']
@@ -74,7 +80,7 @@ def test_redundant_path_retirement_projects_only_surviving_canonical_cache():
     root = _region(d, fill_rule='nonzero')
     root = root.with_current(Shape('path', {'d': d, 'fill_rule': 'nonzero',
         'canonical_path_geometry': cache}), footprint=root.footprint)
-    result = normalize_retained_topology((root,))
+    result = normalize_working_topology((root,))
     actual = result[0].current.params['canonical_path_geometry']
     assert len(component_paths(actual)) == 1
     assert actual.to_svg_d() == result[0].current.params['d']
@@ -96,7 +102,7 @@ def test_manual_publication_creates_real_disconnected_children_and_retains_paren
     assert result[0].is_branch
     assert tuple(leaf.drawing_id for leaf in result[0].leaves()) == ("r1-1", "r1-2")
     assert source.is_leaf and source.current.params["d"] == DISCONNECTED
-    rendered = drawing_refine.render_drawing(_trace(), result)
+    rendered = _canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result)))
     assert {target["id"] for target in rendered.report["targets"]} == {"r1-1", "r1-2"}
 
 
@@ -154,7 +160,7 @@ def test_inconsistent_native_predicate_never_silently_retires_tiny_exterior():
 def test_unresolved_boundary_changes_fail_atomically(d):
     source = _region(d)
     with pytest.raises(ValueError, match="retained boolean normalization"):
-        normalize_retained_topology((source,))
+        normalize_working_topology((source,))
     assert source.current.params["d"] == d and source.is_leaf
 
 
@@ -176,12 +182,12 @@ def test_groups_are_reported_separately_and_typed_mcp_models_accept_them():
     from vectormark.drawing_adapter import drawing_from_vector_regions
     from vectormark.drawing_render import render_drawing as render_canonical_drawing
     from vectormark.mcp_server import DrawingReportOutput, TraceSummaryOutput
-    regions = normalize_retained_topology((_region(DISCONNECTED),))
+    regions = normalize_working_topology((_region(DISCONNECTED),))
     drawing = drawing_from_vector_regions(
         "drawing", width=48, height=24, regions=regions
     )
     report = render_canonical_drawing(drawing).report
-    summary = drawing_refine.drawing_summary(_trace(), regions)
+    summary = _canonical_trace(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(regions)), _trace_options((_trace()).options))
     assert report["groups"][0]["id"] == "r1"
     assert report["groups"][0]["child_ids"] == ["r1-1", "r1-2"]
     assert report["groups"][0]["diagnostics"]["topology"]["created_target_ids"] == ["r1-1", "r1-2"]
@@ -204,8 +210,13 @@ def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
     clone = VectorRegion(2, Shape("use", {"href_obj_id": 1, "transform": (1, 0, 0, 1, 22, 0)}),
                          fill, 1, source.footprint, raster=source.raster, drawing_id="r2", diagnostics={"clone": {"source": "r1"}})
     before = (source, clone)
-    expected = drawing_refine.render_drawing(_trace(), before).svg
-    result = normalize_retained_topology(before)
+    # Independent unsplit reference; canonical regions require normalized components.
+    expected = (f'<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24">'
+                '<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="20" y2="0">'
+                '<stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/>'
+                f'</linearGradient></defs><path d="{DISCONNECTED}" fill="#123456"/>'
+                '<path d="M22 0 L30 0 L30 8 L22 8 Z M34 0 L42 0 L42 8 L34 8 Z" fill="url(#g)"/></svg>')
+    result = normalize_working_topology(before)
     assert result[0].original == source.original and result[1].original == clone.original
     assert tuple(leaf.drawing_id for leaf in result[1].leaves()) == ("r2-1", "r2-2")
     index = index_region_paths(result)
@@ -214,17 +225,17 @@ def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
         assert leaf.fill is fill
     canonical = drawing_from_vector_regions("drawing", width=48, height=24, regions=result)
     assert canonical.region("r2-2").geometry == CloneGeometry("r1-2", canonical.region("r2-2").geometry.transforms)
-    actual = drawing_refine.render_drawing(_trace(), result).svg
+    actual = _canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result))).svg
     np.testing.assert_array_equal(render_svg(actual, 48, 24), render_svg(expected, 48, 24))
-    repeated = normalize_retained_topology(result)
+    repeated = normalize_working_topology(result)
     assert all(a is b for a, b in zip(result, repeated, strict=True))
     assert source.is_leaf and clone.is_leaf
 
 
 def test_component_command_ids_drive_actual_manual_lookup_and_summary():
     from vectormark.drawing_adapter import drawing_from_vector_regions
-    result = normalize_retained_topology((_region(DISCONNECTED),))
-    summary = drawing_refine.drawing_summary(_trace(), result)
+    result = normalize_working_topology((_region(DISCONNECTED),))
+    summary = _canonical_trace(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result)), _trace_options((_trace()).options))
     assert summary["regions"][1]["geometry"]["commands"][1]["id"] == "r1.p1.c1"
     assert drawing_from_vector_regions("drawing", width=48, height=24, regions=result).region("r1-2").geometry.path.commands[1].id == "r1.p1.c1"
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing", "base_version": "v0",
@@ -233,16 +244,16 @@ def test_component_command_ids_drive_actual_manual_lookup_and_summary():
                       ]}]})
     refined = drawing_refine.refine(_trace(), result, plan)
     assert refined[0].children[0].current == result[0].children[0].current
-    assert drawing_refine.drawing_summary(_trace(), refined)["regions"][1]["geometry"]["commands"][1]["id"] == "r1.p1.c1"
+    assert _canonical_trace(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(refined)), _trace_options((_trace()).options))["regions"][1]["geometry"]["commands"][1]["id"] == "r1.p1.c1"
 
 
 def test_hole_first_prefit_corners_remain_owned_by_original_paths():
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     from vectormark.drawing_adapter import drawing_from_vector_regions
     d = f"{HOLE} {OUTER} M20 0 L24 0 L24 4 L20 4 Z"
     evidence = path_corner_diagnostics(d, declared_corners=((4, 4), (0, 0), (20, 0)))
     source = _region(d).with_diagnostics({"corners": evidence})
-    result = normalize_retained_topology((source,))
+    result = normalize_working_topology((source,))
     drawing = drawing_from_vector_regions("drawing", width=48, height=24, regions=result)
     geometry = drawing.region("r1-2").geometry
     assert geometry.outer.path.id == "r1.p1"
@@ -253,14 +264,14 @@ def test_hole_first_prefit_corners_remain_owned_by_original_paths():
 
 
 def test_nested_root_producer_diagnostics_keep_declarations_on_component_children():
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     from vectormark.drawing_adapter import drawing_from_vector_regions
     parts = (HOLE, OUTER, "M20 0 L24 0 L24 4 L20 4 Z")
     evidence = {"path": " ".join(parts), "subpaths": tuple(
         path_corner_diagnostics(d, declared_corners=(point,))
         for d, point in zip(parts, ((4, 4), (0, 0), (20, 0)), strict=True)
     )}
-    result = normalize_retained_topology((_region(evidence["path"]).with_diagnostics({"corners": evidence}),))
+    result = normalize_working_topology((_region(evidence["path"]).with_diagnostics({"corners": evidence}),))
     drawing = drawing_from_vector_regions("drawing", width=48, height=24, regions=result)
     assert drawing.region("r1-2").geometry.outer.anchors[0].entry_command_id == "r1.p1.c0"
     assert drawing.region("r1-2").geometry.cutouts[0].anchors[0].entry_command_id == "r1.p0.c0"
@@ -268,10 +279,10 @@ def test_nested_root_producer_diagnostics_keep_declarations_on_component_childre
 
 
 def test_redundant_nonzero_paths_and_features_are_explicitly_retired():
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     d = f"{HOLE} {OUTER}"
     source = _region(d, fill_rule="nonzero").with_diagnostics({"corners": path_corner_diagnostics(d, declared_corners=((4, 4),))})
-    result = normalize_retained_topology((source,))[0]
+    result = normalize_working_topology((source,))[0]
     assert result.current.params["path_ids"] == ("r1.p1",)
     assert result.diagnostics["topology"]["retired_path_ids"] == ("r1.p0",)
     assert result.diagnostics["topology"]["retired_feature_ids"]
@@ -290,8 +301,8 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
         contours=contours, trace_path=TracePath(DISCONNECTED, "evenodd", ()),
         effective_trace_level="pixel",
     ),))
-    from vectormark.drawing_assembly import root_regions
-    result = root_regions(trace)
+    from vectormark.optimizer.assembly_binding import assemble_working_roots
+    result = assemble_working_roots(trace)
     assert result.regions[0].is_branch
     records = result.trace.root_path_evidence
     assert [(record.region_id, record.path_id) for record in records] == [("r1-1", "r1.p0"), ("r1-2", "r1.p1")]
@@ -311,7 +322,7 @@ def test_auto_callback_and_stitch_publish_identical_target_trees(monkeypatch):
     assert callbacks
     for regions in (*callbacks, result, drawing_refine.stitch_regions(_trace(), (source,))):
         assert tuple(leaf.drawing_id for root in regions for leaf in root.leaves()) == ("r1-1", "r1-2")
-        assert {target["id"] for target in drawing_refine.render_drawing(_trace(), regions).report["targets"]} == {"r1-1", "r1-2"}
+        assert {target["id"] for target in _canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(regions))).report["targets"]} == {"r1-1", "r1-2"}
         assert regions[0].original == source.original
 
 
@@ -320,29 +331,31 @@ def test_empty_plan_with_rgb_preserves_shared_gradient_without_refilling(monkeyp
     from tests._render import render_svg
     fill = LinearGradientFill({"x1": 0, "y1": 0, "x2": 20, "y2": 0}, [(0, "#ff0000"), (1, "#0000ff")])
     source = _region(DISCONNECTED).with_current(_region(DISCONNECTED).current, fill=fill)
-    before = drawing_refine.render_drawing(_trace(), (source,)).svg
+    before = (f'<svg xmlns="http://www.w3.org/2000/svg" width="48" height="24">'
+              '<defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="20" y2="0">'
+              '<stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/>'
+              f'</linearGradient></defs><path d="{DISCONNECTED}" fill="url(#g)"/></svg>')
     def forbidden(*args, **kwargs):
         raise AssertionError("pure topology normalization refitted paint or geometry")
     import vectormark.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "fit_fill", forbidden)
-    import vectormark.drawing_paint as paint
     import vectormark.paint_fitting as paint_fitting
-    monkeypatch.setattr(paint, "fit_fill", forbidden)
+    monkeypatch.setattr(paint_fitting, "fit_fill", forbidden)
     monkeypatch.setattr(paint_fitting, "fit_source_paint", forbidden)
     import vectormark.path_fitting as fitting
     monkeypatch.setattr(fitting, "fit_raster_paths", forbidden)
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing", "base_version": "v0", "ops": []})
     result = drawing_refine.refine(_trace(), (source,), plan, rgb=np.zeros((24, 48, 3), np.uint8))
     assert all(child.fill is fill for child in result[0].children)
-    np.testing.assert_array_equal(render_svg(before, 48, 24), render_svg(drawing_refine.render_drawing(_trace(), result).svg, 48, 24))
+    np.testing.assert_array_equal(render_svg(before, 48, 24), render_svg(_canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result))).svg, 48, 24))
 
 
 def test_component_holes_remain_transparent_on_contrasting_backgrounds():
     from tests._render import render_svg
     import xml.etree.ElementTree as ET
     source = _region(f"{HOLE} {OUTER} M20 0 L24 0 L24 4 L20 4 Z")
-    result = normalize_retained_topology((source,))
-    svg = drawing_refine.render_drawing(_trace(), result).svg
+    result = normalize_working_topology((source,))
+    svg = _canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result))).svg
     for color, pixel in (("#123456", (18, 52, 86)), ("#ef7090", (239, 112, 144))):
         root = ET.fromstring(svg)
         root.insert(0, ET.Element("{http://www.w3.org/2000/svg}rect", {"width": "48", "height": "24", "fill": color}))
@@ -351,27 +364,28 @@ def test_component_holes_remain_transparent_on_contrasting_backgrounds():
 
 def test_snapshot_preserves_branch_original_and_detaches_its_params():
     from vectormark.drawing_engine import RasterImage
-    from vectormark.drawing_recipe import build_geometry_evidence
+    from tests._working_evidence import capture_working_geometry_evidence
+    from vectormark.optimizer.assembly_binding import working_regions_from_evidence
     source = _region(DISCONNECTED)
-    normalized = normalize_retained_topology((source,))
-    evidence = build_geometry_evidence(
+    normalized = normalize_working_topology((source,))
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=_trace(),
         geometry_source=RasterImage(48, 24, "rgb8", bytes(48 * 24 * 3)),
         trace_roots=normalized,
     )
-    retained = evidence.trace_roots
+    retained = working_regions_from_evidence(evidence)
     source.original.params["d"] = OUTER
     assert retained[0].original.params["d"] == DISCONNECTED
     assert all(child.original.params["d"] == DISCONNECTED for child in retained[0].children)
 
 
 def test_retained_component_reports_recount_corner_and_command_aggregates():
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     evidence = path_corner_diagnostics(DISCONNECTED, declared_corners=((0, 0), (12, 0)))
     source = _region(DISCONNECTED).with_diagnostics({"corners": evidence})
-    result = normalize_retained_topology((source,))
-    targets = drawing_refine.render_drawing(_trace(), result).report["targets"]
+    result = normalize_working_topology((source,))
+    targets = _canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result))).report["targets"]
     for target in targets:
         corners = target["diagnostics"]["corners"]
         assert corners["commands"] == {"total": 3, "corner": 0, "free": 3}

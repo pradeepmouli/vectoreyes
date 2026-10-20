@@ -8,7 +8,9 @@ from pydantic import ValidationError
 
 from vectormark.drawing_actions import ActionSettings, DrawingPlan
 from vectormark.drawing_engine import RasterImage
-from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_geometry_evidence, build_paint_evidence
+from tests._working_evidence import capture_working_geometry_evidence
+from vectormark.optimizer.assembly_binding import working_regions_from_evidence
+from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
 from vectormark.drawing_refine import resolved_action_settings
 from vectormark.drawing_render import render_drawing
 from vectormark.drawing_trace import TraceOptions, TraceResult
@@ -26,7 +28,7 @@ def fixture():
     trace = TraceResult(8, 8, TraceOptions(), (), '<svg/>')
     region = VectorRegion.from_shape(id=1, shape=Shape('rect', {'x': 1., 'y': 1., 'w': 4., 'h': 4.}),
         fill=FlatFill('#112233'), z=0, raster=np.ones((8, 8), dtype=bool), drawing_id='r1', source_regions=('r1',))
-    evidence = build_geometry_evidence(kind='source', trace=trace, geometry_source=source, trace_roots=(region,))
+    evidence = capture_working_geometry_evidence(kind='source', trace=trace, geometry_source=source, trace_roots=(region,))
     paint = build_paint_evidence(source)
     settings = ActionSettings(epsilon=1, max_error=1.5, fit_strategy='quadratic')
     return evidence, paint, EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, settings)
@@ -34,7 +36,7 @@ def fixture():
 
 def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     from vectormark.drawing_adapter import drawing_from_vector_regions
-    from vectormark.drawing_topology import normalize_retained_topology
+    from vectormark.optimizer.topology_binding import normalize_working_topology
     d = ('M0 0 L4 0 L4 4 L0 4 Z '
          'M1 1 L2 1 L2 2 L1 2 Z '
          'M5 5 L7 5 L7 7 L5 7 Z')
@@ -45,14 +47,15 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
         current=Shape('use', {'href_obj_id': 1, 'transform': (1, 0, 0, 1, 0, 0)}))
     # Reuse begins from the concrete pre-fit region, not an already split tree.
     before = (replace(root, current=Shape('rect', dict(x=0, y=0, w=7, h=7))), clone)
-    after = normalize_retained_topology((root, clone))
+    after = normalize_working_topology((root, clone))
     selected = drawing_from_vector_regions('drw_test', width=8, height=8, regions=after).region('r1')
     assert [leaf.id for leaf in selected.leaves()] == ['r1-1', 'r1-3']
     from vectormark.drawing_recipe import RecipeOperation
     from vectormark.drawing_actions import FitPathDrawingAction
     evidence, paint, upstream = fixture()
     operation = RecipeOperation('test.fit', 'agent', FitPathDrawingAction(op='fit_path', target='r1'), upstream.settings, ())
-    operation, result = replay_module._retain_selected_outcome(operation, before, after,
+    from tests._working_evidence import retain_working_operation_outcome
+    operation, result = retain_working_operation_outcome(operation, before, after,
         evidence=evidence, paint=paint, upstream=upstream)
     drawing = drawing_from_vector_regions('drw_test', width=8, height=8, regions=result)
     assert [leaf.id for leaf in drawing.region('r1').leaves()] == ['r1-1', 'r1-3']
@@ -70,13 +73,13 @@ def test_selected_path_fit_retains_split_components_without_refitting(monkeypatc
     raster[5:7, 5:7] = True
     if with_cutout:
         raster[1:3, 1:3] = False
-    root = replace(evidence.trace_roots[0], raster=raster)
+    root = replace(working_regions_from_evidence(evidence)[0], raster=raster)
     roots = (root,)
     if with_clone:
         clone = replace(root, id=2, drawing_id='r2', source_regions=('r2',),
             current=Shape('use', {'href_obj_id': 1, 'transform': (1, 0, 0, 1, 0, 0)}))
         roots = (root, clone)
-    evidence = build_geometry_evidence(kind='source', trace=evidence.trace,
+    evidence = capture_working_geometry_evidence(kind='source', trace=evidence.trace,
         geometry_source=evidence.geometry_source, trace_roots=roots)
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
         ActionSettings(epsilon=0.1, max_error=0.1, fit_strategy='quadratic'))
@@ -196,7 +199,7 @@ def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
     replay_module.propose_effective_recipe(drawing_id='drw_test',
         evidence=evidence, paint=paint, recipe=recipe)
     assert len(calls) == 1
-    np.testing.assert_array_equal(calls[0][0], evidence.trace_roots[0].raster)
+    np.testing.assert_array_equal(calls[0][0], working_regions_from_evidence(evidence)[0].raster)
     assert calls[0][1]['region_id'] == 'r1'
     assert calls[0][1]['settings'].max_error == 2.0
     assert calls[0][1]['settings'].fit_strategy == 'progressive'
@@ -204,16 +207,16 @@ def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
 
 def test_whole_region_fit_retains_matching_prefit_corner_ingress():
     from vectormark.path_fitting import fit_raster_paths
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.corner_diagnostics import path_corner_diagnostics
     evidence, paint, base = fixture()
-    fitted = fit_raster_paths(evidence.trace_roots[0].raster, region_id='r1', settings=base.settings)[0]
+    fitted = fit_raster_paths(working_regions_from_evidence(evidence)[0].raster, region_id='r1', settings=base.settings)[0]
     d = fitted.to_svg_d()
     point = fitted.path.drawable_commands[0].end
     corners = path_corner_diagnostics(d, declared_corners=(point,))
     assert len(corners['spans']) == 1
-    source = evidence.trace_roots[0].with_current(Shape('path', {'d': d}),
+    source = working_regions_from_evidence(evidence)[0].with_current(Shape('path', {'d': d}),
         diagnostics={'corners': corners})
-    evidence = build_geometry_evidence(kind='source', trace=evidence.trace,
+    evidence = capture_working_geometry_evidence(kind='source', trace=evidence.trace,
         geometry_source=evidence.geometry_source, trace_roots=(source,))
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, base.settings)
     plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
@@ -320,15 +323,16 @@ def test_proposals_can_vary_but_reproduction_does_not_generate(monkeypatch):
     recipe = replace(recipe, settings=recipe.settings.model_copy(update={'purpose': 'design_fidelity', 'execution': 'exploratory'}))
     assert hasattr(replay_module, 'propose_effective_recipe'), 'proposal execution must be explicit'
     assert hasattr(replay_module, 'reproduce_effective_recipe'), 'reproduction must not execute the recipe'
-    execute = replay_module._replay_regions_with_producers
+    from vectormark.optimizer.replay_binding import capture_replay_state
+    execute = replay_module._replay_drawing_with_producers
     calls = []
     def varying(*args, **kwargs):
-        regions, producers, corners = execute(*args, **kwargs)
+        state, producers, corners = execute(*args, **kwargs)
         calls.append(len(calls) + 1)
         region = VectorRegion.from_shape(id=1, shape=Shape('rect', {'x': 1., 'y': 1., 'w': float(calls[-1] + 2), 'h': 4.}),
             fill=FlatFill('#112233'), z=0, raster=np.ones((8, 8), dtype=bool), drawing_id='r1', source_regions=('r1',))
-        return (region,), producers, corners
-    monkeypatch.setattr(replay_module, '_replay_regions_with_producers', varying)
+        return capture_replay_state((region,), state.drawing.canvas), producers, corners
+    monkeypatch.setattr(replay_module, '_replay_drawing_with_producers', varying)
     first = replay_module.propose_effective_recipe(drawing_id='drw_test', evidence=evidence, paint=paint, recipe=recipe)
     first_svg = render_drawing(first.drawing).svg
     second = replay_module.propose_effective_recipe(drawing_id='drw_test', evidence=evidence, paint=paint, recipe=recipe)
@@ -358,9 +362,9 @@ def test_proposals_can_vary_but_reproduction_does_not_generate(monkeypatch):
         replay_module.reproduce_effective_recipe(drawing=first.drawing, evidence=evidence, paint=changed_paint, recipe=recipe, replay=first.replay)
     with pytest.raises(ValueError, match='output revision mismatch'):
         replay_module.reproduce_effective_recipe(drawing=second.drawing, evidence=evidence, paint=paint, recipe=recipe, replay=first.replay)
-    changed_evidence = build_geometry_evidence(kind='source',
+    changed_evidence = capture_working_geometry_evidence(kind='source',
         trace=replace(evidence.trace, options=replace(evidence.trace.options, curve_tolerance=2.)),
-        geometry_source=evidence.geometry_source, trace_roots=evidence.trace_roots)
+        geometry_source=evidence.geometry_source, trace_roots=working_regions_from_evidence(evidence))
     with pytest.raises(ValueError, match='evidence revision mismatch'):
         replay_module.reproduce_effective_recipe(drawing=first.drawing, evidence=changed_evidence,
             paint=paint, recipe=recipe, replay=first.replay)

@@ -92,8 +92,8 @@ def test_prefit_binding_keeps_source_subpath_separate_from_path_address():
 
 def test_drawing_publication_and_normalization_share_prefit_binder(monkeypatch):
     import vectormark.corner_provenance as provenance
-    from vectormark.drawing_adapter import _ingress_corners
-    from vectormark.optimizer.corners import normalize_corners_path_d, path_corner_diagnostics
+    from vectormark.corner_provenance import ingress_prefit_corners
+    from vectormark.corner_diagnostics import normalize_corners_path_d, path_corner_diagnostics
 
     calls = []
     execute = provenance.bind_prefit_corner_anchors
@@ -104,7 +104,7 @@ def test_drawing_publication_and_normalization_share_prefit_binder(monkeypatch):
     d = "M0 0 L10 0 Q12 0 13 1 Q14 2 14 4 L0 12 Z"
     geometry = parse_svg_paths(d, region_id="r1")[0]
     declared = path_corner_diagnostics(d, declared_corner_spans=(((10, 0), (14, 4)),))
-    published, _ = _ingress_corners(geometry, d, "r1", declared)
+    published, _ = ingress_prefit_corners(geometry, d, "r1", declared)
     normalized, _ = normalize_corners_path_d(d, max_error=1, diagnostics=declared)
     assert calls == ["retain_first", "reject_all"]
     assert len(published.anchors) == 1

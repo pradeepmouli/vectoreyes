@@ -1,0 +1,29 @@
+{
+  "entry": "burger_king",
+  "svg": "burger_king.svg",
+  "revision": 1,
+  "sha256": "bebb99faebfa09fa803cc611979ef8a019ef730dec69ed46b9a07488874d9b89",
+  "provenance": {
+    "kind": "upstream_svg",
+    "page": "https://commons.wikimedia.org/wiki/File:Burger_King_2020.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/c/cc/Burger_King_2020.svg",
+    "retrieved_on": "2026-09-08",
+    "author_attribution": "Burger King, according to Wikimedia Commons",
+    "modified": false
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User explicitly approved the linked source SVG in this conversation."
+  },
+  "canvas": {"viewBox": [0, 0, 569.221, 620]},
+  "raster": {
+    "path": "../input/burger_king.png",
+    "sha256": "2e7f26471e6bc6c3963f86f9b40591f3f725dd8b0d130587486fd618138c38d3",
+    "width": 1280,
+    "height": 1395
+  },
+  "registration": {"status": "unverified"},
+  "notes": ["Preserve the off-white framing (#F5EBDC)."]
+}

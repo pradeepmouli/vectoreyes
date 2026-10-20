@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from vectormark.candidate import FlatFill
+from vectormark.drawing import Canvas
 from vectormark.fit import Shape
 from vectormark.optimizer.vector_region import VectorRegion
 from vectormark.path_geometry import (
@@ -23,12 +24,15 @@ from vectormark.path_geometry import (
      {'points': ((0, 0), (8, 0), (0, 8))}),
 ])
 def test_retained_primitive_publication_preserves_evidence_and_paint(primitive, kind, params):
-    from vectormark.drawing_adapter import publish_primitive_geometry, primitive_geometry_from_shape
+    from vectormark.drawing import DrawingRegion
+    from vectormark.drawing_adapter import publish_selected_leaf
+    from vectormark.primitive_fitting import primitive_geometry_from_shape
     original = Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8})
     raster = np.ones((10, 10), dtype=bool)
     target = VectorRegion(id=7, current=original, original=original, raster=raster,
         fill=FlatFill('#ABCDEF'), z=3, diagnostics={'retained': True})
-    updated = publish_primitive_geometry(target, PrimitiveGeometry(primitive))
+    selected = DrawingRegion(id='r7', geometry=PrimitiveGeometry(primitive), diagnostics=target.diagnostics)
+    updated = publish_selected_leaf(selected, target)
     assert updated.current == Shape(kind, params)
     assert primitive_geometry_from_shape(updated.current) == PrimitiveGeometry(primitive)
     assert updated.original is target.original
@@ -39,6 +43,34 @@ def test_retained_primitive_publication_preserves_evidence_and_paint(primitive, 
     assert target.current is original
 
 
+def test_selected_leaf_publication_retains_canonical_path_and_source_identity():
+    from vectormark.drawing import DrawingRegion
+    from vectormark.drawing_adapter import publish_selected_leaf
+    path = annotated()
+    target = VectorRegion(id=7, current=Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8}),
+        fill=FlatFill('#ABCDEF'), source_regions=('material-1',),
+        drawing_id=None, raster=np.ones((12, 12), dtype=bool))
+    updated = publish_selected_leaf(DrawingRegion(id='selected', geometry=path), target)
+    assert updated.current.params['canonical_path_geometry'] is path
+    assert updated.current.params['d'] == 'M0 0 L10 0 L10 10 L0 10 Z'
+    assert updated.footprint.area == pytest.approx(100)
+    assert updated.source_regions == ('material-1',)
+    assert updated.drawing_id is None and updated.id == 7
+    assert updated.fill is target.fill and np.array_equal(updated.raster, target.raster)
+
+
+def test_selected_leaf_publication_does_not_restore_retired_corner_diagnostics():
+    from vectormark.drawing import DrawingRegion
+    from vectormark.drawing_adapter import publish_selected_leaf
+    target = VectorRegion(id=7, current=Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8}),
+        fill=FlatFill('#ABCDEF'), diagnostics={'corners': {'stale': True}, 'retained': True})
+    selected = DrawingRegion(id='r7', geometry=PrimitiveGeometry(CirclePrimitive((4, 4), 3)),
+        diagnostics={'retained': True})
+    updated = publish_selected_leaf(selected, target)
+    assert updated.diagnostics == {'retained': True}
+    assert target.diagnostics['corners'] == {'stale': True}
+
+
 def annotated():
     path = geometry_from_svg_d('M0 0 L10 0 L10 10 L0 10 Z', region_id='r1')
     command = path.path.commands[1].id
@@ -46,7 +78,6 @@ def annotated():
 
 
 def test_automatic_primitive_replay_publishes_selected_values_without_refitting(monkeypatch):
-    from vectormark import drawing_adapter
     from vectormark.optimizer.automatic_replay import optimize_with_intent, replay_batches
     from vectormark.optimizer.passes.primitives import primitives_pass
     from vectormark.optimizer.trace import trace_regions
@@ -56,32 +87,30 @@ def test_automatic_primitive_replay_publishes_selected_values_without_refitting(
     image[(yy - 50) ** 2 + (xx - 50) ** 2 <= 30 ** 2] = (200, 30, 30)
     regions, masks = trace_regions(image, Options())
     accepted = optimize_with_intent(regions, masks, [primitives_pass])
-    calls = []
-    publish = drawing_adapter.publish_primitive_geometry
-    def record(target, geometry, **kwargs):
-        calls.append(geometry)
-        return publish(target, geometry, **kwargs)
-    monkeypatch.setattr(drawing_adapter, 'publish_primitive_geometry', record)
     def forbidden(*args, **kwargs):
         pytest.fail('retained primitive replay ran recognition')
-    monkeypatch.setattr('vectormark.optimizer.passes.primitives.recognize_primitive', forbidden)
+    monkeypatch.setattr('vectormark.optimizer.passes.primitives.recognize_primitive_geometry', forbidden)
+    monkeypatch.setattr('vectormark.primitive_fitting.recognize_primitive', forbidden)
     replayed = replay_batches(regions, accepted.batches, masks=masks)
     assert replayed[0].current == accepted.objects[0].current
     assert replayed[0].fill == accepted.objects[0].fill
-    assert calls == [accepted.batches[0].operations[0].intent.action.primitive]
+    from vectormark.primitive_fitting import primitive_geometry_from_shape
+    assert primitive_geometry_from_shape(replayed[0].current) == accepted.batches[0].operations[0].intent.action.primitive
 
 
 def test_corner_publication_keeps_downstream_precision_and_siblings():
-    from vectormark.drawing_adapter import restore_corner_annotations
+    from vectormark.drawing_replay import restore_corner_annotations
+    from vectormark.optimizer.replay_binding import capture_replay_state
     raw = 'M0 0 L10.123456789 0 L10 10 L0 10 Z'
     shape = Shape('path', {'d': raw, 'path_ids': ('r1.p0',), 'debug': 'preserved'})
     target = VectorRegion(id=1, current=shape, fill=None, drawing_id='r1', raster=np.ones((12, 12), dtype=bool))
     sibling = VectorRegion(id=2, current=Shape('rect', {'x': 20, 'y': 0, 'w': 2, 'h': 2}), fill=None, drawing_id='r2')
-    result = restore_corner_annotations((target, sibling), target_region_id='r1', annotated=annotated())
-    assert result[1] is sibling
-    assert result[0].current.params['d'] == raw
-    assert result[0].current.params['debug'] == 'preserved'
-    canonical = result[0].current.params['canonical_path_geometry']
+    state = capture_replay_state((target, sibling), Canvas(30, 12))
+    result = restore_corner_annotations(state, target_region_id='r1', annotated=annotated())
+    assert result.drawing.region('r2') is state.drawing.region('r2')
+    assert result.shape_metadata['r1']['debug'] == 'preserved'
+    assert result.region_evidence == state.region_evidence
+    canonical = result.drawing.region('r1').geometry
     assert canonical.path.commands[1].end == (10.123456789, 0)
     assert canonical.anchors == annotated().anchors
     assert 'canonical_path_geometry' not in target.current.params
@@ -92,10 +121,12 @@ def test_corner_publication_keeps_downstream_precision_and_siblings():
     (Shape('path', {'d': 'M0 0 Q5 0 10 0 L10 10 L0 10 Z'}), 'command topology'),
 ])
 def test_corner_publication_rejects_incompatible_downstream_geometry(shape, reason):
-    from vectormark.drawing_adapter import restore_corner_annotations
+    from vectormark.drawing_replay import restore_corner_annotations
+    from vectormark.optimizer.replay_binding import capture_replay_state
     target = VectorRegion(id=1, current=shape, fill=None, drawing_id='r1')
+    state = capture_replay_state((target,), Canvas(12, 12))
     with pytest.raises(ValueError, match=reason):
-        restore_corner_annotations((target,), target_region_id='r1', annotated=annotated())
+        restore_corner_annotations(state, target_region_id='r1', annotated=annotated())
 
 
 @pytest.mark.parametrize('branch', [False, True])

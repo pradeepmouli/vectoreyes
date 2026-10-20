@@ -1,0 +1,49 @@
+{
+  "entry": "pinterest",
+  "svg": "pinterest.svg",
+  "revision": 1,
+  "sha256": "a08180e77d2a5dc59c7474c6539f7ecb03316b48f5ea90733c3b57eebb9ab3a3",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Pinterest.svg",
+    "title": "File:Pinterest.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/4/4d/Pinterest.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2017-07-25T02:52:56Z",
+    "upstream_sha1": "f33a7e606b28542e81476f71e0c90c7f3a68d57f",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<a href=\"//commons.wikimedia.org/w/index.php?title=User:Alexo88&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"User:Alexo88 (page does not exist)\">Alexo88</a>",
+    "Credit": "<span class=\"int-own-work\" lang=\"en\">Own work</span>",
+    "LicenseShortName": "CC BY-SA 4.0",
+    "LicenseUrl": "https://creativecommons.org/licenses/by-sa/4.0",
+    "UsageTerms": "Creative Commons Attribution-Share Alike 4.0",
+    "Restrictions": ""
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      144.0,
+      144.0
+    ],
+    "width": null,
+    "height": null
+  },
+  "raster": {
+    "path": "../input/pinterest.png",
+    "sha256": "16f3d2bfdf4edb3558d259d37a16b889142fd07daf6903e2d2bacab103764dea"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

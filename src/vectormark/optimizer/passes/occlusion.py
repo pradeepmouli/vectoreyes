@@ -3,10 +3,7 @@ from __future__ import annotations
 import numpy as np
 
 from ...candidate import FlatFill
-from ...drawing_adapter import primitive_geometry_from_shape
-from ...drawing_occlusion import (
-    _shape_from_scene_primitive, materialize_occlusion_child, materialize_occlusion_branch,
-)
+from ...primitive_fitting import primitive_geometry_from_shape
 from ...fit import Shape
 from ...occlusion import ScenePrimitive, reconstruct_scene, region_adjacency
 from ...symmetry import detect_axis
@@ -19,6 +16,7 @@ from ..automatic_replay import (
     NamedRegionOutput,
     ReconstructOcclusionOperation,
     RetainedOcclusionSource,
+    apply_occlusion_choice,
     draft_input_ref,
 )
 from ..framework import Proposal
@@ -50,7 +48,7 @@ def _typed_occlusion_primitive(item: ScenePrimitive):
             float(item.params["r_outer"]),
             float(item.params["r_inner"]),
         )
-    return primitive_geometry_from_shape(_shape_from_scene_primitive(item))
+    return primitive_geometry_from_shape(Shape(item.kind, dict(item.params)))
 
 
 def occlusion_pass(
@@ -101,7 +99,6 @@ def occlusion_pass(
             continue
 
         base_z = min(float(obj.z) for obj in leaves if int(obj.id) in consumed_ids)
-        children: list[VectorRegion] = []
         child_records: list[tuple[ScenePrimitive | Shape, int, str]] = []
         primitive_id_index = 0
         for item_index, item in enumerate(reconstructed):
@@ -111,13 +108,8 @@ def occlusion_pass(
             else:
                 child_id = next_id
                 next_id += 1
-            children.append(materialize_occlusion_child(item, id=child_id, shape_hw=shape_hw, z_offset=base_z))
             child_records.append((item, child_id, f"child_{item_index}"))
 
-        branch = materialize_occlusion_branch(
-            [obj for obj in leaves if int(obj.id) in consumed_ids], children,
-            branch_id=consumed_ids[0], base_z=base_z, shape_hw=shape_hw,
-        )
         refs_by_id = {obj_id: draft_input_ref(obj_id) for obj_id in consumed_ids}
         primitive_output_by_source: dict[int, str] = {}
         specs = []
@@ -170,11 +162,13 @@ def occlusion_pass(
         component_refs = tuple(refs_by_id[obj_id] for obj_id in consumed_ids)
         action = ReconstructOcclusionOperation(
             component_refs,
-            int(branch.id),
+            consumed_ids[0],
             float(base_z),
             tuple(int(value) for value in shape_hw),
             tuple(specs),
         )
+        selected_sources = {refs_by_id[int(obj.id)]: obj for obj in leaves if int(obj.id) in consumed_ids}
+        branch, = apply_occlusion_choice(action, selected_sources.__getitem__)
         intent = AutomaticIntent(
             "",
             action,

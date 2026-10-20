@@ -8,11 +8,12 @@ from vectormark.drawing import Canvas
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_adapter import drawing_from_vector_regions
 from vectormark.drawing_engine import RasterImage
+from tests._working_evidence import capture_working_geometry_evidence
+from vectormark.optimizer.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
-    build_geometry_evidence,
     build_paint_evidence,
-)
+    )
 from vectormark.drawing_replay import propose_effective_recipe
 from vectormark.drawing_trace import TraceOptions, TraceResult
 from vectormark.optimizer.automatic_replay import FitPrimitiveOperation
@@ -42,22 +43,18 @@ def test_effective_auto_recipe_replays_from_evidence_without_detector(monkeypatc
         for root in objects
     )
     masks = {int(root.id): np.asarray(root.raster, dtype=bool) for root in roots}
-    optimized = optimize_with_intent(list(roots), masks, [primitives_pass])
-    assert len(optimized.batches[0].operations) == 1
-    assert isinstance(
-        optimized.batches[0].operations[0].intent.action,
-        FitPrimitiveOperation,
-    )
-
     source = RasterImage(120, 120, "rgb8", rgb.tobytes())
     trace = TraceResult(120, 120, TraceOptions(), (), "<svg/>")
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=trace,
         geometry_source=source,
         trace_roots=roots,
     )
     paint = build_paint_evidence(source)
+    optimized = optimize_with_intent(list(working_regions_from_evidence(evidence)), masks, [primitives_pass])
+    assert len(optimized.batches[0].operations) == 1
+    assert isinstance(optimized.batches[0].operations[0].intent.action, FitPrimitiveOperation)
     recipe = EffectiveDrawingRecipe(
         evidence_revision=evidence.revision,
         engine_revision=evidence.engine_revision,
@@ -74,7 +71,7 @@ def test_effective_auto_recipe_replays_from_evidence_without_detector(monkeypatc
     )
 
     monkeypatch.setattr(
-        "vectormark.optimizer.passes.primitives.recognize_primitive",
+        "vectormark.optimizer.passes.primitives.recognize_primitive_geometry",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("semantic primitive detector ran during replay")
         ),
@@ -96,7 +93,7 @@ def test_replay_fails_closed_for_unimplemented_retained_operations():
         for root in objects
     )
     source = RasterImage(120, 120, "rgb8", rgb.tobytes())
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=TraceResult(120, 120, TraceOptions(), (), "<svg/>"),
         geometry_source=source,

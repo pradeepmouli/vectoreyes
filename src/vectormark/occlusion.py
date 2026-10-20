@@ -279,19 +279,24 @@ def _cavity_contained_labels(region: Region, others: list[Region]) -> set[int]:
 
 def _retained_region_shape(region: Region) -> Shape:
     """Carry retained raster artwork through reconstruction as its source contour."""
+    return Shape("path", {
+        "d": retained_region_path_data(region.mask),
+        "color_hex": region.color_hex,
+        "z": -1,
+        "source_label": region.label,
+    })
+
+
+def retained_region_path_data(mask: np.ndarray) -> str:
+    """Return the existing source-contour encoding without a scene wrapper."""
     parts: list[str] = []
-    for contour in region_contours(region.mask):
+    for contour in region_contours(mask):
         if len(contour) < 3:
             continue
         parts.append(f"M{_fmt(contour[0, 0])} {_fmt(contour[0, 1])}")
         parts.extend(f"L{_fmt(x)} {_fmt(y)}" for x, y in contour[1:])
         parts.append("Z")
-    return Shape("path", {
-        "d": " ".join(parts),
-        "color_hex": region.color_hex,
-        "z": -1,
-        "source_label": region.label,
-    })
+    return " ".join(parts)
 
 
 def _subseq_indices(pts: np.ndarray, sub: np.ndarray) -> list[int]:

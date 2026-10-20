@@ -18,7 +18,7 @@ from .fit import fit_path_stages
 from .path_fit_evidence import AutomaticFitEvidence
 from .json_value import to_json_value
 from .material_pretrace import MaterialPretraceResult
-from .optimizer.corners import path_corner_diagnostics
+from .corner_diagnostics import path_corner_diagnostics
 from .pipeline import attach_coverage_field
 from .segment import fill_tiny_isolated_holes, segment
 

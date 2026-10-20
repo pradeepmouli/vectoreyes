@@ -13,14 +13,17 @@ import numpy as np
 from .candidate import Fill, FlatFill
 from .components import decompose_components
 from .contour import region_contours
-from .drawing_adapter import normalize_drawing_addresses
-from .drawing_paint import DrawingRegions
-from .drawing_topology import normalize_retained_topology
+from .drawing import Canvas, Drawing, DrawingRegion
+from .drawing_topology import normalize_drawing_topology
+from .corner_provenance import ingress_prefit_corners
+from .immutable_value import freeze_value
+from .path_geometry import CompoundPathGeometry, parse_svg_paths
+from .path_topology import component_paths
+from .paint_fitting import canonical_fill
 from .drawing_trace import RootPathEvidence, TraceResult, _polyline_trace_path
 from .fit import Shape, fit_path_stages
 from .fill_fit import fit_fill
-from .optimizer.corners import path_corner_diagnostics
-from .optimizer.vector_region import VectorRegion
+from .corner_diagnostics import path_corner_diagnostics
 from .path_fit_evidence import AutomaticFitEvidence
 from .pipeline import Options, _segment_image
 from .segment import fill_small_compatible_holes
@@ -34,18 +37,38 @@ DecompositionObserver = Callable[
 
 
 @dataclass(frozen=True)
-class RootRegionsResult:
-    """The one retained forest and the trace enriched by its actual root fits."""
+class RootDrawingResult:
+    """Canonical roots, detached source observations, and actual fit evidence."""
 
-    regions: DrawingRegions
+    drawing: Drawing
     trace: TraceResult
+    shape_metadata: Mapping[str, Mapping[str, object]]
+    region_evidence: Mapping[str, Mapping[str, object]]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, 'shape_metadata', freeze_value(self.shape_metadata))
+        object.__setattr__(self, 'region_evidence', freeze_value(self.region_evidence))
+
+
+@dataclass(frozen=True)
+class _AssembledSurface:
+    id: int
+    shape: Shape
+    fill: Fill
+    z: float
+    raster: np.ndarray
+    source_label: int
+    color_hex: str
+    drawing_id: str
+    source_regions: tuple[str, ...]
+    diagnostics: Mapping[str, object]
 
 
 @dataclass(frozen=True)
 class _RootAssembly:
     """Transient fit records keyed internally until public addresses are final."""
 
-    regions: DrawingRegions
+    regions: tuple[_AssembledSurface, ...]
     evidence: Mapping[int, tuple[AutomaticFitEvidence, ...]]
 
 
@@ -58,34 +81,56 @@ class _SurfaceFit:
 
 def _bind_root_evidence(
     trace: TraceResult, assembled: _RootAssembly
-) -> RootRegionsResult:
-    regions = normalize_drawing_addresses(assembled.regions)
+) -> RootDrawingResult:
+    from .geometry_native import region_path
+    from .optimizer.gate import rasterize
+
+    regions = []
     evidence = []
-    for root in regions:
-        for leaf in root.leaves():
-            assert leaf.drawing_id is not None and leaf.current is not None
-            paths = tuple(
-                d.strip() for d in re.findall(r"M[^M]*", leaf.current.params["d"])
-            )
-            fits = assembled.evidence[leaf.id]
-            if len(paths) != len(fits) or any(
-                not fit.matches_output(d) for d, fit in zip(paths, fits)
-            ):
-                raise ValueError(
-                    "root fitting evidence does not match the retained leaf subpaths"
-                )
-            evidence.extend(
-                RootPathEvidence(leaf.drawing_id, f"{leaf.drawing_id}.p{index}", fitted)
-                for index, fitted in enumerate(fits)
-            )
-    normalized = normalize_retained_topology(regions, defer_overlaps=True)
+    observations = {}
+    metadata = {}
+    for root in assembled.regions:
+        d = str(root.shape.params['d'])
+        paths = tuple(part.strip() for part in re.findall(r'M[^M]*', d))
+        fits = assembled.evidence[root.id]
+        if len(paths) != len(fits) or any(not fit.matches_output(path)
+                for path, fit in zip(paths, fits, strict=True)):
+            raise ValueError('root fitting evidence does not match the retained leaf subpaths')
+        evidence.extend(RootPathEvidence(root.drawing_id, f'{root.drawing_id}.p{index}', fit)
+            for index, fit in enumerate(fits))
+        parsed = parse_svg_paths(d, region_id=root.drawing_id)
+        geometry = (parsed[0] if len(parsed) == 1 else CompoundPathGeometry(parsed,
+            root.shape.params.get('fill_rule', 'nonzero'), 'pending component publication'))
+        geometry, corners = ingress_prefit_corners(geometry, d, root.drawing_id,
+            root.diagnostics.get('corners'))
+        regions.append(DrawingRegion(root.drawing_id, geometry, canonical_fill(root.fill), root.z,
+            source_region_ids=root.source_regions, diagnostics={**root.diagnostics, 'corners': corners}))
+    normalized = normalize_drawing_topology(Drawing('geometry-evidence',
+        Canvas(trace.width, trace.height), tuple(regions)), defer_overlaps=True)
+    for original, output in zip(assembled.regions, normalized.regions, strict=True):
+        def observe(region: DrawingRegion, ancestry: tuple[int, ...], mask: np.ndarray) -> None:
+            observations[region.id] = {
+                'id': ancestry[-1], 'ancestry': ancestry, 'raster_shape': mask.shape,
+                'raster': mask.tobytes(), 'raster_source': None,
+                'source_label': original.source_label, 'color_hex': original.color_hex,
+                'original_kind': original.shape.kind, 'original_params': original.shape.params,
+                'coverage': None, 'coverage_source': None, 'coverage_shape': None,
+                'coverage_dtype': None, 'coverage_origin': None, 'coverage_canvas': None,
+            }
+            if region.is_leaf:
+                metadata[region.id] = {key: value for key, value in original.shape.params.items() if key != 'd'}
+                metadata[region.id]['path_ids'] = tuple(path.path.id for path in component_paths(region.geometry))
+            for child in region.children:
+                observe(child, (*ancestry, int(child.id.rsplit('-', 1)[1])),
+                    rasterize(region_path(child, {}), original.raster.shape))
+        observe(output, (original.id,), original.raster)
     owners = {
-        path_id: leaf.drawing_id
-        for root in normalized
+        path.path.id: leaf.id
+        for root in normalized.regions
         for leaf in root.leaves()
-        for path_id in leaf.current.params.get("path_ids", ())
+        for path in component_paths(leaf.geometry)
     }
-    return RootRegionsResult(
+    return RootDrawingResult(
         normalized,
         replace(
             trace,
@@ -94,10 +139,12 @@ def _bind_root_evidence(
                 for record in evidence
             ),
         ),
+        metadata,
+        observations,
     )
 
 
-def root_regions(
+def assemble_drawing_roots(
     trace: TraceResult,
     rgb: np.ndarray | None = None,
     *,
@@ -106,7 +153,7 @@ def root_regions(
     allow_gradients: bool = True,
     preserve_material_labels: bool | None = None,
     on_decomposition_stage: DecompositionObserver | None = None,
-) -> RootRegionsResult:
+) -> RootDrawingResult:
     """Create retained roots, optionally reducing one-shot surfaces into roots.
 
     The raw trace deliberately preserves every palette fragment so path-command
@@ -285,7 +332,7 @@ def root_regions(
         trace,
         _RootAssembly(
             tuple(
-                VectorRegion.from_shape(
+                  _AssembledSurface(
                     id=index,
                     shape=fitted.shape,
                     fill=fill,
@@ -324,7 +371,7 @@ def _raw_root_regions(trace: TraceResult) -> _RootAssembly:
         )
         evidence[index + 1] = fitted.evidence
         roots.append(
-            VectorRegion.from_shape(
+              _AssembledSurface(
                 id=index + 1,
                 shape=fitted.shape,
                 fill=FlatFill(region.color),

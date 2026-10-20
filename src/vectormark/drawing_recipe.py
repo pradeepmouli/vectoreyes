@@ -4,24 +4,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from hashlib import sha256
 import json
-from typing import Literal, TypeAlias
+from typing import Literal, TypeAlias, TypeVar, cast
 
 import numpy as np
 from pydantic import BaseModel
 
-from .candidate import (
-    FlatFill as LegacyFlatFill,
-    LinearGradientFill as LegacyLinearGradientFill,
-    RadialGradientFill as LegacyRadialGradientFill,
-    RasterFill as LegacyRasterFill,
-)
 from .corner_recipe import CornerRecipe, CornerRecipeEdit
 from .drawing import Canvas, Drawing, DrawingRegion
 from .background import BackgroundColor
-from .types import CoverageField
 from .output_settings import DrawingOutputSettings
 from .drawing_actions import (
     ActionSettings,
@@ -43,15 +36,12 @@ from .drawing_actions import (
 )
 from .drawing_engine import RasterImage
 from .drawing_trace import GeometryTraceRegion, RootPathEvidence, TraceRegion, TraceResult
-from .fit import Shape
 from .immutable_value import freeze_value
 from .material_pretrace import GradientSupport, MaterialPretraceResult
-from .optimizer.automatic_replay import ReplayBatch, input_revision
-from .optimizer.vector_region import VectorRegion
+from .optimizer.automatic_replay import ReplayBatch
 from .path_fit_evidence import FitPathCorrespondence
 from .path_geometry import (
-    AffineTransform, PrimitiveGeometry, PathGeometry,
-    PathGeometryWithCutouts, CompoundPathGeometry,
+    AffineTransform,
 )
 
 
@@ -144,11 +134,14 @@ class GeometryEvidence:
     engine_revision: str
     trace: TraceResult = field(compare=False, repr=False)
     geometry_source: RasterImage = field(repr=False)
-    trace_roots: tuple[VectorRegion, ...] = field(compare=False, repr=False)
+    drawing: Drawing = field(repr=False)
+    shape_metadata: Mapping[str, Mapping[str, object]] = field(repr=False)
+    region_evidence: Mapping[str, Mapping[str, object]] = field(repr=False)
     geometry_to_paint: AffineTransform = AffineTransform()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "trace_roots", tuple(self.trace_roots))
+        object.__setattr__(self, "shape_metadata", freeze_value(self.shape_metadata))
+        object.__setattr__(self, "region_evidence", freeze_value(self.region_evidence))
         if (self.geometry_source.width, self.geometry_source.height) != (
             self.trace.width,
             self.trace.height,
@@ -179,57 +172,28 @@ def _readonly_array(value: np.ndarray) -> np.ndarray:
     return snapshot
 
 
-def _snapshot_shape(shape: Shape | None) -> Shape | None:
-    return None if shape is None else Shape(shape.kind, freeze_value(shape.params))
+_CanonicalValue = TypeVar("_CanonicalValue")
 
 
-def _snapshot_legacy_fill(fill: object) -> object:
-    if isinstance(fill, LegacyFlatFill):
-        return LegacyFlatFill(fill.hex)
-    if isinstance(fill, LegacyLinearGradientFill):
-        return LegacyLinearGradientFill(dict(fill.geometry), list(fill.stops))
-    if isinstance(fill, LegacyRadialGradientFill):
-        return LegacyRadialGradientFill(dict(fill.geometry), list(fill.stops))
-    if isinstance(fill, LegacyRasterFill):
-        return LegacyRasterFill(dict(fill.geometry), fill.png_b64)
-    return None
+def _snapshot_canonical(value: _CanonicalValue) -> _CanonicalValue:
+    """Detach typed canonical values, including their immutable mapping fields."""
+    if isinstance(value, BaseModel):
+        return type(value).model_validate(value.model_dump(mode="python"))
+    if is_dataclass(value) and not isinstance(value, type):
+        return type(value)(**{item.name: _snapshot_canonical(getattr(value, item.name))
+            for item in fields(value) if item.init})
+    if isinstance(value, Mapping):
+        return cast(_CanonicalValue, {key: _snapshot_canonical(item) for key, item in value.items()})
+    if isinstance(value, tuple):
+        return cast(_CanonicalValue, tuple(_snapshot_canonical(item) for item in value))
+    return cast(_CanonicalValue, freeze_value(value))
 
 
-def _snapshot_region(region: VectorRegion) -> VectorRegion:
-    raster = _readonly_array(region.raster)
-    coverage = region.coverage if isinstance(region.coverage, CoverageField) else None if region.coverage is None else _readonly_array(region.coverage)
-    diagnostics = freeze_value(region.diagnostics)
-    if region.is_leaf:
-        assert region.current is not None
-        return VectorRegion(
-            id=region.id,
-            current=_snapshot_shape(region.current),
-            original=_snapshot_shape(region.original),
-            fill=_snapshot_legacy_fill(region.fill),
-            z=region.z,
-            footprint=region.footprint,
-            raster=raster,
-            source_label=region.source_label,
-            color_hex=region.color_hex,
-            drawing_id=region.drawing_id,
-            source_regions=region.source_regions,
-            coverage=coverage,
-            diagnostics=diagnostics,
-        )
-    return VectorRegion.branch(
-        id=region.id,
-        original=_snapshot_shape(region.original),
-        footprint=region.footprint,
-        children=tuple(_snapshot_region(child) for child in region.children),
-        z=region.z,
-        raster=raster,
-        fill=_snapshot_legacy_fill(region.fill),
-        source_label=region.source_label,
-        color_hex=region.color_hex,
-        drawing_id=region.drawing_id,
-        source_regions=region.source_regions,
-        diagnostics=diagnostics,
-    )
+def _geometry_evidence_revision(evidence: GeometryEvidence) -> str:
+    return _digest(("geometry-evidence.v2", evidence.kind, evidence.engine_revision,
+        evidence.trace.to_public_dict(include_region_map=True), evidence.root_paths,
+        evidence.geometry_source, evidence.drawing, evidence.shape_metadata,
+        evidence.region_evidence, evidence.geometry_to_paint))
 
 
 def _snapshot_material_pretrace(
@@ -304,30 +268,20 @@ def _snapshot_trace(trace: TraceResult) -> TraceResult:
 def snapshot_geometry_evidence(evidence: GeometryEvidence) -> GeometryEvidence:
     """Detach every mutable trace/optimizer input while preserving its identity."""
     trace = _snapshot_trace(evidence.trace)
-    roots = tuple(_snapshot_region(root) for root in evidence.trace_roots)
-    revision = _digest(
-        (
-            "geometry-evidence.v1",
-            evidence.kind,
-            evidence.engine_revision,
-            trace.to_public_dict(include_region_map=True),
-            trace.root_path_evidence,
-            evidence.geometry_source,
-            input_revision(list(roots)),
-            evidence.geometry_to_paint,
-        )
-    )
-    if revision != evidence.revision:
-        raise ValueError("geometry evidence revision does not match retained inputs")
-    return GeometryEvidence(
-        revision=revision,
+    snapshot = GeometryEvidence(
+        revision=evidence.revision,
         kind=evidence.kind,
         engine_revision=evidence.engine_revision,
         trace=trace,
         geometry_source=evidence.geometry_source,
-        trace_roots=roots,
+        drawing=_snapshot_canonical(evidence.drawing),
+        shape_metadata=evidence.shape_metadata,
+        region_evidence=evidence.region_evidence,
         geometry_to_paint=evidence.geometry_to_paint,
     )
+    if _geometry_evidence_revision(snapshot) != evidence.revision:
+        raise ValueError("geometry evidence revision does not match retained inputs")
+    return snapshot
 
 
 def build_paint_evidence(source: RasterImage, *, background: BackgroundColor | None = None, output_settings: DrawingOutputSettings | None = None) -> PaintEvidence:
@@ -350,33 +304,21 @@ def build_geometry_evidence(
     kind: EvidenceKind,
     trace: TraceResult,
     geometry_source: RasterImage,
-    trace_roots: tuple[VectorRegion, ...],
+    drawing: Drawing,
+    shape_metadata: Mapping[str, Mapping[str, object]],
+    region_evidence: Mapping[str, Mapping[str, object]],
     geometry_to_paint: AffineTransform = AffineTransform(),
     engine_revision: str = ENGINE_REVISION,
 ) -> GeometryEvidence:
     trace_snapshot = _snapshot_trace(trace)
-    roots = tuple(_snapshot_region(root) for root in trace_roots)
-    revision = _digest(
-        (
-            "geometry-evidence.v1",
-            kind,
-            engine_revision,
-            trace_snapshot.to_public_dict(include_region_map=True),
-            trace_snapshot.root_path_evidence,
-            geometry_source,
-            input_revision(list(roots)),
-            geometry_to_paint,
-        )
+    evidence = GeometryEvidence(
+        revision="pending", kind=kind, engine_revision=engine_revision,
+        trace=trace_snapshot, geometry_source=geometry_source,
+        drawing=_snapshot_canonical(drawing),
+        shape_metadata=shape_metadata,
+        region_evidence=region_evidence, geometry_to_paint=geometry_to_paint,
     )
-    return GeometryEvidence(
-        revision,
-        kind,
-        engine_revision,
-        trace_snapshot,
-        geometry_source,
-        roots,
-        geometry_to_paint,
-    )
+    return replace(evidence, revision=_geometry_evidence_revision(evidence))
 
 
 @dataclass(frozen=True)

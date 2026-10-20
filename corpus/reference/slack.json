@@ -1,0 +1,44 @@
+{
+  "entry": "slack",
+  "svg": "slack.svg",
+  "revision": 1,
+  "sha256": "17160477a475166ad0556e0028e3b0bd0634d70c02e7b920c04a4429ea184ab3",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Slack_icon_2019.svg",
+    "title": "File:Slack icon 2019.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Slack_icon_2019.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2020-01-28T08:12:03Z",
+    "upstream_sha1": "e6348a809fecba8504b00d4c04cfc53a76002afd",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Slack Technologies",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://brandfolder.com/slack/logos\">https://brandfolder.com/slack/logos</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [],
+    "width": "127",
+    "height": "127"
+  },
+  "raster": {
+    "path": "../input/slack.png",
+    "sha256": "d2dd8db94d499a2bc3641458642a61147ff4f83856955de85635a898cacfe4fc"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

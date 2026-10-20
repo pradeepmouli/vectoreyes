@@ -12,6 +12,14 @@ a human-editable parametric model.
 
 No model/LLM in the loop. Every stage is a known, deterministic algorithm.
 
+### Agent plugin
+
+For the agent-guided image → trace → plan refinement → visual evaluation
+workflow, see [plugin packaging and installation](docs/plugins.md).
+The shared bundle supports portable Agent Plugins, Codex and Claude Code;
+its skills are generated from the same packaged instructions served by MCP.
+The deterministic engine remains usable independently of an agent.
+
 ## Status
 
 🌱 **v1 pipeline working.** The deterministic A0→B→C pipeline idealizes the

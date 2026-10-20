@@ -34,6 +34,11 @@ def replace_region(drawing: Drawing, selected: DrawingRegion) -> Drawing:
     def visit(region: DrawingRegion) -> DrawingRegion:
         if region.id == selected.id:
             return selected
+        if (isinstance(region.geometry, CloneGeometry)
+                and region.geometry.source_region_id == selected.id
+                and original.is_leaf and selected.is_branch):
+            from .drawing_topology import expand_clone_components
+            return expand_clone_components(region, selected)
         if isinstance(region.geometry, CloneGeometry) and region.geometry.source_region_id in retired:
             return replace(region, geometry=replace(region.geometry, source_region_id=selected.id))
         if region.is_branch:

@@ -6,8 +6,13 @@ Run:
 
 from __future__ import annotations
 
+from dataclasses import asdict as _trace_asdict
+from vectormark.drawing_render import trace_summary as _canonical_trace
+from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 import argparse
 import base64
+import copyreg
 import dataclasses
 import hashlib
 import html
@@ -20,20 +25,15 @@ import urllib.request
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Literal
 
 import numpy as np
 from PIL import Image
 
 from vectormark import Options, idealize
-from vectormark.drawing_refine import (
-    auto_refine,
-    drawing_summary,
-    labeled_drawing_svg,
-    render_drawing,
-    stitch_regions,
-)
-from vectormark.drawing_assembly import root_regions
+from vectormark.drawing_refine import auto_refine, stitch_regions
+from vectormark.optimizer.assembly_binding import assemble_working_roots
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
 from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
 from vectormark.pipeline import _flatten_on_white
@@ -498,17 +498,24 @@ def _trace_drawing_auto_with_cache(
             ImageRef(data_uri="data:image/png;base64," + base64.b64encode(source).decode("ascii")),
             trace_options,
         )
-        rooted = root_regions(trace, rgb, min_region_fraction=trace_options.min_region_fraction)
+        rooted = assemble_working_roots(trace, rgb, min_region_fraction=trace_options.min_region_fraction)
         trace = rooted.trace
         roots = stitch_regions(trace, rooted.regions)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = cache_path.with_suffix(cache_path.suffix + ".tmp")
-        tmp.write_bytes(pickle.dumps({
+        cache_buffer = io.BytesIO()
+        cache_pickler = pickle.Pickler(cache_buffer)
+        cache_pickler.dispatch_table = {
+            **copyreg.dispatch_table,
+            MappingProxyType: lambda value: (dict, (dict(value),)),
+        }
+        cache_pickler.dump({
             "version": DRAWING_TRACE_CACHE_VERSION,
             "trace": trace,
             "rgb": rgb,
             "roots": roots,
-        }))
+        })
+        tmp.write_bytes(cache_buffer.getvalue())
         tmp.replace(cache_path)
 
     # Cache only tracing and retained v0 geometry.  Auto refinement, final fill
@@ -516,11 +523,11 @@ def _trace_drawing_auto_with_cache(
     # optimizer or renderer change appears in the next corpus invocation.
     pass_snapshots: list[tuple[str, str, dict[str, Any]]] = []
     if debug_dir is not None:
-        pass_snapshots.append(("trace_v0", render_drawing(trace, roots).svg, dict(render_drawing(trace, roots).report)))
+        pass_snapshots.append(("trace_v0", _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(roots))).svg, dict(_canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(roots))).report)))
 
     def capture_auto_pass(name: str, regions) -> None:
         if debug_dir is not None:
-            rendered_pass = render_drawing(trace, regions)
+            rendered_pass = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)))
             pass_snapshots.append((name, rendered_pass.svg, dict(rendered_pass.report)))
 
     regions = auto_refine(
@@ -530,12 +537,12 @@ def _trace_drawing_auto_with_cache(
         corner_normalize=trace_options.corner_normalize,
         on_pass=capture_auto_pass if debug_dir is not None else None,
     )
-    rendered = render_drawing(trace, regions)
+    rendered = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)))
     svg = rendered.svg
     if debug_dir is not None:
         pass_snapshots.append(("final_refill", svg, dict(rendered.report)))
     report = {
-        "trace": drawing_summary(trace, regions),
+        "trace": _canonical_trace(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)), _trace_asdict((trace).options)),
         "report": rendered.report,
         "drawing_id": f"corpus-{entry.name}",
         "version": "v0.auto",
@@ -608,7 +615,7 @@ def _write_trace_auto_debug_report(
         entries.append((f"{index:02d} {name.removesuffix('_pass')}", filename, "svg", pass_report))
 
     region_map_name = "region-map.svg"
-    (debug_dir / region_map_name).write_text(labeled_drawing_svg(trace, final_regions))
+    (debug_dir / region_map_name).write_text(_canonical_labels(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(final_regions))))
     entries.append(("addressable region map", region_map_name, "svg", None))
 
     source = Image.fromarray(np.asarray(source_rgb, dtype=np.uint8)).convert("RGB")

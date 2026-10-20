@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 
 import vectormark.fit as fit
-from vectormark.optimizer.vector_region import _parse_subpaths
+from vectormark.path_sampling import _parse_subpaths
 
 
 def _sample_ring(points):

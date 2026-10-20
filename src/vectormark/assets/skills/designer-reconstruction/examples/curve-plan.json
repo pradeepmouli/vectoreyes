@@ -1,0 +1,11 @@
+{
+  "version": "vectormark.plan.v1",
+  "drawing_id": "drw_example_replace_with_live_id",
+  "base_version": "v1.0",
+  "label": "Refit one ribbon side",
+  "ops": [{
+    "op": "update_geometry", "target": "r2",
+    "settings": {"max_error": 2.0},
+    "ops": [{"op": "fit", "between": ["r2.p0.c2", "r2.p0.c6"], "type": "quadratic"}]
+  }]
+}

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 350" width="240" height="350" role="img" aria-label="Daikonic mark">
+  <title>Daikonic</title>
+  <path d="M34 139 C34 100.89 72.5 70 120 70 C167.5 70 206 100.89 206 139 Z" fill="#062336"/>
+  <path d="M32 153 L208 153 C211.5 168 208.5 183 205 198 L35 198 C31.5 183 28.5 168 32 153 Z" fill="#3DA89D"/>
+  <path d="M38 213 L202 213 C205.5 227.67 192.5 242.33 189 257 L51 257 C47.5 242.33 34.5 227.67 38 213 Z" fill="#FE8D27"/>
+  <path d="M58 270 L182 270 C182 301.05 146.04 339 120 339 C93.96 339 58 301.05 58 270 Z" fill="#F23326"/>
+  <path d="M0 0 C8.8 -17 46.75 -17 55 -17 A17 17 0 0 1 55 17 C46.75 17 8.8 17 0 0 Z" fill="#062336" transform="translate(120 86) rotate(-54)"/>
+  <path d="M0 0 C8.8 -17 46.75 -17 55 -17 A17 17 0 0 1 55 17 C46.75 17 8.8 17 0 0 Z" fill="#062336" transform="translate(120 86) rotate(-126)"/>
+</svg>

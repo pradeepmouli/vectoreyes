@@ -6,9 +6,14 @@ The optimizer selects targets; this module owns the existing bounded projection.
 from __future__ import annotations
 
 import numpy as np
-from .fit import Shape, _parse_path_commands, _smooth_quadratic_path_d
-from .optimizer.automatic_replay import SmoothPathOperation, RegionResolver
-from .optimizer.vector_region import VectorRegion, to_polygon
+from dataclasses import replace
+
+from .drawing import DrawingRegion
+from .fit import _parse_path_commands, _smooth_quadratic_path_d
+from .path_geometry import (
+    CompoundPathGeometry, PathGeometry, PathGeometryWithCutouts, parse_svg_paths,
+)
+from .path_topology import component_paths, replace_component_paths
 
 
 def _local_quadratic_deviation(original_d: str, candidate_d: str) -> float:
@@ -94,44 +99,37 @@ def _local_quadratic_deviation(original_d: str, candidate_d: str) -> float:
     return maximum
 
 
-def _smoothed_shape(shape: Shape, *, max_boundary_error: float) -> Shape | None:
-    """Return one exact tangent projection when it fits the error budget.
+def smooth_region(region: DrawingRegion, *, max_boundary_error: float) -> DrawingRegion | None:
+    """Project path tangents without changing retained component membership."""
+    geometry = region.geometry
+    if not isinstance(geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+        return None
+    paths = smooth_paths(component_paths(geometry), max_boundary_error=max_boundary_error)
+    return None if paths is None else replace(region, geometry=replace_component_paths(geometry, paths))
+
+
+def smooth_paths(paths: tuple[PathGeometry, ...], *, max_boundary_error: float) -> tuple[PathGeometry, ...] | None:
+    """Project retained path tangents within one shared error budget.
 
     Partial control moves are intentionally forbidden: they make a second
     smoothing pass move the same join again.  The underlying path projection
     sets the requested tangent exactly and is idempotent.
     """
-    if shape.kind != "path":
+    if not paths:
         return None
-    current_d = str(shape.params.get("d", ""))
-    if not current_d:
+    current_d = ' '.join(path.to_svg_d() for path in paths)
+    candidate_d = _smooth_quadratic_path_d(current_d)
+    if candidate_d == current_d:
         return None
-
-    candidate = Shape(
-        "path", {**shape.params, "d": _smooth_quadratic_path_d(current_d)}
-    )
-    if candidate == shape:
+    if _local_quadratic_deviation(current_d, candidate_d) > max_boundary_error:
         return None
-    if (
-        _local_quadratic_deviation(current_d, str(candidate.params["d"]))
-        > max_boundary_error
-    ):
-        return None
-    return candidate
-
-
-def apply_smoothing(
-    action: SmoothPathOperation, resolver: RegionResolver
-) -> list[VectorRegion]:
-    """Apply the recorded smoothing budget without selecting another target."""
-    target = resolver.resolve(action.target)
-    if target.current is None:
-        raise ValueError("smooth replay target has no geometry")
-    shape = _smoothed_shape(
-        target.current, max_boundary_error=action.max_boundary_error
-    )
-    if shape is None:
-        raise ValueError(
-            "recorded smooth operation no longer applies to its bound input"
-        )
-    return [target.with_current(shape, footprint=to_polygon(shape))]
+    parsed = parse_svg_paths(candidate_d, region_id='smoothing',
+                             path_ids=tuple(path.path.id for path in paths))
+    updated_paths = []
+    for original, updated in zip(paths, parsed, strict=True):
+        # Tangent projection may elevate Q to C, but cannot add/remove commands.
+        # Keep command addresses and every anchor across that exact correspondence.
+        commands = tuple(replace(new, id=old.id) for old, new in zip(
+            original.path.commands, updated.path.commands, strict=True))
+        updated_paths.append(replace(original, path=replace(original.path, commands=commands)))
+    return tuple(updated_paths)

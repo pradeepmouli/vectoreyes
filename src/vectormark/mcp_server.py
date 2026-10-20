@@ -53,10 +53,7 @@ from .drawing_render import (
 )
 from .drawing_refine import (
     auto_refine,
-    drawing_summary,
-    labeled_drawing_svg,
     refine,
-    render_drawing as render_drawing_regions,
     stitch_regions,
 )
 from .drawing_state import (

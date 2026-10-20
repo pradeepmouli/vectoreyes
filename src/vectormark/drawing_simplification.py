@@ -2,23 +2,22 @@
 
 Optimizer passes discover scene scope and coverage. Numeric fitting, topology
 checks and acceptance policy live here for both proposals and retained replay.
-Working shapes remain an explicit transitional projection boundary.
+Public kernels consume typed paths; numeric policy operates on path data only.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from dataclasses import replace
 import numpy as np
-from .skia_geometry import SkPath
-from .fit import Shape, SIMPLE_CURVE_RESIDUAL_TOL, _fmt, fit_path, minimum_line_length
-from .optimizer.vector_region import (
-    VectorRegion,
+from .skia_geometry import SkPath, _ring_area
+from .fit import SIMPLE_CURVE_RESIDUAL_TOL, _fmt, fit_path_stages, minimum_line_length
+from .path_geometry import CornerAnchor, PathGeometry, parse_svg_paths
+from .path_sampling import (
     _parse_subpaths,
-    _ring_area,
     _sample_subpath,
 )
-from .optimizer.automatic_replay import SimplifyLineletOperation, RegionResolver
 
 _PATH_COMMAND = re.compile(r"[MLQCAZ]")
 _MAX_GEOMETRY_RESIDUAL = SIMPLE_CURVE_RESIDUAL_TOL + 0.001
@@ -281,12 +280,12 @@ def _normalized_subpath_d(
 
 
 def _path_subpaths(
-    shape: Shape,
+    d: str,
     *,
     samples: int = 24,
 ) -> list[tuple[list[tuple[str, list[float]]], list[tuple[float, float]], float]]:
     subpaths = []
-    for tokens in _parse_subpaths(str(shape.params.get("d", ""))):
+    for tokens in _parse_subpaths(d):
         points = _sample_subpath(tokens, samples=samples)
         if len(points) < 3:
             continue
@@ -428,18 +427,6 @@ def _rounded_rect_path(
     return " ".join(parts)
 
 
-def _candidate_shape(
-    shape: Shape,
-    parts: list[str],
-    *,
-    preserve_fill_rule: bool = True,
-) -> Shape:
-    params = {"d": " ".join(parts)}
-    if preserve_fill_rule and len(parts) > 1 and shape.params.get("fill_rule"):
-        params["fill_rule"] = shape.params["fill_rule"]
-    return Shape("path", params)
-
-
 def _ordered_subpath_indices(subpaths) -> list[int]:
     if not subpaths:
         return []
@@ -470,49 +457,49 @@ def _simplified_subpath_d(
             linelet_epsilon = max(epsilon, minimum_line_length(epsilon) * 0.375)
             candidates.append(
                 str(
-                    fit_path(
+                      fit_path_stages(
                         contour,
                         epsilon=linelet_epsilon,
                         max_error=max_error,
                         cubic=False,
                         prefer_simple_curves=True,
-                    ).params["d"]
+                      ).atomic_d
                 )
             )
             if cubic:
                 candidates.append(
                     str(
-                        fit_path(
+                          fit_path_stages(
                             contour,
                             epsilon=linelet_epsilon,
                             max_error=max_error,
                             cubic=True,
                             prefer_simple_curves=True,
-                        ).params["d"]
+                          ).atomic_d
                     )
                 )
         candidates.append(
             str(
-                fit_path(
+                  fit_path_stages(
                     contour,
                     epsilon=epsilon,
                     max_error=max_error,
                     cubic=False,
                     forced_corners=forced_corners,
                     prefer_simple_curves=True,
-                ).params["d"]
+                  ).atomic_d
             )
         )
         if forced_corners is not None and _line_command_count_d(original) == 0:
             candidates.append(
                 str(
-                    fit_path(
+                      fit_path_stages(
                         contour,
                         epsilon=epsilon,
                         max_error=max_error,
                         cubic=False,
                         prefer_simple_curves=True,
-                    ).params["d"]
+                      ).atomic_d
                 )
             )
         if (
@@ -522,26 +509,26 @@ def _simplified_subpath_d(
         ):
             candidates.append(
                 str(
-                    fit_path(
+                      fit_path_stages(
                         contour,
                         epsilon=epsilon,
                         max_error=max_error,
                         cubic=True,
                         prefer_simple_curves=True,
-                    ).params["d"]
+                      ).atomic_d
                 )
             )
         if cubic:
             candidates.append(
                 str(
-                    fit_path(
+                      fit_path_stages(
                         contour,
                         epsilon=epsilon,
                         max_error=max_error,
                         cubic=True,
                         forced_corners=forced_corners,
                         prefer_simple_curves=True,
-                    ).params["d"]
+                      ).atomic_d
                 )
             )
 
@@ -639,11 +626,11 @@ def _candidate_parts(
             command + " ".join(str(value) for value in values)
             for command, values in tokens
         )
-        original = Shape("path", {"d": original_d})
+        original = original_d
         for d in dict.fromkeys(
             (fitted, _normalized_subpath_d(tokens, epsilon=epsilon))
         ):
-            candidate = Shape("path", {"d": d})
+            candidate = d
             if (
                 _same_subpath_topology(original, candidate)
                 and _geometry_residual(original, candidate) <= _MAX_GEOMETRY_RESIDUAL
@@ -656,13 +643,11 @@ def _candidate_parts(
     return parts
 
 
-def _same_subpath_topology(current: Shape, candidate: Shape) -> bool:
+def _same_subpath_topology(current: str, candidate: str, *, fill_rule: str | None = None) -> bool:
     """Preserve loop structure and pairwise containment, not just total area."""
-    from .optimizer.vector_region import to_polygon
-
     try:
-        before_tokens = _parse_subpaths(str(current.params.get("d", "")))
-        after_tokens = _parse_subpaths(str(candidate.params.get("d", "")))
+        before_tokens = _parse_subpaths(current)
+        after_tokens = _parse_subpaths(candidate)
         if len(before_tokens) != len(after_tokens):
             return False
         before = [
@@ -683,8 +668,8 @@ def _same_subpath_topology(current: Shape, candidate: Shape) -> bool:
 
         # Equal contour containment is not sufficient under nonzero winding:
         # reversing a cutout can fill it without moving any boundary points.
-        old_filled = to_polygon(current).buffer(0)
-        new_filled = to_polygon(candidate).buffer(0)
+        old_filled = SkPath.from_svg_d(current, fill_rule=fill_rule).buffer(0)
+        new_filled = SkPath.from_svg_d(candidate, fill_rule=fill_rule).buffer(0)
         if sorted(len(part.interiors) for part in old_filled.geoms) != sorted(
             len(part.interiors) for part in new_filled.geoms
         ):
@@ -706,21 +691,8 @@ def _same_subpath_topology(current: Shape, candidate: Shape) -> bool:
         return False
 
 
-def _path_segment_count(shape: Shape) -> int | None:
-    if shape.kind != "path":
-        return None
-    d = str(shape.params.get("d", ""))
-    return _path_segment_count_d(d)
-
-
 def _path_segment_count_d(d: str) -> int:
     return _command_count(d)
-
-
-def _path_command_cost(shape: Shape) -> int | None:
-    if shape.kind != "path":
-        return None
-    return _path_command_cost_d(str(shape.params.get("d", "")))
 
 
 def _path_command_cost_d(d: str) -> int:
@@ -741,12 +713,10 @@ def _is_smoother_curve_join_candidate(current_d: str, candidate_d: str) -> bool:
     ) + 1e-6 < _curve_join_angle_penalty_d(current_d)
 
 
-def _geometry_residual(current: Shape, candidate: Shape) -> float:
-    from .optimizer.vector_region import to_polygon
-
+def _geometry_residual(current: str, candidate: str, *, fill_rule: str | None = None) -> float:
     try:
-        current_geometry = to_polygon(current)
-        candidate_geometry = to_polygon(candidate)
+        current_geometry = SkPath.from_svg_d(current, fill_rule=fill_rule)
+        candidate_geometry = SkPath.from_svg_d(candidate, fill_rule=fill_rule)
         scale = max(float(current_geometry.area), 1.0)
         return float(
             current_geometry.symmetric_difference(candidate_geometry).area / scale
@@ -755,7 +725,7 @@ def _geometry_residual(current: Shape, candidate: Shape) -> float:
         return float("inf")
 
 
-def _boundary_max_deviation(current: Shape, candidate: Shape) -> float:
+def _boundary_max_deviation(current: str, candidate: str, *, fill_rule: str | None = None) -> float:
     """Approximate the symmetric boundary Hausdorff distance in pixels.
 
     Area-only residuals are blind to a long, visibly bowed edge: its displaced
@@ -764,33 +734,34 @@ def _boundary_max_deviation(current: Shape, candidate: Shape) -> float:
     in either direction and keep simplification within its declared fit error.
     """
     from .quality import symmetric_boundary_distance
-    from .optimizer.vector_region import to_polygon
 
     try:
         # Preserve this pass's established bounded 64-sample approximation;
         # acceptance policies use the shared helper's conservative mode.
         return symmetric_boundary_distance(
-            to_polygon(current), to_polygon(candidate), max_samples_per_ring=64
+            SkPath.from_svg_d(current, fill_rule=fill_rule),
+            SkPath.from_svg_d(candidate, fill_rule=fill_rule), max_samples_per_ring=64
         )
     except Exception:
         return float("inf")
 
 
 def _is_improvement(
-    current: Shape,
-    candidate: Shape,
+    current: str,
+    candidate: str,
     *,
-    original: Shape | None = None,
+    original: str | None = None,
+    fill_rule: str | None = None,
     check_geometry: bool = True,
     epsilon: float = 1.0,
     max_boundary_error: float | None = None,
     linelet_only: bool = False,
     allow_new_lines: bool = False,
 ) -> bool:
-    candidate_segments = _path_segment_count(candidate)
-    current_segments = _path_segment_count(current)
-    candidate_cost = _path_command_cost(candidate)
-    current_cost = _path_command_cost(current)
+    candidate_segments = _path_segment_count_d(candidate)
+    current_segments = _path_segment_count_d(current)
+    candidate_cost = _path_command_cost_d(candidate)
+    current_cost = _path_command_cost_d(current)
     if (
         candidate_segments is None
         or current_segments is None
@@ -801,15 +772,15 @@ def _is_improvement(
     if candidate == current:
         return False
     current_short_linelets = _short_linelet_count_d(
-        str(current.params.get("d", "")), epsilon=epsilon
+        current, epsilon=epsilon
     )
     candidate_short_linelets = _short_linelet_count_d(
-        str(candidate.params.get("d", "")), epsilon=epsilon
+        candidate, epsilon=epsilon
     )
     if linelet_only and candidate_short_linelets >= current_short_linelets:
         return False
-    current_d = str(current.params.get("d", ""))
-    candidate_d = str(candidate.params.get("d", ""))
+    current_d = current
+    candidate_d = candidate
     smoother_curve_join = _is_smoother_curve_join_candidate(current_d, candidate_d)
     if (
         not allow_new_lines
@@ -834,15 +805,15 @@ def _is_improvement(
             and _line_command_count_d(candidate_d) == _line_command_count_d(current_d)
         ):
             residual_limit = max(residual_limit, _MAX_SMOOTH_CURVE_GEOMETRY_RESIDUAL)
-        if _geometry_residual(current, candidate) > residual_limit:
+        if _geometry_residual(current, candidate, fill_rule=fill_rule) > residual_limit:
             return False
         if (
             max_boundary_error is not None
-            and _boundary_max_deviation(current, candidate) > max_boundary_error
+            and _boundary_max_deviation(current, candidate, fill_rule=fill_rule) > max_boundary_error
         ):
             return False
-    original_segments = _path_segment_count(original) if original is not None else None
-    original_cost = _path_command_cost(original) if original is not None else None
+    original_segments = _path_segment_count_d(original) if original is not None else None
+    original_cost = _path_command_cost_d(original) if original is not None else None
     if original_segments is None:
         return True
     if candidate_short_linelets < current_short_linelets:
@@ -854,28 +825,25 @@ def _is_improvement(
     return candidate_cost <= original_cost
 
 
-def _simplified_path_shape(
-    shape: Shape,
+def simplify_path_data(
+    d: str,
     *,
     epsilon: float,
     max_error: float,
     samples: int,
     preserve_subpaths: bool = True,
     cubic: bool = False,
-    original: Shape | None = None,
+    original: str | None = None,
+    fill_rule: str | None = None,
     check_geometry: bool = True,
     linelet_only: bool = False,
     allow_new_lines: bool = False,
     max_boundary_error: float | None = None,
-) -> Shape | None:
-    if shape.kind != "path":
-        return None
-
-    d = str(shape.params.get("d", ""))
+) -> str | None:
     if not d:
         return None
 
-    subpaths = _path_subpaths(shape, samples=samples)
+    subpaths = _path_subpaths(d, samples=samples)
     if not subpaths:
         return None
     parts = _candidate_parts(
@@ -888,13 +856,14 @@ def _simplified_path_shape(
     )
     if not parts:
         return None
-    candidate = _candidate_shape(shape, parts, preserve_fill_rule=preserve_subpaths)
-    if preserve_subpaths and not _same_subpath_topology(shape, candidate):
+    candidate = ' '.join(parts)
+    if preserve_subpaths and not _same_subpath_topology(d, candidate, fill_rule=fill_rule):
         return None
     if not _is_improvement(
-        shape,
+        d,
         candidate,
         original=original,
+        fill_rule=fill_rule if preserve_subpaths else None,
         check_geometry=check_geometry,
         epsilon=epsilon,
         max_boundary_error=max_boundary_error,
@@ -905,31 +874,57 @@ def _simplified_path_shape(
     return candidate
 
 
-def apply_simplification(
-    action: SimplifyLineletOperation,
-    resolver: RegionResolver,
-) -> list[VectorRegion]:
-    """Apply retained simplification settings without discovering coverage."""
-    target = resolver.resolve(action.target)
-    if target.current is None:
-        raise ValueError("simplify replay target has no geometry")
-    shape = _simplified_path_shape(
-        target.current,
-        epsilon=action.epsilon,
-        max_error=action.max_error,
-        samples=action.samples,
-        preserve_subpaths=action.preserve_subpaths,
-        cubic=action.cubic,
-        original=target.original,
-        check_geometry=action.check_geometry,
-        linelet_only=action.linelet_only,
-        max_boundary_error=action.max_boundary_error,
-    )
-    if shape is None:
-        raise ValueError(
-            "recorded simplify operation no longer applies to its bound input"
-        )
-    return [
-        target.with_current(shape),
-        *(resolver.resolve(ref) for ref in action.covering),
-    ]
+def simplify_paths(
+    paths: tuple[PathGeometry, ...], *, epsilon: float, max_error: float, samples: int,
+    preserve_subpaths: bool = True, cubic: bool = False, original: str | None = None,
+    fill_rule: str | None = None, check_geometry: bool = True, linelet_only: bool = False,
+    allow_new_lines: bool = False, max_boundary_error: float | None = None,
+) -> tuple[PathGeometry, ...] | None:
+    """Select bounded canonical curves without silently retiring declarations."""
+    d = ' '.join(path.to_svg_d() for path in paths)
+    candidate = simplify_path_data(d, epsilon=epsilon, max_error=max_error, samples=samples,
+        preserve_subpaths=preserve_subpaths, cubic=cubic, original=original, fill_rule=fill_rule,
+        check_geometry=check_geometry, linelet_only=linelet_only, allow_new_lines=allow_new_lines,
+        max_boundary_error=max_boundary_error)
+    if candidate is None:
+        return None
+    selected = paths if preserve_subpaths else (paths[_ordered_subpath_indices(_path_subpaths(d, samples=samples))[0]],)
+    parsed = parse_svg_paths(candidate, region_id='simplification',
+        path_ids=tuple(path.path.id for path in selected))
+    result = tuple(_retain_path_declarations(before, after) for before, after in zip(selected, parsed, strict=True))
+    return None if result == paths else result
+
+
+def _retain_path_declarations(before: PathGeometry, after: PathGeometry) -> PathGeometry:
+    if before.to_svg_d() == after.to_svg_d():
+        return before
+    commands = []
+    used = set()
+    old_ids = {command.id for command in before.path.commands}
+    for index, command in enumerate(after.path.commands):
+        matches = [old for old_index, old in enumerate(before.path.commands)
+                   if (old_index == 0) == (index == 0) and old.end == command.end]
+        if len(matches) == 1 and matches[0].id not in used:
+            identity = matches[0].id
+        else:
+            number = len(before.path.commands) + index
+            identity = f'{before.path.id}.c{number}'
+            while identity in old_ids or identity in used:
+                number += 1
+                identity = f'{before.path.id}.c{number}'
+        used.add(identity)
+        commands.append(replace(command, id=identity))
+    current = {command.id: command for command in commands}
+    previous = {command.id: command for command in before.path.commands}
+    for anchor in before.anchors:
+        if not set(anchor.command_ids).issubset(current):
+            return before
+        if isinstance(anchor, CornerAnchor) and any(
+                current[identity] != previous[identity] for identity in anchor.owned_command_ids):
+            return before
+    try:
+        return replace(before, path=replace(before.path, commands=tuple(commands)))
+    except ValueError:
+        # Removing an unannotated command may still invalidate a rounded corner's
+        # directed ownership. Retain that path rather than discard its feature.
+        return before

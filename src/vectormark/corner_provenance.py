@@ -9,7 +9,46 @@ from types import MappingProxyType
 from typing import Literal
 
 from .immutable_value import freeze_value
-from .path_geometry import CornerAnchor, PathGeometry
+from .path_geometry import CornerAnchor, PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry, parse_svg_paths
+
+
+def bind_matching_prefit_corners(
+    paths: Sequence[PathGeometry], *, d: str, evidence: object,
+) -> tuple[tuple[PathGeometry, ...], Mapping[str, object]]:
+    """Attach matching source declarations before canonical topology publication."""
+    from .corner_diagnostics import source_ordered_corner_diagnostics, rebind_prefit_corner_diagnostics
+    if not isinstance(evidence, Mapping) or evidence.get("path") != d:
+        diagnostics = dict(evidence) if isinstance(evidence, Mapping) else {"path": d, "spans": []}
+        diagnostics["skipped"] = [
+            *(dict(item) for item in diagnostics.get("skipped", ()) if isinstance(item, Mapping)),
+            {"reason": "missing_or_stale_provenance"},
+        ]
+        return tuple(paths), diagnostics
+    evidence = source_ordered_corner_diagnostics(d, evidence)
+    rebound = rebind_prefit_corner_diagnostics(d, evidence, tolerance=0.02)
+    rebound["skipped"] = [
+        *(dict(item) for item in evidence.get("skipped", ()) if isinstance(item, Mapping)),
+        *(dict(item) for item in rebound.get("skipped", ()) if isinstance(item, Mapping)),
+    ]
+    bound, skipped, _feature_ids = bind_prefit_corner_anchors(
+        dict(enumerate(paths)), rebound["spans"], overlap_policy="retain_first")
+    rebound["skipped"].extend(dict(item) for item in skipped)
+    return tuple(bound[index] for index in range(len(paths))), rebound
+
+
+def ingress_prefit_corners(
+    geometry: PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry,
+    d: str, region_id: str, evidence: object, *, path_ids: Sequence[str] | None = None,
+) -> tuple[PathGeometry | PathGeometryWithCutouts | CompoundPathGeometry, Mapping[str, object]]:
+    """Bind declarations in source order, then retain canonical component order."""
+    from .path_topology import component_paths, replace_component_paths
+    by_id = {path.path.id: path for path in component_paths(geometry)}
+    source = parse_svg_paths(d, region_id=region_id, path_ids=path_ids)
+    paths, diagnostics = bind_matching_prefit_corners(
+        tuple(by_id[path.path.id] for path in source), d=d, evidence=evidence)
+    by_id = {path.path.id: path for path in paths}
+    return replace_component_paths(geometry,
+        tuple(by_id[path.path.id] for path in component_paths(geometry))), diagnostics
 
 
 def bind_prefit_corner_anchors(

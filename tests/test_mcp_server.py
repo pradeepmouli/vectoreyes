@@ -154,7 +154,7 @@ def test_mcp_corner_actions_follow_reported_path_addresses_and_replay_without_de
     )
 
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran after retained evidence capture")
         ),
@@ -304,7 +304,7 @@ def test_mcp_corner_actions_address_one_cutout_subpath_without_rewriting_outer(
         if command["corner_boundary"]["editable"]
     )
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran after retained evidence capture")
         ),
@@ -376,7 +376,7 @@ def test_mcp_corner_actions_refit_one_cutout_span_without_detection(monkeypatch)
         for item in cutout["corner_features"]
     }
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran after retained evidence capture")
         ),
@@ -884,7 +884,7 @@ def test_refine_drawing_converts_an_executor_error_into_a_plan_error(monkeypatch
     def fail(*_args, **_kwargs):
         raise ValueError("executor rejected this valid-looking plan")
 
-    monkeypatch.setattr("vectormark.drawing_replay.refine", fail)
+    monkeypatch.setattr("vectormark.drawing_region_actions.fit_region_primitive", fail)
     with pytest.raises(ToolError, match="PLAN_INVALID.*executor rejected"):
         refine_drawing(
             {

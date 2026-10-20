@@ -23,7 +23,8 @@ class Resolver:
 
 
 def test_engine_simplification_applies_recorded_settings_and_preserves_covering_region():
-    from vectormark.drawing_simplification import apply_simplification
+    from vectormark.drawing_adapter import bind_path_input
+    from vectormark.optimizer.automatic_replay import apply_simplification_choice
 
     d = (
         "M247 417.5 Q241.23 417.72 237.5 413 L237.5 405 L242 400.5 "
@@ -46,7 +47,7 @@ def test_engine_simplification_applies_recorded_settings_and_preserves_covering_
         True,
         True,
     )
-    changed, retained = apply_simplification(action, Resolver(target, covering))
+    changed, retained = apply_simplification_choice(action, bind_path_input(target), covering=(covering,))
     assert changed.current.params["d"] != d
     assert changed.fill is target.fill
     assert changed.original is target.original
@@ -55,7 +56,8 @@ def test_engine_simplification_applies_recorded_settings_and_preserves_covering_
 
 
 def test_engine_simplification_rejects_an_inapplicable_recorded_operation():
-    from vectormark.drawing_simplification import apply_simplification
+    from vectormark.drawing_adapter import bind_path_input
+    from vectormark.optimizer.automatic_replay import apply_simplification_choice
 
     target = VectorRegion(
         1, Shape("rect", {"x": 0, "y": 0, "w": 1, "h": 1}), FlatFill("#123456")
@@ -64,14 +66,14 @@ def test_engine_simplification_rejects_an_inapplicable_recorded_operation():
         PassInputRegionRef("", "", (1,)), (), 1.0, 1.0, 16, False, True, 1.0, True, True
     )
     with pytest.raises(
-        ValueError, match="recorded simplify operation no longer applies"
+        ValueError, match="path input binding requires a retained path leaf"
     ):
-        apply_simplification(action, Resolver(target))
+        apply_simplification_choice(action, bind_path_input(target))
     assert target.current.kind == "rect"
 
 
 def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
-    from vectormark.drawing_occlusion import apply_occlusion_reconstruction
+    from vectormark.optimizer.automatic_replay import apply_occlusion_choice
 
     sources = [
         VectorRegion(
@@ -107,7 +109,7 @@ def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
             IntersectionLens(refs[2], "lens", 3, "left", "right", 2),
         ),
     )
-    (branch,) = apply_occlusion_reconstruction(action, Resolver(*sources))
+    (branch,) = apply_occlusion_choice(action, Resolver(*sources).resolve)
     assert [child.current.kind for child in branch.children] == [
         "circle",
         "circle",
@@ -122,12 +124,12 @@ def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
     left, right, lens = (child.footprint for child in branch.children)
     assert lens.symmetric_difference(left.intersection(right)).area < 0.1
     assert branch.raster[10, 10]
-    assert branch.diagnostics["occlusion"]["consumed_ids"] == [1, 2, 3]
+    assert tuple(branch.diagnostics["occlusion"]["consumed_ids"]) == (1, 2, 3)
     assert all(source.is_leaf and source.diagnostics == {} for source in sources)
 
 
 def test_engine_occlusion_rejects_missing_dependency_before_resolving_sources():
-    from vectormark.drawing_occlusion import apply_occlusion_reconstruction
+    from vectormark.optimizer.automatic_replay import apply_occlusion_choice
 
     ref = PassInputRegionRef("", "", (1,))
     action = ReconstructOcclusionOperation(
@@ -138,4 +140,4 @@ def test_engine_occlusion_rejects_missing_dependency_before_resolving_sources():
         (IntersectionLens(ref, "lens", 1, "missing", "missing", 0),),
     )
     with pytest.raises(ValueError, match="absent dependency"):
-        apply_occlusion_reconstruction(action, Resolver())
+        apply_occlusion_choice(action, Resolver().resolve)

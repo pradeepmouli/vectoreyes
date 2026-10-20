@@ -7,6 +7,24 @@ from vectormark.drawing_actions import ActionSettings, FitPrimitiveAction
 from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
+def test_canonical_path_fit_retains_matching_declared_corners_without_adapter():
+    from vectormark.drawing_actions import FitPathDrawingAction
+    from vectormark.drawing_region_actions import fit_region_path
+    from vectormark.path_fitting import fit_raster_paths
+    from vectormark.corner_diagnostics import path_corner_diagnostics
+    raster = np.ones((8, 8), dtype=bool)
+    settings = ActionSettings(epsilon=.1, max_error=.1, fit_strategy='quadratic')
+    path = fit_raster_paths(raster, region_id='r1', settings=settings)[0]
+    declaration = path_corner_diagnostics(path.to_svg_d(),
+        declared_corners=(path.path.drawable_commands[0].end,))
+    region = DrawingRegion('r1', path, diagnostics={'corners': declaration})
+    result = fit_region_path(region, FitPathDrawingAction(op='fit_path', target='r1'),
+        raster=raster, settings=settings)
+    assert len(result.geometry.anchors) == 1
+    assert result.geometry.anchors[0].entry_command_id == result.geometry.anchors[0].exit_command_id
+    assert result.diagnostics['corners']['skipped'] == ()
+
+
 @pytest.mark.parametrize('split', [False, True])
 def test_region_path_action_publishes_canonical_components_and_cutouts(split):
     import vectormark.drawing_region_actions as actions

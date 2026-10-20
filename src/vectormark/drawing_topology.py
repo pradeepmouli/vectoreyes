@@ -4,15 +4,88 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Literal, TYPE_CHECKING
+from typing import Literal
 
-if TYPE_CHECKING:
-    from .optimizer.vector_region import VectorRegion
-    from .optimizer.automatic_replay import NormalizeRetainedTopologyOperation, TopologyPathCorrespondence
-
-from .drawing import DrawingRegion
-from .path_geometry import CompoundPathGeometry, PathGeometry
+from .drawing import Drawing, DrawingRegion
+from .path_geometry import CloneGeometry, CompoundPathGeometry, PathGeometry, PathGeometryWithCutouts
 from .path_topology import classify_filled_paths, component_paths
+
+
+def expand_clone_components(region: DrawingRegion, source: DrawingRegion) -> DrawingRegion:
+    """Expand a clone over already selected component slots without fitting."""
+    if not isinstance(region.geometry, CloneGeometry) or not source.is_branch:
+        raise ValueError('clone component expansion requires a clone and selected component group')
+    children = tuple(replace(region,
+        id=f'{region.id}-{child.id[len(source.id) + 1:]}',
+        geometry=replace(region.geometry, source_region_id=child.id),
+        diagnostics={**region.diagnostics, 'clone': {'source': child.id},
+            'topology': {'source_target_id': region.id, 'clone_source_target_id': child.id}},
+    ) for child in source.children)
+    return replace(region, geometry=None, children=children, diagnostics={**region.diagnostics,
+        'topology': {'operation': 'retained_topology_clone', 'source_target_id': region.id,
+            'created_target_ids': tuple(child.id for child in children), 'retired_target_ids': ()}})
+
+
+def normalize_drawing_topology(
+    drawing: Drawing, *, allow_external: bool = False, defer_overlaps: bool = False,
+    component_path_orders: Mapping[str, Sequence[str]] | None = None,
+    normalize_components: bool = True,
+) -> Drawing:
+    """Normalize canonical component ownership and clone dependencies atomically."""
+    prior: dict[str, DrawingRegion] = {}
+    def index(region: DrawingRegion) -> None:
+        prior[region.id] = region
+        for child in region.children:
+            index(child)
+    for root in drawing.regions:
+        index(root)
+    built: dict[str, DrawingRegion] = {}
+    active: set[str] = set()
+
+    def visit(identity: str) -> DrawingRegion:
+        if identity in built:
+            return built[identity]
+        if identity in active:
+            raise ValueError('cyclic retained clone reference')
+        active.add(identity)
+        region = prior[identity]
+        selected = region
+        if region.is_branch:
+            children = tuple(visit(child.id) for child in region.children)
+            if any(first is not second for first, second in zip(children, region.children, strict=True)):
+                selected = replace(region, children=children)
+        elif isinstance(region.geometry, CloneGeometry):
+            source_id = region.geometry.source_region_id
+            if source_id not in prior:
+                if not allow_external:
+                    raise ValueError('clone source is not retained')
+            else:
+                source = visit(source_id)
+                if normalize_components and source.is_branch:
+                    if prior[source_id].is_branch or source.diagnostics.get('topology', {}).get('operation') != 'retained_topology':
+                        raise ValueError('clone source requires retained concrete geometry')
+                    selected = expand_clone_components(region, source)
+        elif normalize_components and isinstance(region.geometry,
+                (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
+            paths = component_paths(region.geometry)
+            order = tuple((component_path_orders or {}).get(identity, (path.path.id for path in paths)))
+            positions = {path_id: number for number, path_id in enumerate(order)}
+            if not all(path.path.id in positions for path in paths):
+                raise ValueError('component path order must uniquely include every retained path')
+            paths = tuple(sorted(paths, key=lambda path: positions[path.path.id]))
+            rule = region.geometry.fill_rule if isinstance(region.geometry, CompoundPathGeometry) else (
+                'evenodd' if isinstance(region.geometry, PathGeometryWithCutouts) else 'nonzero')
+            selected = publish_region_paths(region, paths, fill_rule=rule,
+                source_path_order=order, defer_overlaps=defer_overlaps
+                    or bool(region.diagnostics.get('topology', {}).get('pending')))
+            if selected == region and selected.diagnostics == region.diagnostics:
+                selected = region
+        active.remove(identity)
+        built[identity] = selected
+        return selected
+
+    roots = tuple(visit(region.id) for region in drawing.regions)
+    return drawing if all(first is second for first, second in zip(roots, drawing.regions, strict=True)) else replace(drawing, regions=roots)
 
 
 def publish_region_paths(
@@ -54,7 +127,11 @@ def publish_region_paths(
         outer = component_paths(component)[0].path.id
         address = f'{region.id}-{order.index(outer) + 1}' if len(topology.components) > 1 else region.id
         children.append(replace(region, id=address, geometry=component, diagnostics={
-            **diagnostics, 'topology': {'source_target_id': region.id,
+          **diagnostics,
+          **({'corners': _component_corners(diagnostics['corners'],
+              ' '.join(path.to_svg_d() for path in paths), component.to_svg_d(), indices)}
+             if 'corners' in diagnostics else {}),
+          'topology': {'source_target_id': region.id,
                 'source_path_ids': output_ids, 'source_subpath_indices': indices},
         }))
         ownership.extend((identity, address) for identity in output_ids)
@@ -77,7 +154,7 @@ def publish_region_paths(
 
 def _component_corners(evidence: object, d: str, output_d: str, indices: tuple[int, ...]) -> dict[str, object]:
     """Move existing declarations by exact source-subpath index, never coordinates."""
-    from .optimizer.corners import source_ordered_corner_diagnostics, recount_corner_diagnostics
+    from .corner_diagnostics import source_ordered_corner_diagnostics, recount_corner_diagnostics
     if not isinstance(evidence, Mapping):
         return {"path": output_d, "spans": [], "skipped": [{"reason": "missing_or_stale_provenance"}]}
     if evidence.get("path") != d:
@@ -108,261 +185,3 @@ def _component_corners(evidence: object, d: str, output_d: str, indices: tuple[i
     output.pop("subpaths", None)
     output["skipped"] = skipped
     return recount_corner_diagnostics(output_d, output)
-
-
-def normalize_retained_topology(
-    regions: Sequence[VectorRegion], *, allow_external: bool = False,
-    defer_overlaps: bool = False,
-    component_path_orders: Mapping[str, Sequence[str]] | None = None,
-    normalize_components: bool = True,
-) -> tuple[VectorRegion, ...]:
-    """Publish real component children, exact references and identity correspondence.
-
-    All decisions use the original scoped forest before any replacement, so
-    failure is atomic and new child IDs cannot capture an unrelated clone.
-    Retained replay may supply original source-path slots after redundant paths
-    have been retired, preserving component IDs without recreating that geometry.
-    ``normalize_components=False`` refreshes resolved clone/branch geometry only,
-    allowing paint invalidation before the existing component-publication step.
-    """
-    from .drawing_adapter import transform_working_shape, vector_region_address_index
-    from .geometry_native import affine_tuple
-    from .path_geometry import CloneGeometry
-    from .skia_geometry import unary_union
-    from .fit import Shape
-    from .path_geometry import parse_svg_paths
-    from .optimizer.gate import rasterize
-    from .optimizer.corners import source_ordered_corner_diagnostics
-    from .optimizer.symmetry_materialize import index_region_paths, relative_source_path, resolve_source_path
-    from .optimizer.vector_region import VectorRegion, to_polygon
-    import re
-    prior = index_region_paths(regions)
-    built: dict[tuple[int, ...], VectorRegion] = {}
-    active: set[tuple[int, ...]] = set()
-
-    def branch(region, children, diagnostics):
-        return VectorRegion(
-            region.id, None, region.fill, region.z, region.footprint,
-            raster=region.raster, original=region.original, children=children,
-            source_label=region.source_label, color_hex=region.color_hex,
-            drawing_id=region.drawing_id, source_regions=region.source_regions,
-            coverage=region.coverage, diagnostics={**region.diagnostics, "topology": diagnostics},
-        )
-
-    def visit(path):
-        if path in built:
-            return built[path]
-        if path in active:
-            raise ValueError("cyclic retained clone reference")
-        active.add(path)
-        region = prior[path]
-        result = region
-        if region.is_branch:
-            children = tuple(visit((*path, child.id)) for child in region.children)
-            if any(a is not b for a, b in zip(children, region.children, strict=True)):
-                result = region.with_children(children)
-                result = replace(result, footprint=unary_union([child.footprint for child in children]))
-        elif isinstance(region.current.params.get("canonical_clone_geometry"), CloneGeometry):
-            geometry = region.current.params["canonical_clone_geometry"]
-            sources = {address: ancestry for ancestry, address in vector_region_address_index(regions).items()}
-            source_path = sources.get(geometry.source_region_id)
-            if source_path is None:
-                if not allow_external:
-                    raise ValueError("clone source is not retained")
-            else:
-                source = visit(source_path)
-                footprint = unary_union([source.footprint.affine_transform(affine_tuple(transform))
-                    for transform in geometry.transforms])
-                if footprint.to_svg_d() != region.footprint.to_svg_d():
-                    result = region.with_current(Shape("path", {**region.current.params,
-                        "d": footprint.to_svg_d()}), footprint=footprint)
-        elif region.current.kind == "path" and normalize_components:
-            shape = region.current
-            d = str(shape.params["d"])
-            address = region.drawing_id or "-".join(str(part) for part in path)
-            parsed = parse_svg_paths(d, region_id=address, path_ids=shape.params.get("path_ids"))
-            identities = tuple(item.path.id for item in parsed)
-            source_order = tuple((component_path_orders or {}).get(address, identities))
-            from .path_geometry import CompoundPathGeometry
-
-            published = publish_region_paths(
-                DrawingRegion(address, parsed[0], diagnostics=region.diagnostics), parsed,
-                fill_rule=shape.params.get("fill_rule", "nonzero"), source_path_order=source_order,
-                defer_overlaps=defer_overlaps or bool(region.diagnostics.get("topology", {}).get("pending")))
-            if isinstance(published.geometry, CompoundPathGeometry):
-                result = region.with_current(Shape("path", {**shape.params, "path_ids": tuple(item.path.id for item in parsed)}),
-                    footprint=region.footprint, diagnostics={"topology": published.diagnostics['topology']})
-                active.remove(path)
-                built[path] = result
-                return result
-            if region.diagnostics.get("topology", {}).get("pending"):
-                params = dict(shape.params)
-                params.pop("canonical_path_geometry", None)
-                shape = Shape("path", params)
-                region = region.with_current(shape, footprint=region.footprint,
-                    diagnostics={"topology": {"operation": "resolved_topology", "pending": False}})
-                result = region
-            retained_ids = {item.path.id for leaf in published.leaves() for item in component_paths(leaf.geometry)}
-            if published.is_branch or set(identities) != retained_ids:
-                # Source text is preserved verbatim per subpath, keeping fit
-                # digest bindings valid even when serialization style differs.
-                raw = tuple(part.strip() for part in re.findall(r"M[^M]*", d))
-                children = []
-                for selected in published.leaves():
-                    component = selected.geometry
-                    members = {item.path.id for item in component_paths(component)}
-                    indices = tuple(i for i, identity in enumerate(identities) if identity in members)
-                    output_d = " ".join(raw[i] for i in indices)
-                    output_ids = tuple(identities[i] for i in indices)
-                    local_id = int(selected.id.rsplit('-', 1)[1]) if published.is_branch else region.id
-                    child_address = selected.id
-                    output_shape = Shape("path", {**shape.params, "d": output_d, "path_ids": output_ids,
-                                                   "fill_rule": "evenodd" if len(indices) > 1 else "nonzero"})
-                    if (cached := shape.params.get("canonical_path_geometry")) is not None:
-                        from .drawing_corner_actions import rebind_corner_annotations
-                        from .path_topology import replace_component_paths
-                        cached_paths = {item.path.id: item for item in component_paths(cached)}
-                        local_paths = tuple(rebind_corner_annotations(item, cached_paths[item.path.id])
-                            for item in component_paths(component))
-                        local_geometry = replace_component_paths(component, local_paths)
-                        output_shape = Shape("path", {**output_shape.params,
-                            "canonical_path_geometry": local_geometry})
-                    footprint = to_polygon(output_shape)
-                    diagnostics = {**region.diagnostics, "corners": _component_corners(
-                        region.diagnostics.get("corners"), d, output_d, indices,
-                    ), "topology": selected.diagnostics['topology']}
-                    child = VectorRegion(
-                        local_id,
-                        output_shape, region.fill, region.z, footprint,
-                        raster=rasterize(footprint, region.raster.shape) if region.raster.size else region.raster,
-                        original=region.original, drawing_id=child_address,
-                        source_label=region.source_label, color_hex=region.color_hex,
-                        source_regions=region.source_regions, coverage=region.coverage, diagnostics=diagnostics,
-                    )
-                    children.append(child)
-                correspondence = dict(published.diagnostics['topology'])
-                retired = correspondence['retired_path_ids']
-                evidence = region.diagnostics.get("corners", {})
-                if isinstance(evidence, Mapping):
-                    evidence = source_ordered_corner_diagnostics(d, evidence)
-                retired_features = tuple(
-                    f"{identities[int(span['subpath'])]}.{str(span['corner_id']).split('.', 1)[-1]}"
-                    for span in (evidence.get("spans") or ()) if isinstance(span, Mapping)
-                    and type(span.get("subpath")) is int and 0 <= span["subpath"] < len(identities)
-                    and identities[span["subpath"]] in retired and "corner_id" in span
-                ) if isinstance(evidence, Mapping) else ()
-                correspondence['retired_feature_ids'] = retired_features
-                result = branch(region, tuple(children), correspondence) if len(children) > 1 else children[0].with_diagnostics({"topology": correspondence})
-        elif region.current.kind == "use":
-            source_path = resolve_source_path(prior, path, region.current.params, allow_external=allow_external)
-            if source_path is None:
-                active.remove(path)
-                built[path] = result
-                return result
-            source = visit(source_path)
-            if source.is_branch and normalize_components:
-                if not prior[source_path].is_leaf or source.diagnostics.get("topology", {}).get("operation") != "retained_topology":
-                    raise ValueError("clone source requires retained concrete geometry")
-                children = []
-                address = region.drawing_id or "-".join(str(part) for part in path)
-                for child in source.children:
-                    child_path = (*path, child.id)
-                    source_child_path = (*source_path, child.id)
-                    params = {**region.current.params, "href_obj_id": child.id,
-                              "href_region_path": relative_source_path(child_path, source_child_path)}
-                    footprint = to_polygon(transform_working_shape(child.current, tuple(params["transform"])))
-                    children.append(VectorRegion(
-                        child.id, Shape("use", params), region.fill, region.z, footprint,
-                        raster=rasterize(footprint, region.raster.shape) if region.raster.size else region.raster,
-                        original=region.original, drawing_id=f"{address}-{child.id}",
-                        source_label=region.source_label, color_hex=region.color_hex,
-                        source_regions=region.source_regions, coverage=region.coverage,
-                        diagnostics={**region.diagnostics, "clone": {"source": child.drawing_id},
-                                     "topology": {"source_target_id": address, "clone_source_target_id": child.drawing_id}},
-                    ))
-                result = branch(region, tuple(children), {
-                    "operation": "retained_topology_clone", "source_target_id": address,
-                    "source_region_path": source_path,
-                    "created_target_ids": tuple(child.drawing_id for child in children), "retired_target_ids": (),
-                })
-            else:
-                # Freeze the pre-normalization scoped binding before new local
-                # component IDs can shadow an otherwise unique external ID.
-                params = {**region.current.params, "href_region_path": relative_source_path(path, source_path)}
-                footprint = source.footprint.affine_transform(tuple(params["transform"]))
-                if params != region.current.params or footprint.to_svg_d() != region.footprint.to_svg_d():
-                    result = region.with_current(Shape("use", params), footprint=footprint)
-        active.remove(path)
-        built[path] = result
-        return result
-
-    return tuple(visit((region.id,)) for region in regions)
-
-
-def topology_path_correspondence(
-    before: list[VectorRegion], after: tuple[VectorRegion, ...]
-) -> tuple[TopologyPathCorrespondence, ...]:
-    """Bind every surviving path to its exact normalized owner and ordinal."""
-    from .optimizer.automatic_replay import TopologyPathCorrespondence, PassInputRegionRef
-    from .path_geometry import parse_svg_paths
-    from .drawing_seams import seam_path_revision
-    from .optimizer.symmetry_materialize import index_region_paths
-    def paths(regions):
-        result: dict[str, list[tuple[tuple[int, ...], int, str, int]]] = {}
-        for ancestry, region in index_region_paths(regions).items():
-            if not region.is_leaf or region.current.kind != "path":
-                continue
-            d = str(region.current.params.get("d", ""))
-            address = region.drawing_id or "-".join(str(part) for part in ancestry)
-            parsed = parse_svg_paths(
-                d,
-                region_id=address,
-                path_ids=region.current.params.get("path_ids"),
-            )
-            for index, path in enumerate(parsed):
-                result.setdefault(path.path.id, []).append((
-                    tuple(ancestry),
-                    index,
-                    seam_path_revision(d, index),
-                    len(path.path.commands),
-                ))
-        return result
-
-    inputs = paths(before)
-    outputs = paths(after)
-    records: list[TopologyPathCorrespondence] = []
-    for path_id, input_values in inputs.items():
-        output_values = outputs.get(path_id, [])
-        if not output_values:
-            continue
-        if len(input_values) != 1 or len(output_values) != 1:
-            raise ValueError("retained topology path ownership is ambiguous")
-        input_ancestry, input_index, input_revision, input_count = input_values[0]
-        output_ancestry, output_index, output_revision, output_count = output_values[0]
-        if input_revision != output_revision or input_count != output_count:
-            raise ValueError("retained topology rewrote a surviving path")
-        records.append(TopologyPathCorrespondence(
-            target=PassInputRegionRef("", "", input_ancestry),
-            input_subpath_index=input_index,
-            input_path_id=path_id,
-            input_path_revision=input_revision,
-            output_ancestry=output_ancestry,
-            output_subpath_index=output_index,
-            output_path_id=path_id,
-            output_path_revision=output_revision,
-            command_count=input_count,
-        ))
-    return tuple(records)
-
-
-def apply_retained_topology(
-    action: NormalizeRetainedTopologyOperation, snapshot: list[VectorRegion],
-) -> list[VectorRegion]:
-    """Normalize the bound forest and verify exact surviving-path ownership."""
-    normalized = normalize_retained_topology(snapshot, allow_external=action.allow_external)
-    recorded = tuple(replace(item, target=replace(item.target, batch_id="", input_revision=""))
-                     for item in action.path_correspondence)
-    if topology_path_correspondence(snapshot, normalized) != recorded:
-        raise ValueError("retained topology path correspondence is stale")
-    affected = set(action.affected_ids)
-    return [obj for obj in normalized if int(obj.id) in affected]

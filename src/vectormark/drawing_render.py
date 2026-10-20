@@ -9,7 +9,7 @@ import colorsys
 import hashlib
 import re
 
-from .drawing import Drawing, DrawingRegion
+from .drawing import Drawing, DrawingRegion, _walk_regions
 import numpy as np
 from .skia_geometry import SkPath, svg_d_to_skia
 from .geometry_native import region_path as _export_path, reflection as _reflection
@@ -19,6 +19,7 @@ from .drawing_fill import (
     LinearGradientFill,
     RadialGradientFill,
     RasterFill,
+    serialize_fill,
 )
 from .json_value import to_json_value
 from .path_geometry import (
@@ -269,6 +270,29 @@ def drawing_summary(
     return {"targets": targets, "groups": groups, "background": drawing.background.model_dump() if drawing.background is not None else None, "output_settings": drawing.output_settings.model_dump()}
 
 
+def trace_summary(
+    drawing: Drawing, options: Mapping[str, object],
+    path_correspondence: tuple[object, ...] = (),
+) -> dict[str, object]:
+    """Describe the published trace using the canonical report and paint models."""
+    report = drawing_summary(drawing, path_correspondence)
+    leaves = {leaf.id: leaf for leaf in _leaves(drawing)}
+    return {
+        "width": int(drawing.canvas.width),
+        "height": int(drawing.canvas.height),
+        "options": dict(options),
+        "regions": [
+            {
+                **{key: target[key] for key in ("id", "root_id", "source_regions", "geometry")},
+                "fill": serialize_fill(leaves[target["id"]].fill)
+                if leaves[target["id"]].fill is not None else {"type": "none"},
+            }
+            for target in report["targets"]
+        ],
+        "groups": report["groups"],
+    }
+
+
 def _geometry_element(region: DrawingRegion, geometry_id: str) -> str:
     geometry = region.geometry
     assert geometry is not None
@@ -430,6 +454,14 @@ def render_drawing(
     drawing: Drawing, path_correspondence: tuple[object, ...] = ()
 ) -> CanonicalRenderedDrawing:
     """Serialize one stored Drawing without fitting, optimizing, or repair."""
+    for root in drawing.regions:
+        for region in _walk_regions(root):
+            symmetry = region.diagnostics.get("symmetry")
+            if isinstance(symmetry, Mapping) and not symmetry.get('materialized') and (
+                (region.is_branch and symmetry.get("mode") == "self")
+                or symmetry.get("mode") == "self_mirror"
+            ):
+                raise ValueError("self-symmetry must be materialized before rendering")
     leaves = _leaves(drawing)
     if drawing.output_settings.background_cutouts != "off" and any(_background_fill(leaf, drawing.background) for leaf in leaves):
         return _render_background_cutouts(drawing, leaves, path_correspondence)

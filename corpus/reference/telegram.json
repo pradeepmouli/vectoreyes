@@ -1,0 +1,49 @@
+{
+  "entry": "telegram",
+  "svg": "telegram.svg",
+  "revision": 1,
+  "sha256": "cc8d6bdef9130e535595e0d8e418a753a0db1d44e93516b6e58ae6174cd0b2e8",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Telegram_2019_Logo.svg",
+    "title": "File:Telegram 2019 Logo.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/8/83/Telegram_2019_Logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2023-11-05T06:46:41Z",
+    "upstream_sha1": "d40a807abb9f948f9a09cf50ffb1511e3687e0de",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Telegram FZ LLC",
+    "Credit": "Derivate from <a href=\"//commons.wikimedia.org/wiki/File:Telegram_Logo.webp\" class=\"mw-redirect\" title=\"File:Telegram Logo.webp\">File:Telegram Logo.webp</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      240.1,
+      240.1
+    ],
+    "width": null,
+    "height": null
+  },
+  "raster": {
+    "path": "../input/telegram.png",
+    "sha256": "688b41d544cd748c096299708968f64a6f55d27e013bf875764eca92c2fc1ac9"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

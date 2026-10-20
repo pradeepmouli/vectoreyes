@@ -8,6 +8,27 @@ from vectormark.path_geometry import (
 from vectormark.primitive_fitting import fit_primitive_geometry
 
 
+def test_recognition_returns_canonical_primitive_without_working_scene():
+    from vectormark.primitive_fitting import recognize_primitive_geometry
+    from vectormark.skia_geometry import SkPath
+    footprint = SkPath.from_svg_d('M2 3 L22 3 L22 15 L2 15 Z')
+    before = footprint.to_svg_d()
+    assert recognize_primitive_geometry(footprint, epsilon=0.1) == PrimitiveGeometry(
+        RectanglePrimitive((2, 3), 20, 12))
+    assert footprint.to_svg_d() == before
+
+
+@pytest.mark.parametrize('d', [
+    'M0 0 L20 0 L20 20 L0 20 Z M5 5 L5 15 L15 15 L15 5 Z',
+    'M0 0 L4 0 L4 4 L0 4 Z M10 0 L14 0 L14 4 L10 4 Z',
+])
+def test_primitive_recognition_preserves_holes_and_disconnected_regions(d):
+    from vectormark.primitive_fitting import recognize_primitive_geometry
+    from vectormark.skia_geometry import SkPath
+    footprint = SkPath.from_svg_d(d)
+    assert recognize_primitive_geometry(footprint, epsilon=2) is None
+
+
 @pytest.mark.parametrize(('kind', 'expected'), [
     ('rect', RectanglePrimitive((3., 2.), 8., 6.)),
     ('rounded_rect', RoundedRectanglePrimitive((3., 2.), 8., 6., 0., 0.)),

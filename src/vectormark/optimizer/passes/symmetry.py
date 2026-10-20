@@ -7,8 +7,7 @@ import numpy as np
 
 from ...skia_geometry import SkPath, unary_union
 from ...candidate import FlatFill
-from ...drawing_actions import SymmetryAxisInput
-from ...drawing_adapter import publish_mirror_pair
+from ...drawing_adapter import bind_region_inputs
 from ...contour import region_corner_radius
 from ...fit import Shape
 from ...refine import fit_path_half_fit
@@ -18,17 +17,19 @@ from ..automatic_replay import (
     ReconstructSelfSymmetryOperation,
     draft_input_ref,
     operation_intent,
+    apply_intrinsic_symmetry_choice,
 )
 from ..framework import Proposal
 from ..gate import rasterize
-from ..symmetry_materialize import remap_symmetry_clones
+from ..symmetry_materialize import (remap_symmetry_clones,
+    _is_geometry_root_leaf, _geometry_root_footprint, _materialized_self_symmetry_region)
 from ..vector_region import VectorRegion, to_polygon
 
 from ...drawing_symmetry import (
-    Axis2D, _polygonal_flat, _is_geometry_root_leaf, _geometry_root_footprint,
+    Axis2D, _polygonal_flat,
     _svg_reflection_matrix, _reflect_flat, _pin_half_shape_to_axis, _canonical_half,
-    _materialized_self_symmetry_region, _axis_diagnostics, _fit_geometry_to_path_shape,
-    _vertical_half_side, _symmetric_refine_half_shapes, apply_intrinsic_symmetry,
+    _fit_geometry_to_path_shape,
+    _vertical_half_side, _symmetric_refine_half_shapes,
 )
 
 
@@ -277,7 +278,7 @@ def _intrinsic_proposal(obj: VectorRegion, axis: Axis2D, residual: float) -> Pro
     action = DeclareIntrinsicSymmetryOperation(target_ref, _axis_tuple(axis), residual)
     return Proposal(
         (obj.id,),
-        [apply_intrinsic_symmetry(obj, axis, residual)],
+        [apply_intrinsic_symmetry_choice(obj, axis, residual)],
         intent=operation_intent(action, (target_ref,), (obj.id,)),
     )
 
@@ -304,10 +305,10 @@ def _pair_proposal(
     source_ref = draft_input_ref(canonical.id)
     target_ref = draft_input_ref(target.id)
     action = MirrorRegionOperation(source_ref, target_ref, _axis_tuple(axis), matrix)
+    from ..automatic_replay import apply_relationship_choice
     return Proposal(
         (canonical.id, target.id),
-        list(publish_mirror_pair(canonical, target,
-            axis=SymmetryAxisInput.model_validate(_axis_diagnostics(axis)), matrix=matrix)),
+        apply_relationship_choice(action, bind_region_inputs({'source': canonical, 'target': target})),
         intent=operation_intent(
             action,
             (source_ref, target_ref),

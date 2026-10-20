@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from ...skia_geometry import SkPath
-from ...drawing_adapter import publish_clone_assignment
+from ...drawing_adapter import bind_region_inputs
 from ..automatic_replay import AssignCloneOperation, draft_input_ref, operation_intent
 from ..framework import Proposal
 from ..vector_region import VectorRegion
@@ -162,17 +162,12 @@ def _clone_proposal(
     symbolic: bool,
     family_size: int | None = None,
 ) -> Proposal:
-    replacement = publish_clone_assignment(
-        canonical,
-        target,
-        matrix=matrix,
-        symbolic=symbolic,
-        family_size=family_size,
-        transformed=transformed,
-    )
+    from ..automatic_replay import apply_relationship_choice
     source_ref = draft_input_ref(canonical.id)
     target_ref = draft_input_ref(target.id)
     action = AssignCloneOperation(source_ref, target_ref, matrix, symbolic, family_size)
+    replacement = apply_relationship_choice(action,
+        bind_region_inputs({'source': canonical, 'target': target}), footprint=transformed)[0]
     return Proposal(
         (target.id,),
         [replacement],

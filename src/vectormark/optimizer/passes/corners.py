@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import numpy as np
 
-from ...drawing_corner_actions import normalize_declared_corners
+from ...drawing_adapter import bind_path_input
+from ..automatic_replay import apply_corner_normalization_choice
 from ..automatic_replay import (
     CornerDiagnosticsObservation,
     NormalizeCornersOperation,
     draft_input_ref,
     operation_intent,
 )
-from ..corners import (
+from ...corner_diagnostics import (
     recount_corner_diagnostics,
     retained_corner_declaration_matches,
 )
@@ -37,7 +38,8 @@ def corner_normalize_pass(
         declared = existing if retained_corner_declaration_matches(d, existing) else None
         target_ref = draft_input_ref(obj.id)
         if enabled and declared is not None:
-            replacement = normalize_declared_corners(obj, declaration=declared, max_error=max_error)
+            replacement, = apply_corner_normalization_choice(
+                NormalizeCornersOperation(target_ref, max_error, declared), bind_path_input(obj))
             intent = operation_intent(
                 NormalizeCornersOperation(target_ref, max_error, declared),
                 (target_ref,),

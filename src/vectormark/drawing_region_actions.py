@@ -59,7 +59,11 @@ def fit_region_path(
     """Fit retained contours and publish a canonical leaf or component subtree."""
     _require_leaf_target(region, action.target)
     paths = path_fitting.fit_raster_paths(raster, region_id=region.id, settings=settings)
-    selected = replace(region, diagnostics={**region.diagnostics, 'geometry': {'explicit': 'path'}})
+    from .corner_provenance import bind_matching_prefit_corners
+    paths, corners = bind_matching_prefit_corners(paths,
+        d=' '.join(path.to_svg_d() for path in paths), evidence=region.diagnostics.get('corners'))
+    selected = replace(region, diagnostics={**region.diagnostics, 'geometry': {'explicit': 'path'},
+        'corners': corners})
     return drawing_topology.publish_region_paths(selected, paths, fill_rule='evenodd')
 
 

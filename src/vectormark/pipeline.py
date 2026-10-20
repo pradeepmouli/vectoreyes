@@ -174,9 +174,9 @@ def _to_json_safe(v):
         return v
     if isinstance(v, (list, tuple)):
         return [_to_json_safe(x) for x in v]
-    if isinstance(v, dict):
+    if isinstance(v, Mapping):
         return {k: _to_json_safe(vv) for k, vv in v.items()}
-    if isinstance(v, set):
+    if isinstance(v, (set, frozenset)):
         return sorted(_to_json_safe(x) for x in v)
     if dataclasses.is_dataclass(v):
         return {f.name: _to_json_safe(getattr(v, f.name)) for f in dataclasses.fields(v)}
@@ -771,7 +771,7 @@ def _render_optimizer_body(
 
         def visit(region: VectorRegion, label: str, scope_ids: dict[int, str], scope_objects: dict[int, VectorRegion], path: tuple[int, ...]) -> None:
             symmetry = region.diagnostics.get("symmetry")
-            if isinstance(symmetry, Mapping) and (
+            if isinstance(symmetry, Mapping) and not symmetry.get('materialized') and (
                 (region.is_branch and symmetry.get("mode") == "self")
                 or symmetry.get("mode") == "self_mirror"
             ):

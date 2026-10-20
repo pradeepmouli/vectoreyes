@@ -1,0 +1,20 @@
+{
+  "entry": "daikonic",
+  "svg": "daikonic.svg",
+  "revision": 1,
+  "sha256": "8f3760223e0c4ab46a099525636f85180ddc719e6410129dab7a0e405e56c9c3",
+  "provenance": {
+    "kind": "existing_geometric_target",
+    "path": "../../tests/fixtures/daikonic/reference-geometric.svg",
+    "documentation": "../../docs/superpowers/specs/2026-06-04-vectormark-logo-idealizer-design.md",
+    "modified": false
+  },
+  "review": {"status": "draft", "reviewer": null},
+  "canvas": {"viewBox": [0, 0, 240, 350]},
+  "raster": {
+    "path": "../input/daikonic.png",
+    "sha256": "53440d71d559637745b82cf3453bf1fc689fbfb95c1681410363e325ed8a7877"
+  },
+  "registration": {"status": "unverified"},
+  "notes": ["Original project spec designates this as a visual target; upstream authorship and suitability for the current fidelity goal are not verified."]
+}

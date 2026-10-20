@@ -2,7 +2,6 @@
 
 from collections.abc import Mapping, Sequence
 
-from ..fit import Shape
 from ..skia_geometry import SkPath, unary_union
 from .vector_region import VectorRegion
 
@@ -22,6 +21,10 @@ def index_region_paths(regions: Sequence[VectorRegion]) -> dict[RegionPath, Vect
     for region in regions:
         visit(region, (region.id,))
     return result
+
+
+class UnboundCloneSourceError(ValueError):
+    """A valid reference whose source is outside the available scope."""
 
 
 def resolve_source_path(
@@ -54,7 +57,7 @@ def resolve_source_path(
             raise ValueError("clone reference path escapes the retained root")
         path = (*scope[:len(scope) - up], *tail)
         if path not in index:
-            raise ValueError("explicit clone source is missing")
+            raise UnboundCloneSourceError("explicit clone source is missing")
         return path
     local = (*owner[:-1], source_id)
     if local in index:
@@ -85,31 +88,49 @@ def union_self_symmetry(
     diagnostics: Mapping[str, object],
 ) -> VectorRegion:
     """Join existing vector pieces into one fresh, painted retained region."""
-    footprint = unary_union(pieces)
-    if footprint.is_empty:
-        raise ValueError("self-symmetry materialization produced empty geometry")
-    leaves = region.leaves()
-    if any(leaf.fill != leaves[0].fill for leaf in leaves):
-        raise ValueError("self-symmetry materialization requires one shared fill")
-    consumed = tuple(dict.fromkeys(leaf.id for leaf in leaves))
-    merged = dict(region.diagnostics)
-    merged["symmetry"] = {**diagnostics, "materialized": True}
-    merged["materialization"] = {
-        "operation": "self_symmetry_union",
-        "consumed_region_ids": consumed,
-        "retired_region_ids": tuple(i for i in consumed if i != region.id),
-        "source_region_remap": tuple((i, region.id) for i in consumed),
-        "consumed_target_ids": tuple(leaf.drawing_id for leaf in leaves if leaf.drawing_id),
-    }
-    return VectorRegion(
-        region.id, Shape("path", {"d": footprint.to_svg_d(), "fill_rule": "evenodd"}),
-        leaves[0].fill, region.z, footprint=footprint, raster=region.raster,
-        original=leaves[0].original, source_label=region.source_label,
-        color_hex=region.color_hex, drawing_id=region.drawing_id,
-        source_regions=tuple(sorted(set(region.source_regions).union(
-            *(leaf.source_regions for leaf in leaves)))),
-        coverage=region.coverage, diagnostics=merged,
-    )
+    from ..drawing_symmetry import union_symmetric_regions
+    from ..drawing_adapter import publish_collapsed_region
+
+    selected = union_symmetric_regions(_canonical_symmetry_input(region), pieces,
+        diagnostics=diagnostics)
+    return publish_collapsed_region(selected, region, footprint=unary_union(pieces))
+
+
+def _canonical_symmetry_input(region: VectorRegion):
+    from dataclasses import replace
+    from ..drawing_adapter import drawing_from_vector_regions, normalize_drawing_addresses, resolved_input_shape
+
+    def resolved(item: VectorRegion) -> VectorRegion:
+        if item.is_leaf:
+            return replace(item, current=resolved_input_shape(item))
+        return replace(item, children=tuple(resolved(child) for child in item.children))
+
+    return drawing_from_vector_regions('symmetry-input', width=1, height=1,
+        regions=normalize_drawing_addresses((replace(resolved(region),
+            drawing_id=region.drawing_id or f'input-{region.id}'),))).regions[0]
+
+
+def _is_geometry_root_leaf(obj: VectorRegion) -> bool:
+    return (obj.is_leaf and obj.drawing_id is not None
+        and isinstance(obj.diagnostics.get('geometry_seed'), Mapping))
+
+
+def _geometry_root_footprint(obj: VectorRegion, fallback: SkPath) -> SkPath:
+    from .vector_region import to_polygon
+
+    if not _is_geometry_root_leaf(obj) or obj.original is None:
+        return fallback
+    seeded = to_polygon(obj.original)
+    return seeded if not seeded.is_empty else fallback
+
+
+def _materialized_self_symmetry_region(obj, **settings):
+    from ..drawing_symmetry import materialize_symmetric_half
+    from ..drawing_adapter import publish_collapsed_region
+    from ..geometry_native import region_path
+
+    selected = materialize_symmetric_half(_canonical_symmetry_input(obj), **settings)
+    return publish_collapsed_region(selected, obj, footprint=region_path(selected, {}))
 
 
 def remap_symmetry_clones(
@@ -117,7 +138,8 @@ def remap_symmetry_clones(
     *, before: Sequence[VectorRegion],
 ) -> tuple[VectorRegion, ...]:
     """Remap exact before-forest bindings, never an unrelated same-numbered ID."""
-    from ..drawing_adapter import publish_clone_refresh
+    from ..drawing_adapter import bind_region_inputs
+    from .automatic_replay import apply_clone_reference_update
     prior = index_region_paths(before)
     current = index_region_paths(regions)
     def visit(region: VectorRegion, path: RegionPath) -> VectorRegion:
@@ -143,8 +165,9 @@ def remap_symmetry_clones(
             params["href_region_path"] = relative_source_path(path, new_path)
         if old_path not in sources and params == shape.params:
             return region
-        return publish_clone_refresh(
-            region, source, clone_path=path, source_path=new_path,
+        bindings = bind_region_inputs({'source': source, 'target': region},
+            paths={'source': new_path, 'target': path})
+        return apply_clone_reference_update(bindings,
             previous_source_id=original.current.params["href_obj_id"],
             previous_source_path=old_path, refresh_footprint=old_path in sources,
         )
@@ -159,7 +182,8 @@ def materialize_self_symmetry(regions: Sequence[VectorRegion]) -> tuple[VectorRe
         if region.is_leaf:
             return region
         symmetry = region.diagnostics.get("symmetry")
-        if isinstance(symmetry, Mapping) and symmetry.get("mode") == "self":
+        if (isinstance(symmetry, Mapping) and symmetry.get("mode") == "self"
+                and not symmetry.get('materialized')):
             leaves = region.leaves()
             if any(not isinstance(leaf.footprint, SkPath) for leaf in leaves):
                 raise ValueError("self-symmetry materialization requires vector footprints")

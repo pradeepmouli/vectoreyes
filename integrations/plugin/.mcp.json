@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vectormark": {
+      "type": "stdio",
+      "command": "vectormark-mcp",
+      "args": [],
+      "env": {
+        "VECTORMARK_MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

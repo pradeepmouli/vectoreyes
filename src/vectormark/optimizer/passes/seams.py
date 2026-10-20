@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -16,18 +17,37 @@ from ..automatic_replay import (
     operation_intent,
 )
 from ..framework import Proposal
-from ...drawing_adapter import transform_working_shape
+from ...drawing_adapter import transform_working_shape, publish_seam_shape, replace_private_leaves
 from ..symmetry_materialize import index_region_paths
-from ..vector_region import VectorRegion, _parse_subpaths
-from ...drawing_simplification import _simplified_path_shape
+from ..vector_region import VectorRegion
+from ...path_sampling import _parse_subpaths
+from ...drawing_simplification import simplify_path_data
 from ...drawing_seams import (
-    _SEAM_TOL, _JUNCTION_TOL, _SeamCandidate, _LeafRef, _LeafUpdate,
-    _CoordinateRef, _EndpointMatch, _path_endpoints_within, _leaf_key,
-    _pathops_shared_boundary_pair, _paint_order, _rewrite_shape_side,
+    _SEAM_TOL, _JUNCTION_TOL, _SeamCandidate, SeamInput, _LeafUpdate,
+    _CoordinateRef, _EndpointMatch, _path_endpoints_within,
+    _pathops_shared_boundary_pair, _rewrite_shape_side,
     _true_up_path_vertices, _endpoint_stage, _cleanup_inflecting_cubics,
-    _path_endpoint_refs, _shape_from_tokens, _endpoint_ref, _replacement,
-    _replace_leaves, _path_correspondence,
+    _path_endpoint_refs, _shape_from_tokens, _endpoint_ref,
+    _path_correspondence,
 )
+
+
+@dataclass(frozen=True)
+class _LeafRef:
+    owner: VectorRegion
+    leaf: VectorRegion
+
+
+def _leaf_key(ref: _LeafRef) -> tuple[int, int]:
+    return int(ref.owner.id), int(ref.leaf.id)
+
+
+def _paint_order(ref: _LeafRef) -> tuple[float, float, int, int]:
+    return float(ref.owner.z), float(ref.leaf.z), int(ref.owner.id), int(ref.leaf.id)
+
+
+def _seam_input(ref: _LeafRef, shape: Shape) -> SeamInput:
+    return SeamInput(shape, int(ref.leaf.id), int(ref.owner.id), _paint_order(ref), ref.owner.footprint)
 
 
 def _shape_bounds(obj: VectorRegion) -> tuple[float, float, float, float] | None:
@@ -147,15 +167,19 @@ def _cleanup_linelets(
     max_error: float,
     cubic: bool,
 ) -> Shape:
-    simplified = _simplified_path_shape(
-        shape,
+    simplified = simplify_path_data(
+        str(shape.params['d']),
         epsilon=epsilon,
         max_error=max_error,
         samples=16,
         cubic=cubic,
         linelet_only=True,
+        fill_rule=shape.params.get('fill_rule'),
     )
-    return simplified or shape
+    if simplified is None:
+        return shape
+    return Shape('path', {'d': simplified, **({'fill_rule': shape.params['fill_rule']}
+        if 'fill_rule' in shape.params and len(_parse_subpaths(simplified)) > 1 else {})})
 
 
 def _cleanup_mutated_path(
@@ -268,8 +292,8 @@ def _apply_leaf_pair(
     b_key = _leaf_key(b_ref)
     if allow_underlap and candidate.axis == "vertices":
         pathops = _pathops_shared_boundary_pair(
-            a_ref,
-            b_ref,
+            _seam_input(a_ref, a_current),
+            _seam_input(b_ref, b_current),
             a_current,
             b_current,
             tol=_SEAM_TOL,
@@ -518,7 +542,7 @@ def _cluster_leaf_vertices(
 
 
 def _replacement_for_update(ref: _LeafRef, update: _LeafUpdate) -> VectorRegion:
-    return _replacement(
+    return publish_seam_shape(
         ref.leaf,
         update.shape,
         update.paired_with,
@@ -618,7 +642,7 @@ def seams_pass(
                 leaf_replacements[key[1]] = _replacement_for_update(leaf_ref_by_key[key], update)
             if not leaf_replacements:
                 continue
-            replacements.append(_replace_leaves(owner, leaf_replacements))
+            replacements.append(replace_private_leaves(owner, leaf_replacements))
         if replacements:
             # Endpoint projection can fold a tiny closing curve back across
             # its own contour or move a cutout across its exterior. Validate
@@ -626,10 +650,10 @@ def seams_pass(
             # used by replay before recording any seam constraints. Keep the
             # original geometry when the proposed adjustment is unsafe; the
             # normalized result is a predicate, not replacement geometry.
-            from ...drawing_topology import normalize_retained_topology
+            from ..topology_binding import normalize_working_topology
 
             try:
-                normalize_retained_topology(replacements, allow_external=True)
+                normalize_working_topology(replacements, allow_external=True)
             except ValueError:
                 continue
             root_refs = tuple(

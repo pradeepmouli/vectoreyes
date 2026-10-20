@@ -12,10 +12,10 @@ from vectormark.drawing import Canvas, Drawing, DrawingRegion
 from vectormark.drawing_actions import ActionSettings, DrawingPlan
 from vectormark.drawing_engine import RasterImage
 from vectormark.drawing_fill import FlatFill
+from tests._working_evidence import capture_working_geometry_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
     ReplayRecord,
-    build_geometry_evidence,
     build_paint_evidence,
     drawing_revision,
 )
@@ -106,7 +106,7 @@ def _mutable_trace() -> TraceResult:
 
 def _evidence(trace: TraceResult | None = None):
     trace = _trace() if trace is None else trace
-    return build_geometry_evidence(
+    return capture_working_geometry_evidence(
         kind="source",
         trace=trace,
         geometry_source=_source(trace.width, trace.height),

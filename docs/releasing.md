@@ -35,24 +35,40 @@ in the workflow match what you registered above.
    git tag v0.0.1
    git push origin v0.0.1
    ```
-4. The `Release` workflow builds the sdist + wheel, runs `twine check`, and
+4. The `Release` workflow builds the MCP review UI and sdist + wheel, verifies
+   the installed wheel's widget outside the checkout, runs `twine check`, and
    publishes to PyPI. Watch it under the repo's **Actions** tab.
 
 ## Local build check (optional, before tagging)
 
 ```bash
-uv build                 # -> dist/vectormark-<ver>-py3-none-any.whl + .tar.gz
+npm --prefix integrations/mcp-app ci
+npm --prefix integrations/mcp-app run build
+uv build                 # -> platform/Python-specific wheel + .tar.gz
 uvx twine check dist/*   # validate metadata renders on PyPI
 ```
 
-vectormark's own wheel is pure Python (`py3-none-any`); the heavy dependencies
-(numpy/scipy/scikit-image/shapely/pillow) and the optional `scoring` extra
-(resvg-py) all ship prebuilt manylinux/musllinux/macos/win wheels, so
-`pip install vectormark` works in any networked environment.
+VectorMark wheels compile the drawing engine, tracer, fitter, and optimizer with
+Cython, including the boundary-distance kernel. CLI and MCP entry points, MCP
+image resolution, and package initializers remain Python. Wheels are specific
+to the build Python and platform. Source builds require a C compiler;
+PEP 517 installs Cython and setuptools in the isolated build environment.
+`uv sync --extra dev` compiles only the kernel for editable development; other
+engine modules use their canonical Python sources so edits are immediately
+visible. Release wheels compile those same sources, not a second implementation.
+There is no separate Python fallback for the kernel. The MCP surface remains Python, and the
+compiled widget HTML is included as package data as before. Native dependencies
+such as Skia and the optional renderer also constrain supported platforms.
 
-> **Note:** the MCP App widget HTML (`integrations/mcp-app/dist/mcp-app.html`)
-> lives outside the Python package, so a pip-installed `vectormark[server]` falls
-> back to a build-stub widget. The server and CLI work regardless; only the
-> bundled React preview is absent. If the hosted server is ever shipped via
-> PyPI, move the built HTML into package data (`src/vectormark/_widget/`) and
-> `force-include` it.
+Verify release behavior against an installed wheel outside the checkout as well
+as in editable mode. Native compilation can change runtime type enforcement,
+so source-mode tests alone are not a release gate.
+
+The built MCP App HTML is required when building a distribution. Hatch includes
+it at `vectormark/assets/mcp-app.html` in the wheel and retains the frontend
+source and built HTML in the source distribution. Missing HTML fails the build;
+rebuild it after frontend changes. End users do not need Node.js.
+
+The source distribution includes the Cython source and `hatch_build.py`, and
+uses an explicit project-file allowlist so local graph
+databases, nested worktrees, and `node_modules` are not published accidentally.

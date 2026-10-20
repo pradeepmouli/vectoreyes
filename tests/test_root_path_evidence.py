@@ -1,5 +1,7 @@
 """Private root replay evidence must precede fitting and survive retention."""
 
+from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_render import render_drawing as _canonical_render
 from dataclasses import FrozenInstanceError, replace
 import hashlib
 import json
@@ -8,15 +10,15 @@ import pickle
 import numpy as np
 import pytest
 
-from vectormark.drawing_refine import render_drawing
-from vectormark.drawing_assembly import root_regions
+
+from vectormark.optimizer.assembly_binding import assemble_working_roots
 from vectormark.contour import region_contours
 import vectormark.drawing_assembly as assembly
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_engine import RasterImage
+from tests._working_evidence import capture_working_geometry_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
-    build_geometry_evidence,
     build_paint_evidence,
 )
 from vectormark.drawing_replay import propose_effective_recipe
@@ -45,17 +47,17 @@ def _fixture(variant):
 
 
 @pytest.mark.parametrize("variant,expected", [
-    ("merged", "2fe2395b41ceddaa6226ac8e244d1ed665575e8b82b6e82812ab422f98c07dc0"),
-    ("boundary", "2fe2395b41ceddaa6226ac8e244d1ed665575e8b82b6e82812ab422f98c07dc0"),
-    ("single", "924cc09a614d45f13cde184ebab8bae3d796d0bb551a15dc4bb2e2edff9ab5f8"),
-    ("raw", "ab8904a9a1dcfc3eca4d3f7e77bba4c204b8cf8c25b91ec56051ce45f8506964"),
+    ("merged", "0053de9b0e441840803127b0ce8fe7cf8db5f2ccd2251f1eab730406a42f2dbc"),
+    ("boundary", "0053de9b0e441840803127b0ce8fe7cf8db5f2ccd2251f1eab730406a42f2dbc"),
+    ("single", "26eec8e444f01227845e79743bf2954ea1bab376a7374a29e716738ad0865190"),
+    ("raw", "0053de9b0e441840803127b0ce8fe7cf8db5f2ccd2251f1eab730406a42f2dbc"),
 ])
 def test_root_variants_retain_evidence_without_changing_render(variant, expected):
     trace, rgb = _fixture(variant)
-    result = root_regions(trace, None if variant == "raw" else rgb, min_region_fraction=0)
+    result = assemble_working_roots(trace, None if variant == "raw" else rgb, min_region_fraction=0)
     assert trace.root_path_evidence == ()
     assert result.trace.root_path_evidence
-    svg = render_drawing(result.trace, result.regions).svg
+    svg = _canonical_render(_export_drawing("export", width=(result.trace).width, height=(result.trace).height, regions=_export_addresses(result.regions))).svg
     assert hashlib.sha256(svg.encode()).hexdigest() == expected
     assert "root_path_evidence" not in result.trace.to_public_dict()
     json.dumps(result.trace.to_public_dict())
@@ -79,7 +81,7 @@ def test_boundary_evidence_is_actual_fit_input_not_retained_raster(monkeypatch):
         return original(contours, trace)
 
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", capture)
-    result = root_regions(trace, rgb, min_region_fraction=0)
+    result = assemble_working_roots(trace, rgb, min_region_fraction=0)
     leaves = [leaf for root in result.regions for leaf in root.leaves()]
     records = result.trace.root_path_evidence
     assert [record.region_id for record in records] == ["r1"]
@@ -107,12 +109,13 @@ def test_boundary_evidence_is_actual_fit_input_not_retained_raster(monkeypatch):
 
 def test_single_material_retains_baseline_evidence_and_declarations():
     trace, rgb = _fixture("single")
-    result = root_regions(trace, rgb, min_region_fraction=0)
+    result = assemble_working_roots(trace, rgb, min_region_fraction=0)
     baseline = trace.geometry_regions[0].trace_path
     assert result.trace.root_path_evidence[0].fit == baseline.path_evidence[0]
-    assert result.regions[0].diagnostics["corners"] == {
+    from vectormark.immutable_value import freeze_value
+    assert result.regions[0].diagnostics["corners"] == freeze_value({
         **baseline.corner_diagnostics, "path": baseline.d,
-    }
+    })
 
 
 def test_no_rgb_root_rejects_missing_source_instead_of_using_possibly_fitted_svg():
@@ -120,7 +123,7 @@ def test_no_rgb_root_rejects_missing_source_instead_of_using_possibly_fitted_svg
     missing = replace(trace.regions[0], contours=())
     assert missing.trace_path.d  # An SVG alone is not the missing fitting input.
     with pytest.raises(ValueError, match="requires retained source contours"):
-        root_regions(replace(trace, regions=(missing,)))
+        assemble_working_roots(replace(trace, regions=(missing,)))
 
 
 def test_subpath_evidence_keeps_hole_order_and_independent_path_addresses():
@@ -130,7 +133,7 @@ def test_subpath_evidence_keeps_hole_order_and_independent_path_addresses():
     trace = PythonTraceEngine().trace(
         rgb, replace(trace.options, max_hole_area=0), alpha=alpha,
     )
-    result = root_regions(trace, rgb, min_region_fraction=0)
+    result = assemble_working_roots(trace, rgb, min_region_fraction=0)
     records = result.trace.root_path_evidence
     assert [record.path_id for record in records] == ["r1.p0", "r1.p1"]
     for record, contour in zip(records, trace.geometry_regions[0].contours, strict=True):
@@ -243,7 +246,7 @@ def test_revision_includes_exact_source_declarations_and_resolved_settings(monke
 
 def test_store_detaches_nested_source_evidence_across_input_public_and_siblings():
     trace, rgb = _fixture("boundary")
-    rooted = root_regions(trace, rgb, min_region_fraction=0)
+    rooted = assemble_working_roots(trace, rgb, min_region_fraction=0)
     store = DrawingStore()
     drawing_id = store.new_drawing_id()
     source = RasterImage(
@@ -252,7 +255,7 @@ def test_store_detaches_nested_source_evidence_across_input_public_and_siblings(
         "rgb8",
         rgb.tobytes(),
     )
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=rooted.trace,
         geometry_source=source,

@@ -17,6 +17,25 @@ def scene():
     return Drawing('drw_test', Canvas(20, 20), (first, second))
 
 
+def test_canonical_replacement_expands_clones_using_retained_component_slots():
+    from vectormark.drawing_relationships import replace_region
+    drawing = scene()
+    source = drawing.region('r1')
+    clone = replace(drawing.region('r2'), geometry=CloneGeometry('r1', (AffineTransform(tx=8),)), z=4)
+    drawing = replace(drawing, regions=(source, clone))
+    children = (replace(source, id='r1-1'), replace(source, id='r1-3'))
+    selected = replace(source, geometry=None, children=children,
+        diagnostics={'topology': {'operation': 'retained_topology'}})
+    result = replace_region(drawing, selected)
+    expanded = result.region('r2')
+    assert expanded.is_branch
+    assert tuple(child.id for child in expanded.children) == ('r2-1', 'r2-3')
+    assert tuple(child.geometry.source_region_id for child in expanded.children) == ('r1-1', 'r1-3')
+    assert all(child.fill == clone.fill and child.z == 4 for child in expanded.children)
+    assert all(child.geometry.transforms == (AffineTransform(tx=8),) for child in expanded.children)
+    assert drawing.region('r2').is_leaf
+
+
 def test_clone_action_retains_all_transforms_and_independent_paint():
     from vectormark.drawing_relationships import assign_clone
     drawing = scene()

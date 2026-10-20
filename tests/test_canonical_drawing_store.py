@@ -10,13 +10,15 @@ from vectormark.drawing import Canvas, Drawing, DrawingRegion
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_engine import RasterImage
 from vectormark.drawing_fill import FlatFill
+from tests._working_evidence import capture_working_geometry_evidence
+from vectormark.optimizer.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
     ReplayRecord,
-    build_geometry_evidence,
     build_paint_evidence,
     drawing_revision,
-)
+    snapshot_geometry_evidence,
+    )
 from vectormark.drawing_state import DrawingNotFound, DrawingStore, VersionCandidate
 from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
 from vectormark.fit import Shape
@@ -97,7 +99,7 @@ def _candidate(
 
 
 def _evidence(kind="source"):
-    return build_geometry_evidence(
+    return capture_working_geometry_evidence(
         kind=kind,
         trace=_trace(),
         geometry_source=_source(),
@@ -338,18 +340,66 @@ def test_geometry_evidence_owns_roots_and_hashes_private_root_path_evidence():
         root_path_evidence=(RootPathEvidence("r1", "r1.p0", fit),),
     )
     roots = _roots()
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source", trace=trace, geometry_source=_source(), trace_roots=roots
     )
     roots[0].raster[:] = False
     object.__setattr__(trace, "root_path_evidence", ())
 
-    assert evidence.trace_roots[0].raster.all()
+    assert evidence.region_evidence['r1']['raster'] == bytes([1, 1, 1, 1])
     assert len(evidence.root_paths) == 1
-    without_private_evidence = build_geometry_evidence(
+    without_private_evidence = capture_working_geometry_evidence(
         kind="source",
         trace=_trace(),
         geometry_source=_source(),
         trace_roots=_roots(),
     )
     assert evidence.revision != without_private_evidence.revision
+
+
+def test_geometry_evidence_retains_canonical_scene_and_detached_observations():
+    roots = _roots()
+    evidence = capture_working_geometry_evidence(
+        kind="source", trace=_trace(), geometry_source=_source(), trace_roots=roots,
+    )
+    assert not hasattr(evidence, "trace_roots")
+    assert isinstance(evidence.drawing, Drawing)
+    assert evidence.region_evidence["r1"]["raster"] == bytes([1, 1, 1, 1])
+    roots[0].raster[:] = False
+    roots[0].current.params["w"] = 99
+    detached = snapshot_geometry_evidence(evidence)
+    assert detached.drawing == evidence.drawing
+    assert detached.drawing is not evidence.drawing
+    primitive = detached.drawing.region("r1").geometry.primitive
+    object.__setattr__(primitive, "width", 99)
+    assert evidence.drawing.region("r1").geometry.primitive.width == 2
+    with pytest.raises(ValueError, match="revision"):
+        snapshot_geometry_evidence(detached)
+    with pytest.raises(TypeError):
+        evidence.region_evidence["r1"]["raster"] = b""
+
+
+def test_disposable_kernel_geometry_does_not_alias_retained_evidence():
+    root = _roots()[0].with_current(Shape("path", {"d": "M0 0 L2 0 L2 2 L0 2 Z"}))
+    evidence = capture_working_geometry_evidence(
+        kind="source", trace=_trace(), geometry_source=_source(), trace_roots=(root,),
+    )
+    working = working_regions_from_evidence(evidence)[0]
+    command = working.current.params['canonical_path_geometry'].path.commands[1]
+    object.__setattr__(command, "end", (99., 99.))
+    assert evidence.drawing.region("r1").geometry.path.commands[1].end == (2., 0.)
+    assert snapshot_geometry_evidence(evidence).revision == evidence.revision
+
+
+def test_geometry_evidence_keeps_clone_relationship_only_in_canonical_geometry():
+    root = _roots()[0]
+    clone = replace(root, id=2, drawing_id="r2", current=Shape("use", {
+        "href_obj_id": 1, "transform": (1., 0., 0., 1., 3., 0.),
+    }))
+    evidence = capture_working_geometry_evidence(
+        kind="source", trace=_trace(), geometry_source=_source(), trace_roots=(root, clone),
+    )
+    assert not {"href_obj_id", "href_region_path", "transform", "d"} & evidence.shape_metadata["r2"].keys()
+    restored = working_regions_from_evidence(evidence)
+    assert restored[1].current.params["href_obj_id"] == 1
+    assert restored[1].current.params["transform"] == (1., 0., 0., 1., 3., 0.)

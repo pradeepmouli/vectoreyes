@@ -1,7 +1,7 @@
 """Disposable native geometry predicates shared by engine operations and export."""
 
 from collections.abc import Mapping
-from math import cos, pi, sin
+from math import cos, hypot, pi, sin
 
 import skia
 
@@ -68,13 +68,13 @@ def region_path(leaf: DrawingRegion, by_id: Mapping[str, DrawingRegion]) -> SkPa
 def split_path_by_line(footprint: SkPath, first: tuple[float, float], second: tuple[float, float]) -> tuple[SkPath, SkPath]:
     """Clip against complementary half-planes; never discard whole components."""
     dx, dy = second[0] - first[0], second[1] - first[1]
-    length = (dx * dx + dy * dy) ** 0.5
+    length = hypot(dx, dy)
     if length <= 1e-9:
         raise ValueError('line divider points must be distinct')
     direction = (dx / length, dy / length)
     normal = (-direction[1], direction[0])
     min_x, min_y, max_x, max_y = footprint.bounds
-    extent = max(((max_x - min_x) ** 2 + (max_y - min_y) ** 2) ** 0.5 * 4, 1.0)
+    extent = max(hypot(max_x - min_x, max_y - min_y) * 4, 1.0)
     start = (first[0] - direction[0] * extent, first[1] - direction[1] * extent)
     end = (first[0] + direction[0] * extent, first[1] + direction[1] * extent)
     positive = SkPath([start, end, (end[0] + normal[0] * extent * 2, end[1] + normal[1] * extent * 2),

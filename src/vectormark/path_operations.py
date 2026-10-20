@@ -21,7 +21,7 @@ from .path_geometry import (
     parse_svg_paths, command_token,
 )
 from .path_topology import component_paths, replace_component_paths
-from .optimizer.vector_region import _sample_subpath
+from .path_sampling import _sample_subpath
 from .quality import polyline_boundary_distance
 
 
@@ -32,7 +32,11 @@ def _command_stream(geometry: PathGeometry | PathGeometryWithCutouts | CompoundP
         for command in path.path.commands:
             kind, values = command_token(command)
             rows.append(TraceCommand(command.id, kind, tuple(values)))
-        rows.append(TraceCommand(f"{path.path.id}.c{len(path.path.commands)}", "Z", ()))
+        closing_id = f"{path.path.id}.z"
+        identities = {command.id for command in path.path.commands}
+        while closing_id in identities:
+            closing_id += '_'
+        rows.append(TraceCommand(closing_id, "Z", ()))
     return tuple(rows)
 
 

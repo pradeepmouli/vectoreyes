@@ -1,0 +1,49 @@
+{
+  "entry": "sketch",
+  "svg": "sketch.svg",
+  "revision": 1,
+  "sha256": "a4924c36903045553e87575db31d7db3f9ce49303118add51c399668a6efefda",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Sketch_Logo.svg",
+    "title": "File:Sketch Logo.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/5/59/Sketch_Logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2023-03-03T04:50:10Z",
+    "upstream_sha1": "d822db2b7e49db92e632c0a753ea9163626f950b",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Bohemian Coding",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://www.sketch.com/press/\">https://www.sketch.com/press/</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      394.0,
+      356.0
+    ],
+    "width": "394px",
+    "height": "356px"
+  },
+  "raster": {
+    "path": "../input/sketch.png",
+    "sha256": "87ecb55118480f6bf6ab04bb1c05f3e80a773d8d40e3ac32ccc250bd35725011"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

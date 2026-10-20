@@ -7,7 +7,7 @@ from vectormark.fit import Shape, minimum_line_length
 from vectormark.optimizer.framework import optimize
 from vectormark.optimizer.gate import rasterize
 from vectormark.optimizer.vector_region import VectorRegion
-from vectormark.optimizer.vector_region import _parse_subpaths
+from vectormark.path_sampling import _parse_subpaths
 from vectormark.optimizer.passes.simplify import simplify_pass
 from vectormark.pipeline import Options, _optimizer_passes
 import vectormark.drawing_simplification as simplify_module
@@ -170,10 +170,10 @@ def test_simplify_pass_does_not_worsen_cutout_subpath_when_outer_improves():
     assert len(parts) == 2
     assert proposals[0].new_objects[0].current.params["fill_rule"] == "evenodd"
     for source_d, tokens in zip((outer, cutout), parts, strict=True):
-        before = Shape("path", {"d": source_d})
-        after = Shape("path", {"d": simplify_module._subpath_d(tokens)})
+        before = source_d
+        after = simplify_module._subpath_d(tokens)
         assert simplify_module._boundary_max_deviation(before, after) <= 1.0
-    assert simplify_module._same_subpath_topology(obj.current, proposals[0].new_objects[0].current)
+    assert simplify_module._same_subpath_topology(obj.current.params['d'], proposals[0].new_objects[0].current.params['d'], fill_rule='evenodd')
 
 
 def test_simplify_forced_corners_include_sharp_curve_joins():
@@ -285,7 +285,7 @@ def test_simplify_pass_collapses_long_straight_line_runs():
     assert "L10 40" in simplified_d
 
 
-def test_simplified_path_shape_threads_samples_to_subpath_sampling(monkeypatch):
+def test_simplified_path_data_threads_samples_to_subpath_sampling(monkeypatch):
     seen: list[int] = []
     original = simplify_module._sample_subpath
 
@@ -295,8 +295,8 @@ def test_simplified_path_shape_threads_samples_to_subpath_sampling(monkeypatch):
 
     monkeypatch.setattr(simplify_module, "_sample_subpath", _recording_sample)
 
-    simplify_module._simplified_path_shape(
-        Shape("path", {"d": "M0 0 L20 0 L20 20 L0 20 Z"}),
+    simplify_module.simplify_path_data(
+        "M0 0 L20 0 L20 20 L0 20 Z",
         epsilon=1.0,
         max_error=1.0,
         samples=7,

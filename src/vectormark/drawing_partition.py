@@ -1,4 +1,4 @@
-"""Shared merge/split execution over retained Python-engine region evidence.
+"""Canonical merge/split execution independent of raster observation storage.
 
 The drawing engine owns invocation and publication. Refinement only dispatches
 these typed actions; no independent partition implementation lives there.
@@ -7,78 +7,69 @@ these typed actions; no independent partition implementation lives there.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+from dataclasses import replace
 
-import numpy as np
 
 from .drawing_actions import MergeAction, SplitAction
-from .drawing_adapter import (
-    WorkingLeafTarget,
-    working_leaf_targets,
-    replace_working_leaf,
-    remove_working_leaves,
-)
-from .fit import Shape, _fmt
-from .geometry_native import split_path_by_line as _split_footprint_by_line
-from .optimizer.gate import rasterize
-from .optimizer.vector_region import VectorRegion, _parse_subpaths, _sample_subpath
+from .drawing import Drawing, DrawingRegion
+from .drawing_relationships import replace_region
+from .drawing_topology import publish_region_paths
+from .path_geometry import CloneGeometry, parse_svg_paths
+from .fit import _fmt
+from .geometry_native import region_path, split_path_by_line as _split_footprint_by_line
+from .path_sampling import _parse_subpaths, _sample_subpath
 from .skia_geometry import SkPath, unary_union
 
 
 def merge_regions(
-    regions: Sequence[VectorRegion], action: MergeAction
-) -> tuple[VectorRegion, ...]:
+    drawing: Drawing, action: MergeAction
+) -> Drawing:
     """Create a semantic target with a SkPath-unioned, seam-free outline."""
-    targets = working_leaf_targets(regions)
-    member_ids = _expand_merge_member_ids(targets, action.regions)
-    members = tuple(targets[region_id] for region_id in member_ids)
-    member_regions = tuple(member.region for member in members)
-    first = member_regions[0]
-    assert first.current is not None and first.fill is not None
-    raster = np.zeros_like(first.raster, dtype=bool)
-    for member in member_regions:
-        raster |= member.raster
-    footprints = [member.footprint for member in member_regions]
-    if not all(isinstance(footprint, SkPath) for footprint in footprints):
-        raise ValueError("merge requires polygonal vector-region footprints")
-    footprint = unary_union(
-        [footprint for footprint in footprints if isinstance(footprint, SkPath)]
-    )
-    shape = Shape("path", {"d": footprint.to_svg_d()})
-    merged = VectorRegion.from_shape(
-        id=max(region.id for region in _all_regions(regions)) + 1,
-        shape=shape,
+    indexed = {region.id: region for region in _all_regions(drawing.regions)}
+    if action.id in indexed:
+        raise ValueError('merged region ID already exists')
+    member_ids = _expand_merge_member_ids(drawing, action.regions)
+    members = tuple(indexed[identity] for identity in member_ids)
+    first = members[0]
+    if first.fill is None:
+        raise ValueError('merge requires a filled leaf target')
+    for region in indexed.values():
+        if (region.id not in member_ids and isinstance(region.geometry, CloneGeometry)
+                and region.geometry.source_region_id in member_ids):
+            raise ValueError('merge would retire a referenced clone source')
+    footprint = unary_union([region_path(member, indexed) for member in members])
+    paths = parse_svg_paths(footprint.to_svg_d(), region_id=action.id)
+    merged = publish_region_paths(DrawingRegion(
+        id=action.id, geometry=paths[0],
         fill=first.fill,
-        z=min(member.z for member in member_regions),
-        raster=raster,
-        footprint=footprint,
-        color_hex=first.color_hex,
-        drawing_id=action.id,
-        source_regions=tuple(
-            sorted({source for member in members for source in member.source_regions})
+        z=min(member.z for member in members),
+        source_region_ids=tuple(
+            sorted({source for member in members for source in (member.source_region_ids or (member.id,))})
         ),
         diagnostics={"merge": {"unioned": True, "sources": member_ids}},
-    )
-    return remove_working_leaves(regions, frozenset(member_ids)) + (merged,)
+    ), paths, fill_rule='nonzero')
+    def retain(region: DrawingRegion) -> DrawingRegion | None:
+        if region.id in member_ids:
+            return None
+        if region.is_leaf:
+            return region
+        children = tuple(child for item in region.children if (child := retain(item)) is not None)
+        if not children:
+            return None
+        return region if children == region.children else replace(region, children=children)
+    roots = tuple(region for root in drawing.regions if (region := retain(root)) is not None)
+    return replace(drawing, regions=(*roots, merged))
 
 
 def _expand_merge_member_ids(
-    targets: Mapping[str, WorkingLeafTarget], requested_ids: Sequence[str]
+    drawing: Drawing, requested_ids: Sequence[str]
 ) -> tuple[str, ...]:
     """Resolve a branch/root reference to every leaf currently retained below it."""
     resolved: list[str] = []
     for requested in requested_ids:
-        members = (
-            (requested,)
-            if requested in targets
-            else tuple(
-                sorted(
-                    target_id
-                    for target_id in targets
-                    if target_id.startswith(f"{requested}-")
-                )
-            )
-        )
+        target = drawing.region(requested)
+        members = (requested,) if target.is_leaf else tuple(sorted(leaf.id for leaf in target.leaves()))
         if not members:
             raise KeyError(requested)
         for member in members:
@@ -91,28 +82,26 @@ def _expand_merge_member_ids(
 
 
 def split_region(
-    regions: Sequence[VectorRegion], action: SplitAction
-) -> tuple[VectorRegion, ...]:
+    drawing: Drawing, action: SplitAction
+) -> Drawing:
     """Replace one retained target with two exact vector clips across an explicit divider."""
-    targets = working_leaf_targets(regions)
     target_id = action.target
-    target = targets[target_id]
-    source = target.region
-    if not source.is_leaf or source.current is None or source.fill is None:
+    source = drawing.region(target_id)
+    if not source.is_leaf or source.fill is None:
         raise ValueError("split requires a filled leaf target")
-    if not isinstance(source.footprint, SkPath):
-        raise ValueError("split requires a polygonal vector-region footprint")
+    indexed = {region.id: region for region in _all_regions(drawing.regions)}
+    footprint = region_path(source, indexed)
 
     divider = action.divider
     if divider.type == "line":
         first, second = divider.points
         parts = _split_footprint_by_line(
-            source.footprint,
+            footprint,
             (float(first[0]), float(first[1])),
             (float(second[0]), float(second[1])),
         )
     elif divider.type == "path":
-        parts = _split_footprint_by_path(source.footprint, divider.d)
+        parts = _split_footprint_by_path(footprint, divider.d)
     else:  # guarded by plan validation; keeps this executor safe for direct callers.
         raise ValueError("divider type must be 'line' or 'path'")
 
@@ -122,22 +111,17 @@ def split_region(
         )
 
     divider_data = divider.model_dump(exclude_none=True)
-    next_id = max(region.id for region in _all_regions(regions)) + 1
-    children: list[VectorRegion] = []
+    children: list[DrawingRegion] = []
     for index, footprint in enumerate(parts):
-        shape = Shape("path", {"d": footprint.to_svg_d()})
-        children.append(
-            VectorRegion.from_shape(
-                id=source.id if index == 0 else next_id,
-                shape=shape,
+        identity = f'{source.id}-{index + 1}'
+        if identity in indexed:
+            raise ValueError('split child ID already exists')
+        paths = parse_svg_paths(footprint.to_svg_d(), region_id=identity)
+        children.append(publish_region_paths(DrawingRegion(
+                id=identity, geometry=paths[0],
                 fill=source.fill,
                 z=source.z + index * 0.001,
-                footprint=footprint,
-                raster=rasterize(footprint, source.raster.shape),
-                source_label=source.source_label,
-                color_hex=source.color_hex,
-                source_regions=source.source_regions,
-                coverage=source.coverage,
+                source_region_ids=source.source_region_ids,
                 diagnostics={
                     "split": {
                         "source": target_id,
@@ -145,24 +129,13 @@ def split_region(
                         "part": index + 1,
                     }
                 },
-            )
-        )
-    branch = VectorRegion.branch(
-        id=source.id,
-        children=tuple(children),
-        z=source.z,
-        raster=source.raster,
-        footprint=source.footprint,
-        fill=source.fill,
-        source_label=source.source_label,
-        color_hex=source.color_hex,
-        drawing_id=source.drawing_id,
-        source_regions=source.source_regions,
+            ), paths, fill_rule='nonzero'))
+    branch = replace(source, geometry=None, children=tuple(children),
         diagnostics={
             "split": {"source": target_id, "divider": divider_data, "children": 2}
         },
     )
-    return replace_working_leaf(regions, target_id, lambda _region: branch)
+    return replace_region(drawing, branch)
 
 
 def _split_footprint_by_path(footprint: SkPath, d: str) -> tuple[SkPath, SkPath]:
@@ -270,9 +243,9 @@ def _forward_ring_arc(
     return points
 
 
-def _all_regions(regions: Sequence[VectorRegion]) -> tuple[VectorRegion, ...]:
-    all_regions: list[VectorRegion] = []
+def _all_regions(regions: Sequence[DrawingRegion]) -> tuple[DrawingRegion, ...]:
+    all_regions: list[DrawingRegion] = []
     for region in regions:
         all_regions.append(region)
-        all_regions.extend(region.leaves()) if region.is_branch else None
+        all_regions.extend(_all_regions(region.children))
     return tuple(all_regions)

@@ -1,3 +1,5 @@
+from vectormark.drawing_adapter import drawing_from_vector_regions as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectormark.drawing_render import render_drawing as _canonical_render
 from types import SimpleNamespace
 from typing import cast
 import xml.etree.ElementTree as ET
@@ -76,21 +78,21 @@ def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(mon
     import vectormark.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "unary_union", forbidden)
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
-    import vectormark.drawing_partition as partition
-    monkeypatch.setattr(partition, "rasterize", forbidden)
+    import vectormark.optimizer.gate as gate
+    monkeypatch.setattr(gate, "rasterize", forbidden)
     trace = SimpleNamespace(width=48, height=24)
-    first = drawing_refine.render_drawing(trace, regions)
-    assert first.svg == drawing_refine.render_drawing(trace, regions).svg
+    first = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)))
+    assert first.svg == _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions))).svg
     root = ET.fromstring(first.svg)
     painted = {e.attrib["id"] for e in root if "fill" in e.attrib}
     assert painted == {target["id"] for target in first.report["targets"]} == {"r1", "r2"}
-    definition = next(e for e in root.iter() if e.attrib.get("id") == "r1-geometry")
+    definition = next(e for e in root.iter() if e.attrib.get("id") == "geometry-r1")
     assert definition.attrib["d"] == regions[0].current.params["d"]
 
 
 def test_render_rejects_unmaterialized_self_symmetry():
     with pytest.raises(ValueError, match="materializ"):
-        drawing_refine.render_drawing(SimpleNamespace(width=48, height=24), _forest())
+        _canonical_render(_export_drawing("export", width=(SimpleNamespace(width=48, height=24)).width, height=(SimpleNamespace(width=48, height=24)).height, regions=_export_addresses(_forest())))
 
 
 def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
@@ -102,7 +104,7 @@ def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
         raise AssertionError("renderer fitted an undisclosed surface")
     import vectormark.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
-    rendered = drawing_refine.render_drawing(SimpleNamespace(width=48, height=24), regions)
+    rendered = _canonical_render(_export_drawing("export", width=(SimpleNamespace(width=48, height=24)).width, height=(SimpleNamespace(width=48, height=24)).height, regions=_export_addresses(regions)))
     assert "surface-" not in rendered.svg
     assert len(rendered.report["targets"]) == 2
 
@@ -145,8 +147,8 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
         assert after_source.diagnostics["symmetry"]["materialized"]
         assert result[1].current.params["href_obj_id"] == 11
         assert result[1].footprint.symmetric_difference(clone_footprint).area < 1e-8
-        rendered = drawing_refine.render_drawing(SimpleNamespace(width=48, height=24), result)
-        assert 'href="#r1-1-geometry"' in rendered.svg
+        rendered = _canonical_render(_export_drawing("export", width=(SimpleNamespace(width=48, height=24)).width, height=(SimpleNamespace(width=48, height=24)).height, regions=_export_addresses(result)))
+        assert 'href="#geometry-r1-1"' in rendered.svg
         from vectormark.pipeline import _render_optimizer_body
         # The legacy pipeline uses the same retained identity across subtrees.
         body, defs = _render_optimizer_body(result)
@@ -163,7 +165,8 @@ def test_automatic_callback_and_later_polish_share_retained_materialization(monk
         operation_intent,
     )
     from vectormark.optimizer.framework import Proposal
-    from vectormark.drawing_symmetry import Axis2D, apply_intrinsic_symmetry
+    from vectormark.drawing_symmetry import Axis2D
+    from vectormark.optimizer.automatic_replay import apply_intrinsic_symmetry_choice
     from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
     branch, _ = _forest()
     joined = materialize_self_symmetry((branch,))[0]
@@ -171,7 +174,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization(monk
                                    diagnostics={"symmetry": {}})
     target = draft_input_ref(1)
     action = DeclareIntrinsicSymmetryOperation(target, (0.0, 10.0, 10.0), 0.0)
-    declared = apply_intrinsic_symmetry(original, Axis2D(*action.axis), action.residual)
+    declared = apply_intrinsic_symmetry_choice(original, Axis2D(*action.axis), action.residual)
     def symmetric(objects, masks):
         return [Proposal(
             (1,),
@@ -190,7 +193,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization(monk
         max_sampling_colors=8, min_region_size=1))
     callbacks = []
     output = drawing_refine.auto_refine(trace, (original,), on_pass=lambda name, regions: callbacks.append(
-        (regions, drawing_refine.render_drawing(trace, regions))))
+        (regions, _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions))))))
     assert len(callbacks) == 2
     assert all(len(render.report["targets"]) == 1 for _, render in callbacks)
     assert output[0].current == callbacks[0][0][0].current == callbacks[1][0][0].current
@@ -232,7 +235,7 @@ def test_manual_symmetry_uses_shared_union_and_rejects_outside_axis_without_muta
 
 def test_pipeline_renderer_requires_retained_geometry_and_cannot_fit(monkeypatch):
     from vectormark import fit, skia_geometry
-    from vectormark.optimizer.passes import simplify
+    from vectormark import drawing_simplification
     from vectormark.optimizer.symmetry_materialize import materialize_self_symmetry
     from vectormark.pipeline import _render_optimizer_body
     before = _forest()
@@ -241,7 +244,7 @@ def test_pipeline_renderer_requires_retained_geometry_and_cannot_fit(monkeypatch
         raise AssertionError("pipeline renderer reconstructed geometry")
     monkeypatch.setattr(skia_geometry, "unary_union", forbidden)
     monkeypatch.setattr(fit, "atomic_flatten_path_d", forbidden)
-    monkeypatch.setattr(simplify, "_simplified_path_shape", forbidden)
+    monkeypatch.setattr(drawing_simplification, "simplify_paths", forbidden)
     first = _render_optimizer_body(retained)
     assert first == _render_optimizer_body(retained)
     with pytest.raises(ValueError, match="materializ"):
@@ -367,14 +370,14 @@ def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
     assert 'href="#s1-geometry"' in "".join(body)
     assert 'id="s1-geometry"' in "".join(defs)
     trace = TraceResult(48, 24, TraceOptions(), (), "")
-    rendered = drawing_refine.render_drawing(trace, out)
-    assert 'href="#r1-geometry"' in rendered.svg
+    rendered = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(out)))
+    assert 'href="#geometry-r1"' in rendered.svg
     canonical = drawing_from_vector_regions("drw_x", width=48, height=24, regions=out)
     assert canonical.regions[1].children[1].geometry.source_region_id == "r1"
     plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
                        "ops": [{"op": "set_fill", "target": "r3-2", "fill": {"type": "flat", "color": "#ffffff"}}]})
     refined = drawing_refine.refine(trace, out, plan)
-    assert 'href="#r1-geometry"' in drawing_refine.render_drawing(trace, refined).svg
+    assert 'href="#geometry-r1"' in _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(refined))).svg
     assert before[0].is_branch and before[1].children[1] is clone
     assert "href_region_path" not in clone.current.params
 

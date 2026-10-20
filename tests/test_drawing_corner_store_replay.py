@@ -11,20 +11,20 @@ from vectormark.corner_recipe import (
 )
 from vectormark.drawing_actions import ActionSettings
 from vectormark.drawing_engine import PathFitOptions, RasterImage
+from tests._working_evidence import capture_working_geometry_evidence
 from vectormark.drawing_recipe import (
     ApplyCornerRecipeOperation,
     EffectiveDrawingRecipe,
     ResolveOriginalPaintOperation,
     VersionPathSelection,
-    build_geometry_evidence,
     build_paint_evidence,
 )
-from vectormark.drawing_assembly import root_regions
+from vectormark.optimizer.assembly_binding import assemble_working_roots
+from vectormark.optimizer.replay_binding import replay_working_regions
 from vectormark.drawing_replay import (
     extend_recipe_with_corner_edits,
     propose_effective_recipe,
-    replay_regions,
-)
+    )
 from vectormark.drawing_state import DrawingStore, VersionCandidate
 from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
 from vectormark.optimizer.automatic_replay import input_revision
@@ -37,9 +37,9 @@ def _source_store(*, cutout: bool = False):
     if cutout:
         rgb[20:44, 20:44] = 255
     trace = PythonTraceEngine().trace(rgb, TraceOptions())
-    rooted = root_regions(trace, rgb)
+    rooted = assemble_working_roots(trace, rgb)
     source = RasterImage(64, 64, "rgb8", rgb.tobytes())
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=rooted.trace,
         geometry_source=source,
@@ -141,7 +141,7 @@ def test_add_then_remove_replays_like_never_added_sibling_and_preserves_branches
         edits=(RemoveCorner("agent.corner"),),
     )
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran during retained recipe replay")
         ),
@@ -167,7 +167,7 @@ def test_add_then_remove_replays_like_never_added_sibling_and_preserves_branches
             base.resolved_settings.fit_strategy,
         ),
     )
-    base_regions = replay_regions(evidence, paint, base.effective_recipe)
+    base_regions = replay_working_regions(evidence, paint, base.effective_recipe)
     never_added_recipe = replace(
         base.effective_recipe,
         steps=(

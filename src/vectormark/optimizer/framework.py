@@ -89,12 +89,7 @@ def _proposal_sort_key(proposal: Proposal) -> tuple[tuple[int, ...], tuple[tuple
     return (_proposal_key(proposal), tuple(sorted(_shape_key(obj) for obj in proposal.new_objects)))
 
 
-def _union_masks(mask_by_id: dict[int, np.ndarray], obj_ids) -> np.ndarray:
-    ordered_ids = tuple(sorted(int(obj_id) for obj_id in obj_ids))
-    union = np.zeros_like(mask_by_id[ordered_ids[0]], dtype=bool)
-    for obj_id in ordered_ids:
-        union |= np.asarray(mask_by_id[obj_id], dtype=bool)
-    return union
+from ..replay_inputs import union_masks
 
 
 def _replacement_preserves_scene(
@@ -150,6 +145,15 @@ def _pass_name(pass_fn: Pass) -> str:
     return pass_fn.__class__.__name__
 
 
+def accepted_proposal_diagnostics(
+    pass_name: str, proposal_ids: tuple[int, ...], assessment: GeometryAssessment,
+) -> dict[str, dict[str, object]]:
+    """One diagnostic payload for accepted canonical and numeric replay results."""
+    return {pass_name: {'accepted': True,
+        'proposal_ids': [int(obj_id) for obj_id in proposal_ids],
+        'geometry_assessment': assessment.diagnostics()}}
+
+
 def _annotate_replacement(
     replacement: VectorRegion,
     *,
@@ -160,13 +164,7 @@ def _annotate_replacement(
 ) -> VectorRegion:
     return replacement.with_diagnostics(
         raster=raster,
-        diagnostics={
-            pass_name: {
-                "accepted": True,
-                "proposal_ids": [int(obj_id) for obj_id in proposal_ids],
-                "geometry_assessment": assessment.diagnostics(),
-            }
-        },
+        diagnostics=accepted_proposal_diagnostics(pass_name, proposal_ids, assessment),
     )
 
 
@@ -189,33 +187,11 @@ def _assign_replacement_masks(
     current_masks: dict[int, np.ndarray],
 ) -> dict[int, np.ndarray]:
     """Apply the optimizer's exact accepted-proposal raster ownership rules."""
-    union_mask = _union_masks(pass_masks, proposal_ids)
-    preserved_masks = {
-        obj_id: np.asarray(pass_masks[obj_id], dtype=bool).copy()
-        for obj_id in proposal_ids
-    }
-    split_replacement = len(proposal_ids) == 1 and len(replacements) > 1
-    for obj_id in proposal_ids:
-        current_masks.pop(obj_id, None)
-
-    assigned_replacement_ids: set[int] = set()
-    replacement_masks: dict[int, np.ndarray] = {}
-    for replacement in replacements:
-        current_masks.pop(replacement.id, None)
-        if split_replacement:
-            mask = rasterize(replacement.footprint, union_mask.shape)
-        elif (
-            replacement.id in pass_original_by_id
-            and replacement.id in proposal_ids
-            and replacement.id not in assigned_replacement_ids
-        ):
-            mask = preserved_masks[replacement.id]
-            assigned_replacement_ids.add(replacement.id)
-        else:
-            mask = union_mask.copy()
-        replacement_masks[replacement.id] = mask
-        current_masks[replacement.id] = mask
-    return replacement_masks
+    from ..replay_inputs import assign_replacement_masks
+    by_id = {region.id: region for region in replacements}
+    return assign_replacement_masks(tuple(region.id for region in replacements), proposal_ids,
+        original_ids=pass_original_by_id, pass_masks=pass_masks, current_masks=current_masks,
+        raster_for=lambda identity, shape: rasterize(by_id[identity].footprint, shape))
 
 
 def _optimize_branch_children(
@@ -494,7 +470,7 @@ def optimize(
                 reject_without_assessment("replacement_collides_with_current")
                 continue
 
-            union_mask = _union_masks(pass_masks, proposal_ids)
+            union_mask = union_masks(pass_masks, proposal_ids)
             source_objects = [pass_original_by_id[obj_id] for obj_id in proposal_ids]
             assessment_objects = proposal.new_objects
             replacement_leaves = [leaf for obj in proposal.new_objects for leaf in obj.leaves()]

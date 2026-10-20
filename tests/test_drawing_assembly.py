@@ -9,7 +9,7 @@ from vectormark.optimizer.vector_region import VectorRegion
 
 @pytest.mark.parametrize("with_rgb", [False, True])
 def test_engine_root_assembly_retains_actual_fit_evidence_and_stage_order(with_rgb):
-    from vectormark.drawing_assembly import root_regions
+    from vectormark.optimizer.assembly_binding import assemble_working_roots
 
     yy, xx = np.mgrid[:40, :40]
     mask = (xx - 20) ** 2 + (yy - 20) ** 2 < 14**2
@@ -21,7 +21,7 @@ def test_engine_root_assembly_retains_actual_fit_evidence_and_stage_order(with_r
         alpha=mask.astype(np.uint8) * 255,
     )
     stages = []
-    result = root_regions(
+    result = assemble_working_roots(
         trace,
         rgb if with_rgb else None,
         min_region_fraction=0,

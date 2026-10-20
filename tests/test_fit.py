@@ -76,7 +76,7 @@ def _disk_local(size=60):
 
 
 from vectormark.fit import fit_path
-from vectormark.optimizer.vector_region import _parse_subpaths
+from vectormark.path_sampling import _parse_subpaths
 
 
 def _command_count(d: str) -> int:

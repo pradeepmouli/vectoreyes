@@ -26,23 +26,25 @@ class Resolver:
 
 
 def test_engine_smoothing_respects_budget_and_preserves_source():
-    from vectormark.drawing_smoothing import apply_smoothing
+    from vectormark.drawing_adapter import bind_path_input
+    from vectormark.optimizer.automatic_replay import apply_smoothing_choice
 
     shape = Shape("path", {"d": "M0 0 Q2 9.8 10 10 Q18 9.8 20 0 L0 0 Z"})
     target = VectorRegion(1, shape, FlatFill("#123456"), footprint=to_polygon(shape))
     ref = PassInputRegionRef("", "", (1,))
-    (changed,) = apply_smoothing(SmoothPathOperation(ref, 1.1), Resolver([target]))
+    bindings = bind_path_input(target)
+    (changed,) = apply_smoothing_choice(SmoothPathOperation(ref, 1.1), bindings)
     assert changed.current != shape
     assert changed.fill is target.fill and changed.original is target.original
     assert target.current == shape
     with pytest.raises(ValueError, match="recorded smooth operation no longer applies"):
-        apply_smoothing(SmoothPathOperation(ref, 0.0), Resolver([target]))
+        apply_smoothing_choice(SmoothPathOperation(ref, 0.0), bindings)
 
 
 def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_receipt():
-    from vectormark.drawing_topology import (
+    from vectormark.optimizer.topology_binding import (
         apply_retained_topology,
-        normalize_retained_topology,
+        normalize_working_topology,
         topology_path_correspondence,
     )
 
@@ -54,7 +56,7 @@ def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_rece
         },
     )
     target = VectorRegion(1, shape, FlatFill("#123456"), drawing_id="r1")
-    normalized = normalize_retained_topology([target], allow_external=True)
+    normalized = normalize_working_topology([target], allow_external=True)
     receipt = topology_path_correspondence([target], normalized)
     action = NormalizeRetainedTopologyOperation(
         (PassInputRegionRef("", "", (1,)),), (1,), receipt
@@ -73,8 +75,9 @@ def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_rece
 
 
 def test_engine_corner_normalization_preserves_authoritative_empty_declaration():
-    from vectormark.drawing_corner_actions import apply_retained_corner_normalization
-    from vectormark.optimizer.corners import path_corner_diagnostics
+    from vectormark.drawing_adapter import bind_path_input
+    from vectormark.optimizer.automatic_replay import apply_corner_normalization_choice
+    from vectormark.corner_diagnostics import path_corner_diagnostics
 
     shape = Shape("path", {"d": "M0 0 L12 0 L12 12 L0 12 Z"})
     target = VectorRegion(1, shape, FlatFill("#123456"))
@@ -82,15 +85,17 @@ def test_engine_corner_normalization_preserves_authoritative_empty_declaration()
     action = NormalizeCornersOperation(
         PassInputRegionRef("", "", (1,)), 1.0, declaration
     )
-    (changed,) = apply_retained_corner_normalization(action, Resolver([target]))
-    assert changed.current == shape
+    binding = bind_path_input(target)
+    (changed,) = apply_corner_normalization_choice(action, binding)
+    assert changed.current.params['d'] == shape.params['d']
+    assert changed.current.params['canonical_path_geometry'].anchors == ()
     assert changed.diagnostics["corners"]["spans"] == []
     assert target.diagnostics == {}
     stale = NormalizeCornersOperation(
         action.target, 1.0, {**declaration, "path": "M0 0 L1 0 L1 1 Z"}
     )
     with pytest.raises(ValueError, match="declaration does not match replay target"):
-        apply_retained_corner_normalization(stale, Resolver([target]))
+        apply_corner_normalization_choice(stale, binding)
 
 
 def test_engine_refreshes_cross_scope_clone_without_mutating_source_or_parent():

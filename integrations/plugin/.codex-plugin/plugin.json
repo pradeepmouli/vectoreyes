@@ -1,0 +1,34 @@
+{
+  "name": "vectormark",
+  "description": "Reconstruct raster artwork as editable SVG through source-grounded plans, iterative region review, and separate shape/fill evaluation.",
+  "author": {
+    "name": "Pradeep Mouli"
+  },
+  "homepage": "https://github.com/pradeepmouli/vectormark",
+  "repository": "https://github.com/pradeepmouli/vectormark",
+  "license": "MIT",
+  "keywords": [
+    "svg",
+    "vectorization",
+    "design",
+    "image-generation",
+    "evaluation"
+  ],
+  "version": "0.2.1",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "VectorMark",
+    "shortDescription": "Image-to-vector reconstruction and review",
+    "longDescription": "Trace, inspect and refine artwork region by region with retained source evidence and exact plan parameters.",
+    "developerName": "Pradeep Mouli",
+    "category": "Design",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Use VectorMark to reconstruct this image as a faithful editable SVG and evaluate alternative fits region by region."
+    ]
+  }
+}

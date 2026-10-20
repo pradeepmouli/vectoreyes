@@ -2,12 +2,12 @@ import copy
 
 import pytest
 
-from vectormark.optimizer.corners import (
+from vectormark.corner_diagnostics import (
     normalize_corners_path_d,
     path_corner_diagnostics,
     rebind_prefit_corner_diagnostics,
 )
-from vectormark.optimizer.vector_region import _parse_subpaths
+from vectormark.path_sampling import _parse_subpaths
 
 
 @pytest.mark.parametrize("side", ["Q5 -3 10 0", "C3 -2 7 -2 10 0"])

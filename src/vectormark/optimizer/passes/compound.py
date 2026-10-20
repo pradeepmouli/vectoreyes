@@ -8,14 +8,14 @@ from ..automatic_replay import (
     draft_input_ref,
     operation_intent,
 )
-from ...drawing_topology import normalize_retained_topology, topology_path_correspondence
+from ..topology_binding import normalize_working_topology, topology_path_correspondence
 from ..vector_region import VectorRegion
 
 
 def split_compound_pass(
     objects: list[VectorRegion], masks: dict[int, np.ndarray],
 ) -> list[Proposal]:
-    normalized = normalize_retained_topology(objects, allow_external=True)
+    normalized = normalize_working_topology(objects, allow_external=True)
     changed = [(old, new) for old, new in zip(objects, normalized, strict=True) if old is not new]
     if not changed:
         return []

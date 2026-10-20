@@ -2,13 +2,61 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import replace
 
 from . import corner_fitting
 from .immutable_value import freeze_value
 from .path_geometry import CornerAnchor, CubicCommand, PathGeometry, QuadraticCommand, command_token
-from .optimizer.vector_region import _sample_subpath
+from .path_sampling import _sample_subpath
+
+
+def normalize_declared_paths(
+    paths: tuple[PathGeometry, ...], *, declaration: Mapping[str, object], max_error: float,
+    source_text: str | None = None,
+) -> tuple[tuple[PathGeometry, ...], Mapping[str, object]]:
+    """Bind retained pre-fit declarations to actual typed command identities."""
+    from .corner_diagnostics import (
+        _subpath_d, rebind_prefit_corner_diagnostics, retained_corner_declaration_matches,
+    )
+    from .corner_provenance import bind_prefit_corner_anchors
+
+    d = source_text if source_text is not None else ' '.join(path.to_svg_d() for path in paths)
+    if not retained_corner_declaration_matches(d, declaration):
+        raise ValueError('corner operation declaration does not match replay target')
+    bound = rebind_prefit_corner_diagnostics(d, declaration, tolerance=0.02)
+    spans = bound['spans']
+    skipped = list(bound['skipped'])
+    output = []
+    normalized = []
+    for index, path in enumerate(paths):
+        # The supplied declaration is authoritative, including an empty set.
+        path = replace(path, anchors=tuple(anchor for anchor in path.anchors
+                                          if not isinstance(anchor, CornerAnchor)))
+        local = [span for span in spans if span['subpath'] == index]
+        if not local:
+            output.append(path)
+            continue
+        selected, binding_skips, feature_ids = bind_prefit_corner_anchors(
+            {index: path}, local, overlap_policy='reject_all')
+        skipped.extend(dict(item) for item in binding_skips)
+        updated, receipt = normalize_path_corners(selected[index], max_error=max_error)
+        normalized.extend(feature_ids[item] for item in receipt['normalized'])
+        skipped.extend({**item, 'corner_id': feature_ids[item['corner_id']],
+            'reason': 'protected_point_inside_span' if item['reason'] == 'protected_anchor_inside_span'
+            else item['reason']} for item in receipt['skipped'])
+        output.append(updated)
+    normalized_d = ' '.join(_subpath_d([
+        *( (kind, list(values)) for command in path.path.commands
+           for kind, values in (command_token(command),)), ('Z', [])]) for path in output) if normalized else d
+    result = rebind_prefit_corner_diagnostics(normalized_d, bound, tolerance=0.02)
+    result['normalized'] = normalized
+    prior = declaration.get('skipped', ())
+    result['skipped'] = list({(item.get('corner_id'), item.get('reason')): dict(item)
+        for item in [*(prior if isinstance(prior, Sequence) else ()), *skipped]
+        if isinstance(item, Mapping) and item.get('corner_id') not in normalized
+        and not (spans and item.get('reason') == 'missing_or_stale_provenance')}.values())
+    return tuple(output), result
 
 
 def normalize_path_corners(

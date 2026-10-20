@@ -15,10 +15,12 @@ from vectormark.candidate import FlatFill
 from vectormark.drawing_actions import ActionSettings, DrawingPlan
 from vectormark.drawing_adapter import drawing_from_vector_regions
 from vectormark.drawing_engine import RasterImage
+from tests._working_evidence import capture_working_geometry_evidence
+from vectormark.optimizer.replay_binding import capture_replay_state
+from vectormark.optimizer.assembly_binding import working_regions_from_evidence
 from vectormark.drawing_recipe import (
     EffectiveDrawingRecipe,
     RecipeOperation,
-    build_geometry_evidence,
     build_paint_evidence,
 )
 from vectormark.drawing_replay import (
@@ -29,7 +31,7 @@ from vectormark.drawing_replay import (
     propose_effective_recipe,
 )
 from vectormark.drawing_refine import refine
-from vectormark.drawing_paint import refill_changed_regions_from_source
+from vectormark.optimizer.paint_binding import refill_changed_regions_from_source
 from vectormark.drawing_render import drawing_summary
 from vectormark.drawing_state import DrawingStore
 from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
@@ -47,7 +49,7 @@ from vectormark.optimizer.automatic_replay import (
     PathOpsUnderlapConstraint,
     ReplayBatch,
 )
-from vectormark.optimizer.corners import path_corner_diagnostics
+from vectormark.corner_diagnostics import path_corner_diagnostics
 from vectormark.optimizer.framework import optimize_with_intent
 from vectormark.optimizer.gate import rasterize
 from vectormark.optimizer.passes.compound import split_compound_pass
@@ -141,7 +143,7 @@ def _assert_stored_replay(traced, version_id):
 def _direct_recipe_fixture(regions, *, width: int, height: int):
     pixels = np.full((height, width, 3), 255, np.uint8)
     source = RasterImage(width, height, "rgb8", pixels.tobytes())
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=TraceResult(width, height, TraceOptions(), (), "<svg/>"),
         geometry_source=source,
@@ -190,7 +192,6 @@ def _seam_recipe_execution(regions, root_paths, masks):
         replace(region, raster=np.asarray(masks[region.id], dtype=bool))
         for region in regions
     )
-    optimized = optimize_with_intent(list(retained_regions), masks, [seams_pass])
     pixels = np.full((110, 120, 3), 255, np.uint8)
     source = RasterImage(120, 110, "rgb8", pixels.tobytes())
     trace = TraceResult(
@@ -201,13 +202,14 @@ def _seam_recipe_execution(regions, root_paths, masks):
         "<svg/>",
         root_path_evidence=tuple(root_paths),
     )
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=trace,
         geometry_source=source,
         trace_roots=retained_regions,
     )
     paint = build_paint_evidence(source)
+    optimized = optimize_with_intent(list(working_regions_from_evidence(evidence)), masks, [seams_pass])
     recipe = EffectiveDrawingRecipe(
         evidence.revision,
         evidence.engine_revision,
@@ -225,7 +227,7 @@ def _seam_recipe_execution(regions, root_paths, masks):
 def _direct_plan_drawing(drawing_id, evidence, paint, plan):
     regions = refine(
         evidence.trace,
-        evidence.trace_roots,
+        working_regions_from_evidence(evidence),
         plan,
         rgb=raster_pixels(paint.source),
     )
@@ -238,7 +240,7 @@ def _direct_plan_drawing(drawing_id, evidence, paint, plan):
 
 
 def _sequential_update_drawing(drawing_id, evidence, paint, plan):
-    regions = evidence.trace_roots
+    regions = working_regions_from_evidence(evidence)
     action = plan.ops[0]
     for nested in action.ops:
         stage = DrawingPlan(
@@ -250,7 +252,7 @@ def _sequential_update_drawing(drawing_id, evidence, paint, plan):
         )
         regions = refine(evidence.trace, regions, stage, rgb=None)
     regions = refill_changed_regions_from_source(
-        evidence.trace_roots, regions, raster_pixels(paint.source)
+        working_regions_from_evidence(evidence), regions, raster_pixels(paint.source)
     )
     return drawing_from_vector_regions(
         drawing_id,
@@ -312,7 +314,7 @@ def test_single_region_public_action_replays_from_retained_evidence(
     if action["op"] == "detect_primitives":
         assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
         monkeypatch.setattr(
-            "vectormark.optimizer.passes.primitives.recognize_primitive",
+            "vectormark.optimizer.passes.primitives.recognize_primitive_geometry",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("primitive detection ran during recipe replay")
             ),
@@ -602,6 +604,8 @@ def test_pathops_seam_report_keeps_only_exact_commands_and_unaffected_sibling():
         )
     }
     source_c2 = under_path.fit.source.path.commands[2].id
+    source_c1 = under_path.fit.source.path.commands[1].id
+    assert (source_c1, "r20-21.p0.c2") in exact_pairs
     assert (source_c2, "r20-21.p0.c3") in exact_pairs
     assert (source_c2, "r20-21.p0.c2") not in exact_pairs
 
@@ -615,7 +619,10 @@ def test_pathops_seam_report_keeps_only_exact_commands_and_unaffected_sibling():
         command["id"]: command["corner_boundary"]["editable"]
         for command in targets["r20-21"]["geometry"]["commands"]
     }
-    assert bottom_commands["r20-21.p0.c2"] is False
+    # Canonical ingress makes the closing edge explicit: the unchanged endpoint
+    # at (100, 0) remains addressable, but the new seam endpoint does not.
+    assert bottom_commands["r20-21.p0.c1"] is False
+    assert bottom_commands["r20-21.p0.c2"] is True
     assert bottom_commands["r20-21.p0.c3"] is True
     top_commands = {
         command["id"]: command["corner_boundary"]["editable"]
@@ -768,7 +775,7 @@ def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
     )
     pixels = np.full((24, 24, 3), 255, np.uint8)
     raster = RasterImage(24, 24, "rgb8", pixels.tobytes())
-    evidence = build_geometry_evidence(
+    evidence = capture_working_geometry_evidence(
         kind="source",
         trace=TraceResult(
             24,
@@ -796,7 +803,7 @@ def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
         regions=regions,
     )
     path_correspondence = _path_replay_records(
-        evidence, recipe, regions, drawing, []
+        evidence, recipe, capture_replay_state(regions, drawing.canvas), drawing, []
     )
     records = {
         record.output_path_id: record
@@ -820,7 +827,7 @@ def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
     )
     assert _source_command_for_display(
         evidence,
-        regions,
+        capture_replay_state(regions, drawing.canvas),
         "r1-1",
         "r1.p0",
         "r1.p0.c1",
@@ -857,9 +864,9 @@ def test_update_geometry_preserves_cleanup_positions_repetitions_and_settings():
             "settings": {"epsilon": 1.0, "max_error": 1.0},
             "ops": [
                 {"op": "simplify"},
-                {"op": "fit", "target": "r1.p0.c1", "type": "keep"},
+                {"op": "fit", "target": "r1.p0.c3", "type": "keep"},
                 {"op": "simplify"},
-                {"op": "fit", "target": "r1.p0.c1", "type": "keep"},
+                {"op": "fit", "target": "r1.p0.c3", "type": "keep"},
             ],
         }],
     })
@@ -999,11 +1006,13 @@ def test_nested_path_action_replay_binds_every_command_reference(
     })
     if any(item["op"] in {"break", "reverse", "mirror"} for item in path_actions):
         from vectormark.drawing_replay import bind_recipe_operation
+        from vectormark.optimizer.replay_binding import capture_replay_state
+        from vectormark.drawing import Canvas
 
         operation = bind_recipe_operation(
             operation_id="reserved-path-binding", action=plan.ops[0],
             settings=ActionSettings(epsilon=1, max_error=1, fit_strategy="quadratic"),
-            evidence_revision="binding-test", regions=(source,),
+            evidence_revision="binding-test", state=capture_replay_state((source,), Canvas(12, 12)),
         )
         assert {binding.role for binding in operation.bindings} == {"target", *expected_roles}
         with pytest.raises(ValueError, match="path operation.*not implemented"):
@@ -1077,7 +1086,7 @@ def test_public_corner_normalization_replays_retained_declaration_without_detect
     assert len(recipe.automatic_batches) == 1
     assert recipe.automatic_batches[0].operations
     monkeypatch.setattr(
-        "vectormark.optimizer.corners.path_corner_diagnostics",
+        "vectormark.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detection ran during recipe replay")
         ),

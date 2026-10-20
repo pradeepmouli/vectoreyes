@@ -7,11 +7,13 @@ projection remains the existing engine adapter, not a second scene.
 
 from __future__ import annotations
 from dataclasses import dataclass
+from collections.abc import Mapping
 import math
 import numpy as np
 from ._fitcurve import cbezier, cubic_inflects, fit_quadratic_beziers
 from .fit import Shape, _curve_controls_are_straight, _fmt
-from .drawing_adapter import transform_working_shape
+from .emit import shape_to_path_d
+from .skia_geometry import SkPath
 from .optimizer.automatic_replay import (
     ApplySeamConstraintsOperation,
     EndpointAssignment,
@@ -22,7 +24,7 @@ from .optimizer.automatic_replay import (
     SeamCommandIndexCorrespondence,
     SeamPathCorrespondence,
 )
-from .optimizer.vector_region import VectorRegion, _parse_subpaths, to_polygon
+from .path_sampling import _parse_subpaths
 
 # Admission tolerance only; accepted endpoints are projected exactly.
 _SEAM_TOL = 3.0
@@ -45,9 +47,13 @@ class _SeamCandidate:
 
 
 @dataclass(frozen=True)
-class _LeafRef:
-    owner: VectorRegion
-    leaf: VectorRegion
+class SeamInput:
+    """Selected geometry and numeric observations required by seam replay."""
+    shape: Shape
+    id: int
+    owner_id: int
+    paint_order: tuple[float, float, int, int]
+    boundary: SkPath
 
 
 @dataclass(frozen=True)
@@ -296,9 +302,7 @@ def _rewrite_path_side(
     if not changed:
         return None
 
-    params = dict(shape.params)
-    params["d"] = " ".join(_subpath_d(subpath) for subpath in rewritten)
-    return Shape("path", params)
+    return _shape_from_tokens(shape, rewritten)
 
 
 def _rewrite_rect_side(shape: Shape, *, side: str, seam: float) -> Shape | None:
@@ -535,6 +539,9 @@ def _shape_from_tokens(
 ) -> Shape:
     params = dict(shape.params)
     params["d"] = " ".join(_subpath_d(subpath) for subpath in tokens)
+    if params["d"] != shape.params.get("d"):
+        params.pop("canonical_path_geometry", None)
+        params.pop("canonical_clone_geometry", None)
     return Shape("path", params)
 
 
@@ -680,75 +687,6 @@ def _true_up_path_vertices(
     )
 
 
-def _replacement(
-    obj: VectorRegion,
-    shape: Shape,
-    other_id: int,
-    candidate: _SeamCandidate,
-    *,
-    selected: str,
-) -> VectorRegion:
-    return obj.with_current(
-        shape,
-        footprint=to_polygon(shape),
-        diagnostics={
-            "seams": {
-                "accepted": True,
-                "paired_with": int(other_id),
-                "selected": selected,
-                "axis": candidate.axis,
-                "gap_before": abs(candidate.a_value - candidate.b_value),
-                "seam": candidate.seam,
-            }
-        },
-    )
-
-
-def _replace_leaf(
-    root: VectorRegion, leaf_id: int, replacement: VectorRegion
-) -> VectorRegion:
-    if root.is_leaf:
-        return replacement if int(root.id) == int(leaf_id) else root
-    children = [_replace_leaf(child, leaf_id, replacement) for child in root.children]
-    return root.with_children(children)
-
-
-def _replace_leaves(
-    root: VectorRegion, replacements_by_leaf_id: dict[int, VectorRegion]
-) -> VectorRegion:
-    if root.is_leaf:
-        return replacements_by_leaf_id.get(int(root.id), root)
-    children = [
-        _replace_leaves(child, replacements_by_leaf_id) for child in root.children
-    ]
-    # A branch's footprint is the retained exterior geometry root.  Its
-    # children are material partitions, whose fitted paths can have tiny
-    # independent residuals.  Recomputing the branch footprint from those
-    # children turns an interior stitch into a spurious exterior shape change
-    # and makes the optimizer reject it.  Preserve the container footprint and
-    # raster; only its addressed children changed.
-    return VectorRegion.branch(
-        id=root.id,
-        children=children,
-        z=root.z,
-        raster=root.raster,
-        footprint=root.footprint,
-        fill=root.fill,
-        source_label=root.source_label,
-        color_hex=root.color_hex,
-        drawing_id=root.drawing_id,
-        source_regions=root.source_regions,
-        diagnostics=root.diagnostics,
-    )
-
-
-def _leaf_key(ref: _LeafRef) -> tuple[int, int]:
-    return int(ref.owner.id), int(ref.leaf.id)
-
-
-def _paint_order(ref: _LeafRef) -> tuple[float, float, int, int]:
-    """Stable back-to-front ordering for a leaf participating in a seam."""
-    return float(ref.owner.z), float(ref.leaf.z), int(ref.owner.id), int(ref.leaf.id)
 
 
 def _shape_from_pathops(footprint) -> Shape:
@@ -769,8 +707,8 @@ def _pathops_input_is_bounded(shape: Shape) -> bool:
 
 
 def _pathops_shared_boundary_pair(
-    a_ref: _LeafRef,
-    b_ref: _LeafRef,
+    a_ref: SeamInput,
+    b_ref: SeamInput,
     a_shape: Shape,
     b_shape: Shape,
     *,
@@ -784,11 +722,11 @@ def _pathops_shared_boundary_pair(
     The repaired lower region is then clipped to its retained root footprint,
     so temporary underlap can never escape the drawing's exterior boundary.
     """
-    if int(a_ref.owner.id) != int(b_ref.owner.id):
+    if a_ref.owner_id != b_ref.owner_id:
         return None
     if not _pathops_input_is_bounded(a_shape) or not _pathops_input_is_bounded(b_shape):
         return None
-    if _paint_order(a_ref) <= _paint_order(b_ref):
+    if a_ref.paint_order <= b_ref.paint_order:
         bottom_ref, top_ref = a_ref, b_ref
         bottom_shape, top_shape = a_shape, b_shape
         bottom_is_a = True
@@ -797,11 +735,11 @@ def _pathops_shared_boundary_pair(
         bottom_shape, top_shape = b_shape, a_shape
         bottom_is_a = False
 
-    bottom = to_polygon(bottom_shape)
-    top = to_polygon(top_shape)
+    bottom = SkPath.from_svg_d(shape_to_path_d(bottom_shape), fill_rule=bottom_shape.params.get('fill_rule'))
+    top = SkPath.from_svg_d(shape_to_path_d(top_shape), fill_rule=top_shape.params.get('fill_rule'))
     if bottom.is_empty or top.is_empty:
         return None
-    boundary = bottom_ref.owner.footprint
+    boundary = bottom_ref.boundary
     if boundary is None or getattr(boundary, "is_empty", False):
         return None
     gap_before = float(bottom.distance(top))
@@ -886,10 +824,10 @@ def _apply_endpoint_stage(
         shapes[key] = _shape_from_tokens(shapes[key], tokens)
 
 
-def apply_seam_constraints(
+def execute_seam_constraints(
     action: ApplySeamConstraintsOperation,
-    resolver,
-) -> list[VectorRegion]:
+    inputs: Mapping[tuple[int, ...], SeamInput],
+) -> dict[tuple[int, ...], _LeafUpdate]:
     """Execute recorded seam decisions without pair or cluster discovery."""
     shapes: dict[tuple[int, ...], Shape] = {}
     input_shapes: dict[tuple[int, ...], Shape] = {}
@@ -897,64 +835,30 @@ def apply_seam_constraints(
 
     def current_shape(ref: PassInputRegionRef) -> Shape:
         key = tuple(ref.ancestry)
-        if key in shapes:
-            return shapes[key]
-        region = resolver.resolve(ref)
-        if region.current is None:
-            raise ValueError("seam replay target has no geometry")
-        if region.current.kind != "use":
-            shapes[key] = region.current
-            input_shapes[key] = region.current
-            return region.current
-        owner = resolver.resolve(
-            PassInputRegionRef(
-                ref.batch_id, ref.input_revision, (int(ref.ancestry[0]),)
-            )
-        )
-        source_id = int(region.current.params.get("href_obj_id", -1))
-        source_matches = [leaf for leaf in owner.leaves() if int(leaf.id) == source_id]
-        if len(source_matches) != 1 or source_matches[0].current is None:
-            raise ValueError("seam replay clone source is absent or ambiguous")
-        shape = transform_working_shape(
-            source_matches[0].current, region.current.params["transform"]
-        )
-        shapes[key] = shape
-        input_shapes[key] = shape
-        return shape
+        if key not in shapes:
+            shapes[key] = inputs[key].shape
+            input_shapes[key] = inputs[key].shape
+        return shapes[key]
 
     for constraint in action.pairs:
         left_key = tuple(constraint.left.ancestry)
         right_key = tuple(constraint.right.ancestry)
-        left_region = resolver.resolve(constraint.left)
-        right_region = resolver.resolve(constraint.right)
+        left_region = inputs[left_key]
+        right_region = inputs[right_key]
         left_shape = current_shape(constraint.left)
         right_shape = current_shape(constraint.right)
         if isinstance(constraint, PathOpsUnderlapConstraint):
-            left_owner = resolver.resolve(
-                PassInputRegionRef(
-                    constraint.left.batch_id,
-                    constraint.left.input_revision,
-                    (int(constraint.left.ancestry[0]),),
-                )
-            )
-            right_owner = resolver.resolve(
-                PassInputRegionRef(
-                    constraint.right.batch_id,
-                    constraint.right.input_revision,
-                    (int(constraint.right.ancestry[0]),),
-                )
-            )
             actual_bottom = (
                 "left"
-                if _paint_order(_LeafRef(left_owner, left_region))
-                <= _paint_order(_LeafRef(right_owner, right_region))
+                if left_region.paint_order
+                <= right_region.paint_order
                 else "right"
             )
             if actual_bottom != constraint.bottom:
                 raise ValueError("recorded seam underlap paint order no longer matches")
             result = _pathops_shared_boundary_pair(
-                _LeafRef(left_owner, left_region),
-                _LeafRef(right_owner, right_region),
+                left_region,
+                right_region,
                 left_shape,
                 right_shape,
                 tol=constraint.tolerance,
@@ -1055,22 +959,5 @@ def apply_seam_constraints(
         ):
             raise ValueError("seam command correspondence is out of range")
 
-    replacements_by_root: dict[int, dict[int, VectorRegion]] = {}
-    for key, shape in shapes.items():
-        if key not in metadata:
-            continue
-        region = resolver.resolve(
-            PassInputRegionRef(
-                action.roots[0].batch_id, action.roots[0].input_revision, key
-            )
-        )
-        paired_with, candidate, selected = metadata[key]
-        replacements_by_root.setdefault(int(key[0]), {})[int(region.id)] = _replacement(
-            region, shape, paired_with, candidate, selected=selected
-        )
-    return [
-        _replace_leaves(
-            resolver.resolve(root), replacements_by_root.get(int(root.ancestry[0]), {})
-        )
-        for root in action.roots
-    ]
+    return {key: _LeafUpdate(shapes[key], paired_with, candidate, selected)
+        for key, (paired_with, candidate, selected) in metadata.items()}
