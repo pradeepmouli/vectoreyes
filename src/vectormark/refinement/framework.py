@@ -9,6 +9,7 @@ import numpy as np
 from .gate import BUDGET, rasterize
 from ..skia_geometry import SkPath
 from ..quality import GeometryAssessment, GeometryPolicy, assess_geometry
+from ..proposal_validation import proposal_rejection_reason
 from .region_sample import RegionSample
 from .symmetry_materialize import (
     index_region_paths,
@@ -441,32 +442,13 @@ def select_refinements(
                     ))
 
             raw_proposal_ids = [int(obj_id) for obj_id in proposal.obj_ids]
-            if len(set(raw_proposal_ids)) != len(raw_proposal_ids):
-                reject_without_assessment("duplicate_proposal_id")
-                continue
             proposal_ids = _proposal_key(proposal)
-            if not proposal_ids:
-                reject_without_assessment("empty_proposal")
-                continue
-            if not proposal.new_objects:
-                reject_without_assessment("empty_replacement")
-                continue
             replacement_ids = [int(obj.id) for obj in proposal.new_objects]
-            if len(set(replacement_ids)) != len(replacement_ids):
-                reject_without_assessment("duplicate_replacement_id")
-                continue
-            if any(obj_id in consumed_in_pass for obj_id in proposal_ids):
-                reject_without_assessment("overlapping_accepted_proposal")
-                continue
-
-            if any(obj_id not in pass_original_by_id or obj_id not in pass_masks for obj_id in proposal_ids):
-                reject_without_assessment("missing_input_or_mask")
-                continue
-            if any(
-                replacement.id in pass_original_by_id and replacement.id not in proposal_ids
-                for replacement in proposal.new_objects
-            ):
-                reject_without_assessment("replacement_collides_with_input")
+            rejection = proposal_rejection_reason(raw_proposal_ids, replacement_ids,
+                input_ids=pass_original_by_id, mask_ids=pass_masks,
+                consumed_ids=consumed_in_pass, current_ids={obj.id for obj in current_objects})
+            if rejection is not None:
+                reject_without_assessment(rejection)
                 continue
 
             if isinstance(bound_intent, CornerDiagnosticsObservation):
@@ -478,14 +460,6 @@ def select_refinements(
                     raise ValueError(
                         "corner diagnostic observation attempted a non-diagnostic mutation"
                     )
-            current_object_ids = {obj.id for obj in current_objects}
-            if any(
-                replacement.id in current_object_ids and replacement.id not in proposal_ids
-                for replacement in proposal.new_objects
-            ):
-                reject_without_assessment("replacement_collides_with_current")
-                continue
-
             union_mask = union_masks(pass_masks, proposal_ids)
             source_objects = [pass_original_by_id[obj_id] for obj_id in proposal_ids]
             assessment_objects = proposal.new_objects

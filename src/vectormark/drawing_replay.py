@@ -1191,7 +1191,15 @@ def extend_recipe_with_plan(
             if action.op == "stitch"
             else getattr(action, "target", None)
         )
-        if detection is not None:
+        if detection == "detect_primitives":
+            from .drawing_proposals import detect_primitive_regions
+            selected = detect_primitive_regions(state, epsilon=settings.epsilon, target_id=target)
+            batches = tuple(replace(batch, settings=settings, origin="agent")
+                for batch in selected.batches)
+            steps.extend(batches)
+            state = selected.state
+            _register_automatic_outputs(batches, state, producers)
+        elif detection is not None:
             recorded = run_detection_with_intent(
                 working_regions_from_state(state),
                 evidence.trace,

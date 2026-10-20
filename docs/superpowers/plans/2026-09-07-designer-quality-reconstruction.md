@@ -2528,3 +2528,36 @@ changing its assertions. Lint, whitespace and packaged-skill consistency checks
 pass. Compiled in-process FastMCP Radish/Vbird runs preserve all four v0/v1 SVGs
 byte-for-byte (19.01s/94.80s; not controlled benchmarks). Artifacts remain separate
 under `native-region-quality`; no live server deployment or corpus overwrite.
+
+### Canonical proposal selection and primitive discovery — 2026-10-20
+
+Automatic selection and recorded replay now share `AutomaticBatchApplication`.
+Preparation captures detached canonical region/observation/metadata bundles from
+the pinned pass snapshot. Acceptance checks the binding and assessment, then
+installs that exact prepared result without invoking the action again. Rejected
+choices neither consume input identities nor mutate retained evidence. Named
+outputs register atomically, so a later conflicting output cannot leave an
+earlier name from the failed transaction visible.
+
+`drawing_proposals` discovers and scores primitive candidates directly against
+Drawing/ReplayState. Public `detect_primitives` plan operations now use this
+route, including child scopes with repeated local IDs. Shared proposal identity
+rules are extracted rather than copied from the existing numerical selector.
+Optional actions with no candidate yield a typed rejection; invalid prepared
+geometry fails assessment instead of escaping as a geometry-resolution error.
+
+This does not retire every automatic detector or numerical adapter. The default
+multi-pass discovery orchestrator and non-primitive public detection still use
+their explicit sampling boundary. The remaining quality, accountable-fill and
+agent/holdout evaluation items above remain open.
+
+Verification: 1,361 tests pass in both source (164.18s) and compiled (165.84s)
+runtimes, each with 985 warnings and no failures. Twenty-three new cases cover
+prepared acceptance, shared identity rules, atomic outputs, canonical discovery,
+public plan integration, scoped addressing and fail-closed geometry. Five changed
+modules are confirmed native extensions. Focused lint and staged whitespace
+checks pass. Exact-settings in-process FastMCP Radish/Vbird runs preserve all four
+v0/v1 SVGs byte-for-byte (21.87s/117.52s; concurrent validation, not benchmarks).
+The frozen wheel is installed only in the isolated test runtime; artifacts are
+under `native-canonical-proposal-selection`. No live deployment, push, server
+restart or corpus overwrite is included.

@@ -43,11 +43,21 @@ class ReplayInputResolver(Generic[T]):
             raise ValueError(f'automatic replay output descendant is absent: {path!r}') from exc
 
     def register(self, operation_id: str, output: 'NamedRegionOutput', region: T) -> None:
-        key = (operation_id, output.name)
-        if key in self._outputs:
-            raise ValueError(f'duplicate automatic replay named output: {key!r}')
-        self._outputs[key] = region
-        self._output_paths[key] = output.ancestry
+        self.register_many(operation_id, ((output, region),))
+
+    def register_many(self, operation_id: str,
+                      outputs: tuple[tuple['NamedRegionOutput', T], ...]) -> None:
+        """Validate all named outputs before publishing any of them."""
+        keys = set()
+        for output, _region in outputs:
+            key = (operation_id, output.name)
+            if key in self._outputs or key in keys:
+                raise ValueError(f'duplicate automatic replay named output: {key!r}')
+            keys.add(key)
+        for output, region in outputs:
+            key = (operation_id, output.name)
+            self._outputs[key] = region
+            self._output_paths[key] = output.ancestry
 
     def path(self, ref: 'RegionRef') -> tuple[int, ...]:
         from .refinement.automatic_replay import PassInputRegionRef

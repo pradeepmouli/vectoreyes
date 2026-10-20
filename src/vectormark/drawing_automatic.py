@@ -17,6 +17,7 @@ from .refinement.automatic_replay import (
     MirrorRegionOperation, ReconstructOcclusionOperation,
     ApplySeamConstraintsOperation, RefreshDependentClonesOperation,
     ReconstructSelfSymmetryOperation, NormalizeRetainedTopologyOperation, PassInputRegionRef,
+    AutomaticRecord, ProposalIntent,
 )
 from .replay_inputs import ReplayInputResolver, assign_replacement_masks, clone_report
 from .path_geometry import PathGeometry
@@ -433,6 +434,10 @@ def _select_occlusion(action, resolver, observations, metadata):
     return (selected,)
 
 
+class AutomaticChoiceNotApplicable(ValueError):
+    """A well-bound optional action produced no candidate for this input."""
+
+
 def _select_regions(state, intent, resolver, observations, metadata):
     if isinstance(intent, AutomaticIntent):
         action = intent.action
@@ -467,7 +472,7 @@ def _select_regions(state, intent, resolver, observations, metadata):
         fill_rule=metadata.get(selected.id, {}).get('fill_rule'))
     if choice is None:
         name = 'smooth' if isinstance(action, SmoothPathOperation) else 'simplify'
-        raise ValueError(f'recorded {name} operation no longer applies to its bound input')
+        raise AutomaticChoiceNotApplicable(f'recorded {name} operation no longer applies to its bound input')
     by_id = {path.path.id: path for path in choice.paths}
     geometry = replace_component_paths(selected.geometry,
         tuple(by_id[path.path.id] for path in component_paths(selected.geometry))) \
@@ -481,58 +486,103 @@ def _select_regions(state, intent, resolver, observations, metadata):
     return (selected, *covering)
 
 
+@dataclass(frozen=True)
+class PreparedAutomaticSelection:
+    input_revision: str
+    intent: ProposalIntent
+    regions: tuple[AutomaticRegionInput, ...]
+
+
+class AutomaticBatchApplication:
+    """One canonical publication boundary shared by discovery and replay.
+
+    Preparation reads pinned pass inputs and returns detached selected roots.
+    Rejected choices do not leak annotations or source observations into the
+    current drawing. Acceptance installs the already prepared result exactly.
+    """
+
+    def __init__(self, state: ReplayState, batch: ReplayBatch) -> None:
+        from .replay_identity import bind_automatic_inputs, scoped_input_regions
+        self.state = state
+        self.batch = batch
+        self.masks = bind_automatic_inputs(state, batch)
+        self.indexed = {path: state.drawing.region(identity)
+            for identity, path in region_ancestries(state).items()}
+        self.observations = {identity: dict(info) for identity, info in state.region_evidence.items()}
+        self.metadata = {identity: dict(info) for identity, info in state.shape_metadata.items()}
+        scoped = scoped_input_regions(state, batch.scope)
+        self.current = list(scoped)
+        inputs = _index_inputs(_capture_inputs(scoped, self.observations, self.metadata))
+        self.original_ids = {int(self.observations[region.id]['id']) for region in scoped}
+        self.current_masks = {identity: mask.copy() for identity, mask in self.masks.items()}
+        self.resolver = ReplayInputResolver(inputs, batch, lambda region: _index_inputs((region,)))
+
+    def prepare(self, intent: ProposalIntent) -> PreparedAutomaticSelection:
+        observations = {identity: dict(info) for identity, info in self.observations.items()}
+        metadata = {identity: dict(info) for identity, info in self.metadata.items()}
+        regions = _select_regions(self.state, intent, self.resolver, observations, metadata)
+        return PreparedAutomaticSelection(self.batch.input_revision, intent,
+            _capture_inputs(regions, observations, metadata))
+
+    def accept(self, record: AutomaticRecord, selected: PreparedAutomaticSelection) -> None:
+        from .refinement.framework import accepted_proposal_diagnostics
+        if selected.input_revision != self.batch.input_revision or selected.intent != record.intent:
+            raise ValueError('prepared selection binding does not match the committed intent')
+        if record.assessment is None or not record.assessment.accepted:
+            raise ValueError('committed automatic operation requires an accepted assessment')
+        observations = {identity: dict(info) for identity, info in self.observations.items()}
+        metadata = {identity: dict(info) for identity, info in self.metadata.items()}
+        masks = {identity: mask.copy() for identity, mask in self.current_masks.items()}
+        replacements = tuple(_restore_input(item, observations, metadata) for item in selected.regions)
+        by_numeric = {int(observations[region.id]['id']): region for region in replacements}
+        replacement_masks = assign_replacement_masks(tuple(by_numeric), record.proposal_ids,
+            original_ids=self.original_ids, pass_masks=self.masks, current_masks=masks,
+            raster_for=lambda identity, shape: _replacement_raster(self.state, by_numeric[identity], metadata, shape))
+        intent = record.intent
+        outputs = _index_inputs(selected.regions)
+        if isinstance(intent, AutomaticIntent):
+            if len({output.name for output in intent.outputs}) != len(intent.outputs):
+                raise ValueError('duplicate automatic replay named output')
+            for output in intent.outputs:
+                if output.ancestry not in outputs:
+                    raise ValueError(f'automatic replay named output is absent: {output.name!r}')
+        current = [region for region in self.current
+            if int(observations[region.id]['id']) not in record.proposal_ids]
+        for region in replacements:
+            current.append(replace(region, diagnostics={**region.diagnostics,
+                **accepted_proposal_diagnostics(record.pass_name, record.proposal_ids, record.assessment)}))
+            mask = replacement_masks[int(observations[region.id]['id'])]
+            observations[region.id].update(raster=mask.tobytes(), raster_shape=mask.shape, raster_source=None)
+        current.sort(key=lambda region: (float(region.z), int(observations[region.id]['id'])))
+        if isinstance(intent, AutomaticIntent):
+            self.resolver.register_many(intent.operation_id,
+                tuple((output, outputs[output.ancestry]) for output in intent.outputs))
+        self.current, self.observations, self.metadata, self.current_masks = current, observations, metadata, masks
+
+    def finish(self) -> ReplayState:
+        drawing = self.state.drawing
+        if self.batch.scope:
+            parent = self.indexed[self.batch.scope]
+            drawing = replace_region(drawing, replace(parent, children=tuple(self.current)))
+        else:
+            drawing = replace(drawing, regions=tuple(self.current))
+        state = publish_drawing_state(replace(self.state, region_evidence=self.observations),
+            drawing, shape_metadata=self.metadata)
+        # Explicit empty metadata is a selected projection, not missing defaults.
+        return replace(state, shape_metadata={identity: self.metadata.get(identity, info)
+            for identity, info in state.shape_metadata.items()})
+
+
 def replay_automatic_batches(state: ReplayState, batches: tuple[ReplayBatch, ...], *,
                             finalize_topology: bool = True) -> ReplayState:
-    """Replay recorded choices canonically while retaining exact input receipts."""
+    """Replay recorded choices through the same canonical publication boundary."""
     if not batches:
         return state
-    from .replay_identity import bind_automatic_inputs, scoped_input_regions
-    from .refinement.framework import accepted_proposal_diagnostics
-
     for batch in batches:
-        masks = bind_automatic_inputs(state, batch)
-        indexed = {path: state.drawing.region(identity) for identity, path in region_ancestries(state).items()}
-        observations = {identity: dict(info) for identity, info in state.region_evidence.items()}
-        metadata = {identity: dict(info) for identity, info in state.shape_metadata.items()}
-        scoped = scoped_input_regions(state, batch.scope)
-        current = list(scoped)
-        inputs = _index_inputs(_capture_inputs(scoped, observations, metadata))
-        original_ids = {int(observations[region.id]['id']) for region in scoped}
-        current_masks = {identity: mask.copy() for identity, mask in masks.items()}
-        resolver = ReplayInputResolver(inputs, batch, lambda region: _index_inputs((region,)))
+        application = AutomaticBatchApplication(state, batch)
         for record in batch.entries:
-            intent = record.intent
-            replacements = _select_regions(state, intent, resolver, observations, metadata)
-            by_numeric = {int(observations[region.id]['id']): region for region in replacements}
-            replacement_masks = assign_replacement_masks(tuple(by_numeric), record.proposal_ids,
-                original_ids=original_ids, pass_masks=masks, current_masks=current_masks,
-                raster_for=lambda identity, shape: _replacement_raster(state, by_numeric[identity], metadata, shape))
-            if isinstance(intent, AutomaticIntent):
-                outputs = _index_inputs(_capture_inputs(replacements, observations, metadata))
-                for output in intent.outputs:
-                    if output.ancestry not in outputs:
-                        raise ValueError(f'automatic replay named output is absent: {output.name!r}')
-                    resolver.register(intent.operation_id, output, outputs[output.ancestry])
-            if record.assessment is None:
-                raise ValueError('committed automatic operation requires an assessment')
-            current = [region for region in current if int(observations[region.id]['id']) not in record.proposal_ids]
-            for region in replacements:
-                current.append(replace(region, diagnostics={**region.diagnostics,
-                    **accepted_proposal_diagnostics(record.pass_name, record.proposal_ids, record.assessment)}))
-                mask = replacement_masks[int(observations[region.id]['id'])]
-                observations[region.id].update(raster=mask.tobytes(), raster_shape=mask.shape, raster_source=None)
-            current.sort(key=lambda region: (float(region.z), int(observations[region.id]['id'])))
-        drawing = state.drawing
-        if batch.scope:
-            parent = indexed[batch.scope]
-            drawing = replace_region(drawing, replace(parent, children=tuple(current)))
-        else:
-            drawing = replace(drawing, regions=tuple(current))
-        state = publish_drawing_state(replace(state, region_evidence=observations), drawing, shape_metadata=metadata)
-        # The transaction selects metadata too: an explicit empty projection is
-        # distinct from the defaults used when publishing a new public path.
-        state = replace(state, shape_metadata={identity: metadata.get(identity, info)
-            for identity, info in state.shape_metadata.items()})
+            application.accept(record, application.prepare(record.intent))
+        state = application.finish()
     return publish_drawing_state(state, normalize_drawing_topology(state.drawing)) if finalize_topology else state
 
 
