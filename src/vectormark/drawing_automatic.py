@@ -180,7 +180,7 @@ def _select_refresh(state, action, resolver, observations, metadata):
 def _select_self_symmetry(state, action, resolver, observations, metadata):
     from .drawing_symmetry import Axis2D, reconstruct_self_symmetry
     from .geometry_native import region_path
-    from .drawing_adapter import generated_tree_observations
+    from .drawing_materialization import publish_symmetry_selection
     from .refinement.region_sample import to_polygon
     from .fit import Shape
 
@@ -197,35 +197,7 @@ def _select_self_symmetry(state, action, resolver, observations, metadata):
         residual=action.residual, fit_kind=action.fit_kind, side=action.side,
         corner_radius=action.corner_radius, epsilon=action.epsilon,
         max_error=action.max_error, cubic=action.cubic)
-    if selected.is_branch:
-        identities = {selected.id: int(info['id'])}
-        def identify(region):
-            for index, child in enumerate(region.children, 1):
-                identities[child.id] = index
-                identify(child)
-        identify(selected)
-        raster = np.frombuffer(info['raster'], dtype=bool).reshape(info['raster_shape'])
-        generated, generated_metadata = generated_tree_observations(selected, identities=identities,
-            raster_shape=raster.shape, retained_rasters={selected.id: raster},
-            parent_ancestry=tuple(info['ancestry'])[:-1])
-        for key in ('source_label', 'color_hex', 'coverage', 'coverage_source', 'coverage_shape',
-                    'coverage_dtype', 'coverage_origin', 'coverage_canvas'):
-            generated[selected.id][key] = info[key]
-        observations.update(generated)
-        metadata.update(generated_metadata)
-    else:
-        leaves = tuple(item for item in _index_inputs((bound,)).values() if item.region.is_leaf)
-        consumed = tuple(dict.fromkeys(int(item.observation['id']) for item in leaves))
-        selected = replace(selected, fill=leaves[0].region.fill, diagnostics={**selected.diagnostics,
-            'materialization': {**selected.diagnostics.get('materialization', {}),
-                'consumed_region_ids': consumed,
-                'retired_region_ids': tuple(identity for identity in consumed if identity != int(info['id'])),
-                'source_region_remap': tuple((identity, int(info['id'])) for identity in consumed)}},
-            source_region_ids=tuple(sorted(set(target.source_region_ids).union(
-                *(leaf.region.source_region_ids for leaf in leaves)))))
-        observations[selected.id].update(original_kind=leaves[0].observation['original_kind'],
-            original_params=dict(leaves[0].observation['original_params']))
-        metadata[selected.id] = {'fill_rule': 'evenodd'}
+    selected = publish_symmetry_selection(target, selected, observations, metadata)
     if action.dependent_clones:
         from .replay_inputs import clone_reference_diagnostics
         from .path_geometry import CloneGeometry
@@ -242,7 +214,23 @@ def _select_self_symmetry(state, action, resolver, observations, metadata):
         for ref in action.dependent_clones:
             clone = _restore_input(resolver.resolve(ref), observations, metadata)
             dependent.append(refresh(clone))
+        if action.owner_roots:
+            if selected.is_branch:
+                raise AutomaticChoiceNotApplicable('dependent clone source reconstruction requires concrete geometry')
+            declared = {clone.id for clone in dependent}
+            expected = {item.id for item in by_id.values() if isinstance(item.geometry, CloneGeometry)
+                and item.geometry.source_region_id == target.id}
+            if declared != expected:
+                raise ValueError('source transaction must retain every dependent clone')
+            roots = tuple(_restore_input(resolver.resolve(ref), observations, metadata) for ref in action.owner_roots)
+            owned = {item.id for root in roots for item in _walk_regions(root)}
+            if not {target.id, *declared}.issubset(owned):
+                raise ValueError('source transaction omitted a dependent owner')
+            replacements = {selected.id: selected, **{clone.id: clone for clone in dependent}}
+            return tuple(_replace_bound_children(root, replacements) for root in roots)
         return (selected, *dependent)
+    if action.owner_roots:
+        raise ValueError('source transaction omitted dependent clones')
     return (selected,)
 
 
@@ -282,7 +270,7 @@ def _prepare_topology_regions(state, action, resolver, observations, metadata):
     from .refinement.gate import rasterize
     from .refinement.region_sample import to_polygon
     from .fit import Shape
-    from .path_geometry import CloneGeometry
+    from .path_geometry import CloneGeometry, PathGeometryWithCutouts, CompoundPathGeometry
 
     inputs = tuple(resolver.resolve(ref) for ref in action.roots)
     roots = tuple(_restore_input(bound, observations, metadata) for bound in inputs)
@@ -315,6 +303,8 @@ def _prepare_topology_regions(state, action, resolver, observations, metadata):
                 return replace(region, children=tuple(children), diagnostics={**region.diagnostics,
                     'topology': {**region.diagnostics['topology'], 'source_region_path':
                         tuple(bound_by_id[source.geometry.source_region_id].observation['ancestry'])}})
+            return region
+        if not isinstance(source.geometry, (PathGeometry, PathGeometryWithCutouts, CompoundPathGeometry)):
             return region
         paths = component_paths(source.geometry)
         identities = tuple(bound.metadata.get('path_ids', tuple(path.path.id for path in paths)))

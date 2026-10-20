@@ -94,7 +94,7 @@ def test_public_symmetry_detection_does_not_project_sampling_scene(monkeypatch):
         'base_version': 'v0', 'ops': [{'op': 'detect_symmetry', 'target': 'r1'}]})
     def forbidden(*args, **kwargs):
         raise AssertionError('public symmetry discovery projected a sampling scene')
-    monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     assert sum(len(batch.operations) for batch in recipe.automatic_batches) == 1
     result = propose_effective_recipe(drawing_id='drw_symmetry', evidence=evidence, paint=paint, recipe=recipe)
@@ -134,7 +134,7 @@ def test_scoped_symmetry_keeps_repeated_local_ids_separate():
 
 
 def test_cross_scope_clone_source_is_not_locally_reconstructed(monkeypatch):
-    from vectormark.drawing_proposals import detect_symmetry_regions
+    from vectormark.drawing_proposals import detect_symmetry_regions, discover_symmetry_proposals
     from vectormark.candidate import FlatFill
     from vectormark.refinement.region_sample import RegionSample
     from vectormark.refinement.gate import rasterize
@@ -145,13 +145,14 @@ def test_cross_scope_clone_source_is_not_locally_reconstructed(monkeypatch):
         FlatFill('#abcdef'), drawing_id='r2', footprint=transformed,
         raster=rasterize(transformed, (440, 300)), diagnostics={'clones': {'matched_source': 11}})
     state = state_for(branch, clone)
-    before = state.drawing.region('parent').children[0]
     forbid_sampling(monkeypatch)
+    local = discover_symmetry_proposals(state, scope=(10,))
+    assert all(not getattr(proposal.intent.action, 'dependent_clones', ()) for proposal in local)
     result = detect_symmetry_regions(state)
     after = result.state.drawing.region('parent').children[0]
-    assert after.geometry == before.geometry
-    assert all(not getattr(record.intent.action, 'dependent_clones', ())
-        for batch in result.batches for record in batch.operations)
+    assert after.diagnostics['symmetry']['materialized']
+    assert any(getattr(record.intent.action, 'owner_roots', ())
+        for batch in result.batches if not batch.scope for record in batch.operations)
     assert canonical_input_revision(replay_automatic_batches(state, result.batches)) == canonical_input_revision(result.state)
 
 

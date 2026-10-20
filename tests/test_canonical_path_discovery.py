@@ -81,7 +81,7 @@ def test_public_corner_normalization_does_not_project_sampling_scene(monkeypatch
                  'ops': [{'op': 'normalize_corners'}]}]})
     def forbidden(*args, **kwargs):
         raise AssertionError('public corner cleanup projected a sampling scene')
-    monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     result = propose_effective_recipe(drawing_id='drw_normalize', evidence=evidence, paint=paint, recipe=recipe)
     assert result.drawing.region('r1').geometry.to_svg_d().count('Q') == 1
@@ -146,7 +146,7 @@ def test_public_simplification_does_not_project_sampling_scene(monkeypatch):
                  'ops': [{'op': 'simplify'}]}]})
     def forbidden(*args, **kwargs):
         raise AssertionError('public simplification projected a sampling scene')
-    monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     assert recipe.automatic_batches[0].operations
     result = propose_effective_recipe(drawing_id='drw_simplify', evidence=evidence, paint=paint, recipe=recipe)

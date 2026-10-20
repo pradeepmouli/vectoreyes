@@ -2813,3 +2813,57 @@ declines a local reconstruction whose clone dependents are outside its scope;
 this checkpoint does not claim that the older outer clone-refresh transaction
 has been ported. The broader appearance/constraints/complexity/evaluation gates
 also remain open.
+
+### Cross-scope self-symmetry and active wrapper closure — 2026-10-20
+
+Self-symmetry discovery now lifts a nested source and all of its external
+clone owners to their least common scope. The typed reconstruction records
+the exact source, dependent clone addresses and replaced owner roots. One
+prepared selection assesses both the combined silhouette and every affected
+source/instance boundary before publication. Rejection publishes neither the
+source rewrite nor a clone refresh. Strict replay requires every dependent
+clone and owner; a same-numbered root cannot capture a nested source binding.
+Clone transforms and independent fills remain retained values.
+
+Canonical self-symmetry materialization now owns the explicit public-action
+preparation boundary too. It unions retained vector halves, preserves cutouts,
+publishes source observations/lineage through the same helper as selected
+reconstruction, and remaps exact canonical clone source IDs. No temporary
+RegionSample scene is built in this public proposal path. A disconnected
+reconstruction that cannot remain a concrete symbolic clone source is declined
+rather than retiring live source identity without a component-remap operation.
+New cross-scope records require canonical replay; the numerical test kernel
+rejects them rather than silently applying a nested edit as a root replacement.
+
+The diagnostic automatic adapter, standalone pipeline, cached corpus report
+and pass-panel generator now use canonical selection. RegionSample conversion
+remains at their existing trace/report boundaries, not as a second refinement
+algorithm or authoritative scene. Standalone tracing assigns stable drawing
+IDs when roots are constructed. Cached reports bind existing trace labels to
+those IDs without retracing. Numerical kernel/configuration helpers still
+serve their direct tests and the separate initial-trace preparation boundary;
+this is not a claim that every private adapter class has been deleted.
+
+The standalone square fixture now retains a path when the existing canonical
+primitive gate rejects a rectangle 1.685 px from that path under a 1 px budget.
+The clone regression checks shared unpainted geometry and separate colors,
+not an unconditional `<rect>` encoding. No budget was loosened to preserve that
+old representation. Topology preparation now leaves native primitives alone
+instead of treating them as compound paths.
+
+All 1,463 source tests pass (180.23s) and all 1,463 compiled tests pass
+(178.95s), each with 1,037 warnings. Nine new transaction/materialization
+guards pass separately in both runtimes; the final cached-report guard also
+passes and is included in both full runs. The 208-case focused group passes.
+Eight changed core modules are confirmed native extensions; focused lint and
+staged whitespace checks pass. Exact-settings compiled FastMCP Radish/Vbird
+trace and refine SVGs remain byte-identical to the retained baseline
+(19.26s/99.00s; concurrent checks, not benchmarks). The wheel is installed only
+in the isolated runtime, with artifacts under `native-canonical-crossscope-wrapper`.
+No live deployment, push or corpus overwrite.
+
+A reduced-size Daikonic pass-panel probe at 128/256 px still rejects partially
+overlapping fitted boundaries. The numerical baseline fails with the same
+topology error; this is a retained tracing limitation, not a successful panel
+smoke or a newly fixed topology case. Broader appearance, constraints,
+complexity and agent/generated/holdout evaluation gates remain open.

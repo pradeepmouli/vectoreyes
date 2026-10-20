@@ -253,8 +253,27 @@ def discover_symmetry_proposals(
     indexed = {item.id: item for root in state.drawing.regions for item in _walk_regions(root)}
     roots = scoped_input_regions(state, scope)
     local_ids = {item.id for root in roots for item in _walk_regions(root)}
+    from .selected_outcomes import region_ancestries
+    ancestries = region_ancestries(state)
+    lifted = []
+    root_ids = {root.id for root in roots}
+    for region in indexed.values():
+        if region.id in root_ids or region.id not in local_ids:
+            continue
+        dependents = [item for item in indexed.values() if isinstance(item.geometry, CloneGeometry)
+            and item.geometry.source_region_id == region.id]
+        if not dependents:
+            continue
+        common = tuple(ancestries[region.id][:-1])
+        for dependent in dependents:
+            path = ancestries[dependent.id]
+            while common and path[:len(common)] != common:
+                common = common[:-1]
+        if common == scope:
+            lifted.append(region)
+    lifted_ids = {region.id for region in lifted}
     usable = []
-    for region in sorted(roots, key=lambda item: int(state.region_evidence[item.id]['id'])):
+    for region in sorted((*roots, *lifted), key=lambda item: int(state.region_evidence[item.id]['id'])):
         if not region.is_leaf or isinstance(region.geometry, CloneGeometry):
             continue
         if isinstance(region.diagnostics.get('compound'), Mapping):
@@ -265,10 +284,11 @@ def discover_symmetry_proposals(
         usable.append((region, flat, int(state.region_evidence[region.id]['id'])))
 
     proposals, paired = [], set()
-    for index, (_source, source_flat, source_id) in enumerate(usable):
+    local_usable = [item for item in usable if item[0].id not in lifted_ids]
+    for index, (_source, source_flat, source_id) in enumerate(local_usable):
         if source_id in paired:
             continue
-        for _target, target_flat, target_id in usable[index+1:]:
+        for _target, target_flat, target_id in local_usable[index+1:]:
             if target_id in paired:
                 continue
             match = detection.mirror_pair(source_flat, target_flat)
@@ -283,7 +303,7 @@ def discover_symmetry_proposals(
             break
 
     for region, flat, identity in usable:
-        if identity in paired:
+        if identity in paired and region.id not in lifted_ids:
             continue
         seed = isinstance(region.diagnostics.get('geometry_seed'), Mapping)
         if isinstance(region.diagnostics.get('material_surface'), Mapping) and not seed:
@@ -316,6 +336,18 @@ def discover_symmetry_proposals(
                 preserve_explicit_geometry=explicit_kind is not None)
         ref = draft_input_ref(identity)
         if best is not None:
+            if region.id in lifted_ids:
+                from .refinement.automatic_replay import PassInputRegionRef
+                ref = PassInputRegionRef('', '', tuple(ancestries[region.id][len(scope):]))
+                clone_refs = tuple(PassInputRegionRef('', '', tuple(ancestries[item.id][len(scope):]))
+                    for item in indexed.values() if isinstance(item.geometry, CloneGeometry)
+                    and item.geometry.source_region_id == region.id)
+                ids = tuple(sorted({ref.ancestry[0], *(item.ancestry[0] for item in clone_refs)}))
+                owners = tuple(draft_input_ref(item) for item in ids)
+                action = ReconstructSelfSymmetryOperation(ref, clone_refs, detection._axis_tuple(best.axis),
+                    best.residual, best.fit_kind, best.side, best.corner_radius, epsilon, max_error, cubic, owners)
+                proposals.append(CanonicalProposal(ids, operation_intent(action, owners, ids)))
+                continue
             dependent_ids = tuple(int(state.region_evidence[item.id]['id']) for item in dependents)
             refs = (ref, *(draft_input_ref(item) for item in dependent_ids))
             ids = (identity, *dependent_ids)
@@ -323,6 +355,8 @@ def discover_symmetry_proposals(
                 best.residual, best.fit_kind, best.side, best.corner_radius, epsilon, max_error, cubic)
             proposals.append(CanonicalProposal(ids, operation_intent(action, refs, ids)))
         else:
+            if region.id in lifted_ids:
+                continue
             intrinsic = detection._best_self_axis(flat)
             if intrinsic is not None and (intrinsic_only or intrinsic[1] <= 1e-9):
                 axis, residual = intrinsic

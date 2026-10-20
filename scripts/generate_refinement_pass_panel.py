@@ -24,9 +24,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 from vectormark.emit import render_svg_doc
 from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX, preprocess_image
-from vectormark.refinement.framework import select_refinements
 from vectormark.refinement.trace import trace_regions
-from vectormark.pipeline import Options, _refinement_passes, _render_refinement_body
+from vectormark.pipeline import Options, _render_refinement_body
+from vectormark.drawing import Canvas
+from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
+from vectormark.refinement.topology_binding import normalize_working_topology
+from vectormark.drawing_materialization import materialize_self_symmetry_state
+from vectormark.drawing_refinement import refine_canonical_drawing
 
 
 def _render_svg(svg: str, width: int, height: int) -> np.ndarray:
@@ -96,12 +100,16 @@ def main() -> None:
         ("trace", _render_objects(objects, meta.width, meta.height, options)),
     ]
 
-    current = objects
-    for index, pass_fn in enumerate(_refinement_passes(options), start=1):
-        current_masks = {obj.id: obj.raster for obj in current}
-        current = select_refinements(current, current_masks, [pass_fn])
-        name = getattr(pass_fn, "__name__", pass_fn.__class__.__name__).removesuffix("_pass")
-        frames.append((f"{index:02d} {name}", _render_objects(current, meta.width, meta.height, options)))
+    state = materialize_self_symmetry_state(capture_replay_state(
+        normalize_working_topology(objects), Canvas(meta.width, meta.height)))
+    def capture(name, current):
+        index = len(frames) - 1
+        frames.append((f"{index:02d} {name.removesuffix('_pass')}",
+            _render_objects(working_regions_from_state(current), meta.width, meta.height, options)))
+    refine_canonical_drawing(state, epsilon=options.epsilon, max_error=options.max_error,
+        cubic=options.cubic_paths, no_symmetry=options.no_symmetry,
+        corner_normalize=options.corner_normalize, refinement_passes=options.refinement_passes,
+        on_pass=capture)
 
     font = ImageFont.load_default()
     tiles = [_tile(image, label, font) for label, image in frames]

@@ -67,7 +67,7 @@ def test_public_stitch_plan_does_not_project_a_sampling_scene(monkeypatch):
         'base_version': 'v0', 'ops': [{'op': 'stitch', 'targets': ['r1', 'r2']}]})
     def forbidden(*args, **kwargs):
         raise AssertionError('public stitch projected a sampling scene')
-    monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     assert sum(len(batch.operations) for batch in recipe.automatic_batches) == 1
     result = propose_effective_recipe(drawing_id='drw_seams', evidence=evidence, paint=paint, recipe=recipe)

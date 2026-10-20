@@ -211,13 +211,17 @@ def test_refinement_simplifies_compound_children_after_split():
 
 
 def test_refinement_recolored_clone_retains_a_use_with_its_own_fill():
+    import xml.etree.ElementTree as ET
     svg = idealize(_two_colored_square_image(), options=Options(refinement=True))
 
-    assert '<rect id="s0-geometry"' in svg
+    root = ET.fromstring(svg)
+    geometry = next(element for element in root.iter() if element.get('id') == 's0-geometry')
+    assert geometry.tag.rsplit('}', 1)[-1] in {'rect', 'path'}
+    assert 'fill' not in geometry.attrib
     assert '<use id="s0" href="#s0-geometry"' in svg
     assert '<use id="s1" href="#s0-geometry"' in svg
-    assert svg.count('fill="#112233"') == 1
-    assert svg.count('fill="#ABCDEF"') == 1
+    assert svg.lower().count('fill="#112233"') == 1
+    assert svg.lower().count('fill="#abcdef"') == 1
 
 
 def test_refinement_no_symmetry_skips_symmetry_pass():

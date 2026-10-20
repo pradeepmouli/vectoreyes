@@ -24,9 +24,8 @@ from .refinement.automatic_replay import (
 from .refinement.passes import corner_normalize_pass, clones_pass, primitives_pass, seams_pass, simplify_pass, split_compound_pass, symmetry_pass
 from .refinement.symmetry_materialize import materialize_self_symmetry
 from .refinement.topology_binding import normalize_working_topology
-from .pipeline import Options
 from .refinement_settings import RefinementPasses
-from .refinement.paint_binding import refill_all_regions_from_source, refill_changed_regions_from_source
+from .refinement.paint_binding import refill_changed_regions_from_source
 from . import drawing_region_actions, drawing_relationships, path_operations, drawing_partition
 
 
@@ -138,61 +137,29 @@ def auto_refine_with_intent(
     refinement_passes: RefinementPasses | None = None,
     on_pass: Callable[[str, DrawingRegions], None] | None = None,
 ) -> RecordedRefinement:
-    """Run automatic refinement and retain its exact committed operations."""
-    # Import locally: pipeline owns the pass ordering, while drawing_refine owns
-    # the persistent RegionSample forest used by MCP drawing versions.
-    from .pipeline import _refinement_passes
-
-    options = Options(
-        epsilon=trace.options.simplify_tolerance,
-        max_error=trace.options.curve_tolerance,
-        cubic_paths=False,
-        aa_contours=trace.options.trace_level == "subpixel",
-        max_sampling_colors=trace.options.max_sampling_colors,
-        min_region_size=trace.options.min_region_size,
-        refinement=True,
-        corner_normalize=corner_normalize,
-        refinement_passes=refinement_passes or RefinementPasses(),
-    )
+    """Adapt diagnostic region inputs/outputs around canonical automatic execution."""
+    from .drawing import Canvas
+    from .refinement.replay_binding import capture_replay_state, working_regions_from_state
+    from .drawing_materialization import materialize_self_symmetry_state
+    from .drawing_refinement import refine_canonical_drawing
+    from .drawing_paint import refill_drawing_from_source, source_paint_masks
     if rgb is not None and rgb.shape[:2] != (trace.height, trace.width):
         raise ValueError("fill RGB dimensions must match the trace canvas")
-    regions = normalize_working_topology(materialize_self_symmetry(regions))
-    before = {region.id: region for region in regions}
-    masks = {region.id: np.asarray(region.raster, dtype=bool) for region in regions}
-    def _capture(pass_name: str, current: list[RegionSample]) -> None:
+    state = materialize_self_symmetry_state(capture_replay_state(
+        normalize_working_topology(normalize_drawing_addresses(tuple(regions))),
+        Canvas(trace.width, trace.height)))
+    def _capture(pass_name, current):
         if on_pass is not None:
-            on_pass(
-                pass_name,
-                normalize_working_topology(normalize_drawing_addresses(tuple(
-                    restore_working_root_metadata(region, before.get(region.id)) for region in current
-                ))),
-            )
-
-    optimized = select_refinements_with_intent(
-        list(regions), masks, _refinement_passes(options), on_pass=_capture
-    )
-    result = normalize_working_topology(normalize_drawing_addresses(
-        tuple(
-            restore_working_root_metadata(region, before.get(region.id))
-            for region in optimized.objects
-        )
-    ))
-    if rgb is None:
-        return RecordedRefinement(result, optimized.batches, optimized.outcomes)
-    # Automatic refinement is a geometry pipeline.  Re-fit every final leaf
-    # from the source only after the full pass sequence has established its
-    # footprint, rather than retaining palette-fragment fills merely because a
-    # particular leaf's geometry key happened not to change.
-    result = refill_all_regions_from_source(
-        result,
-        rgb,
-        allow_gradients=allow_gradients,
-        # Gradient pretrace has already converted quantization bands into
-        # intentional material supports. Sibling leaves may therefore be
-        # different gradients that merely share one exterior geometry root.
-        share_root_gradients=trace.material_pretrace is None,
-    )
-    return RecordedRefinement(result, optimized.batches, optimized.outcomes)
+            on_pass(pass_name, working_regions_from_state(current))
+    result = refine_canonical_drawing(state, epsilon=trace.options.simplify_tolerance,
+        max_error=trace.options.curve_tolerance, corner_normalize=corner_normalize,
+        refinement_passes=refinement_passes, on_pass=_capture)
+    state = result.state
+    if rgb is not None:
+        state = replace(state, drawing=refill_drawing_from_source(state.drawing, rgb,
+            source_masks=source_paint_masks(state.region_evidence), invalidate_all=True,
+            allow_gradients=allow_gradients, share_root_gradients=trace.material_pretrace is None))
+    return RecordedRefinement(working_regions_from_state(state), result.batches, result.outcomes)
 
 
 def refine(

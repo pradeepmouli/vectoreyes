@@ -35,7 +35,7 @@ def test_downstream_templates_and_receipts_use_canonical_snapshots(monkeypatch):
     batch = ReplayBatch('template', canonical_input_revision(state, (10,)), (10,), ())
     def forbidden(*args, **kwargs):
         raise AssertionError('seam rebinding projected a working scene')
-    monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     templates = _batch_inputs_from_start((batch,), state)
     assert templates[0][1] is state
     rebased, = _rebase_downstream_batches(templates, state,
@@ -88,7 +88,7 @@ def test_corner_downstream_annotation_restore_needs_no_working_projection(monkey
         canonical_input_revision(expected), (), ()),))
     def forbidden(*args, **kwargs):
         raise AssertionError('annotation restoration projected a working scene')
-    monkeypatch.setattr('vectormark.drawing_replay.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
     actual, _ = _execute_corner_recipe(application, evidence, state)
     assert actual.drawing == expected.drawing
     assert actual.region_evidence == expected.region_evidence

@@ -143,6 +143,7 @@ class ReconstructSelfSymmetryOperation:
     epsilon: float
     max_error: float
     cubic: bool
+    owner_roots: tuple[PassInputRegionRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -569,6 +570,7 @@ def bind_intent(
             dependent_clones=tuple(
                 _bind_ref(ref, batch_id, input_revision) for ref in action.dependent_clones
             ),
+            owner_roots=tuple(_bind_ref(ref, batch_id, input_revision) for ref in action.owner_roots),
         )
     elif isinstance(action, ReconstructOcclusionOperation):
         def bind_child(child: OcclusionChild) -> OcclusionChild:
@@ -998,6 +1000,8 @@ def _execute_action(
         return apply_relationship_choice(action,
             resolver.bind_inputs({'source': action.source, 'target': action.target}))
     if isinstance(action, ReconstructSelfSymmetryOperation):
+        if action.owner_roots:
+            raise ValueError('cross-scope source transactions require canonical replay')
         from ..drawing_symmetry import Axis2D
 
         target = resolver.resolve(action.target)

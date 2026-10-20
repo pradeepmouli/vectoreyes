@@ -71,6 +71,8 @@ def trace_regions(arr: np.ndarray, opt: Options) -> tuple[list[RegionSample], di
         raster = region.mask.copy()
         region_sample = RegionSample.from_shape(
             id=idx,
+            drawing_id=f'r{idx + 1}',
+            source_regions=(f'r{idx + 1}',),
             shape=shape,
             fill=fills_by_label.get(region.label, FlatFill(region.color_hex)),
             z=idx,

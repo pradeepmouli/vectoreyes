@@ -39,9 +39,6 @@ from .drawing_actions import (
     StitchAction,
     UpdateGeometryAction,
 )
-from .refinement.replay_binding import (
-    capture_replay_state, working_regions_from_state,
-)
 from .replay_state import ReplayState, publish_drawing_state, retained_region_raster
 from .replay_identity import canonical_input_revision, scoped_input_regions
 from .selected_outcomes import apply_selected_outcome, retain_selected_outcome, selected_input_revision, region_ancestries
@@ -93,7 +90,6 @@ from .refinement.automatic_replay import (
     ReplayBatch,
     bind_intent,
 )
-from .refinement.topology_binding import normalize_working_topology
 from .path_sampling import _parse_subpaths
 from .drawing_seams import _command_id as seam_command_id
 from .drawing_seams import _path_id as seam_path_id
@@ -585,7 +581,7 @@ def _propose_public_operation(
     state: ReplayState, *, recipe: EffectiveDrawingRecipe,
     corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
 ) -> ReplayState:
-    """Execute canonical actions directly; project only remaining working handlers."""
+    """Execute public actions and symmetry preparation on retained canonical values."""
     action = operation.action
     if isinstance(action, SetFillAction):
         updated = drawing_region_actions.set_region_fill(state.drawing.region(action.target), action)
@@ -595,11 +591,8 @@ def _propose_public_operation(
     if any(not region.is_leaf and isinstance(symmetry := region.diagnostics.get('symmetry'), Mapping)
             and symmetry.get('mode') == 'self' and not symmetry.get('materialized')
             for root in state.drawing.regions for region in _walk_regions(root)):
-        # The remaining self-symmetry preparation boundary owns scoped clone
-        # remapping and its numeric receipts; do not silently skip it here.
-        from .refinement.symmetry_materialize import materialize_self_symmetry
-        state = capture_replay_state(normalize_working_topology(
-            materialize_self_symmetry(working_regions_from_state(state))), paint.canvas)
+        from .drawing_materialization import materialize_self_symmetry_state
+        state = materialize_self_symmetry_state(state)
     drawing = state.drawing
     if isinstance(action, (FitPathDrawingAction, FitPrimitiveAction)):
         execute = (drawing_region_actions.fit_region_path if isinstance(action, FitPathDrawingAction)

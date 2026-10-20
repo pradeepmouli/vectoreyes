@@ -157,46 +157,27 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
     assert source.current.params["tag"] == "before"
 
 
-def test_automatic_callback_and_later_polish_share_retained_materialization(monkeypatch):
-    from vectormark import pipeline
-    from vectormark.refinement.automatic_replay import (
-        DeclareIntrinsicSymmetryOperation,
-        draft_input_ref,
-        operation_intent,
-    )
-    from vectormark.refinement.framework import Proposal
-    from vectormark.drawing_symmetry import Axis2D
-    from vectormark.refinement.automatic_replay import apply_intrinsic_symmetry_choice
+def test_automatic_callback_and_later_polish_share_retained_materialization():
+    from vectormark.refinement_settings import RefinementPasses
     from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
     branch, _ = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     original = joined.with_current(Shape("path", {**joined.current.params, "tag": "before"}),
                                    diagnostics={"symmetry": {}})
-    target = draft_input_ref(1)
-    action = DeclareIntrinsicSymmetryOperation(target, (0.0, 10.0, 10.0), 0.0)
-    declared = apply_intrinsic_symmetry_choice(original, Axis2D(*action.axis), action.residual)
-    def symmetric(objects, masks):
-        return [Proposal(
-            (1,),
-            [declared],
-            intent=operation_intent(action, (target,), (1,)),
-        )]
-    def polish(objects, masks):
-        assert objects[0].is_leaf
-        assert objects[0].diagnostics["symmetry"]["mode"] == "intrinsic"
-        assert objects[0].diagnostics["materialization"]["operation"] == "self_symmetry_union"
-        assert objects[0].footprint.area == pytest.approx(192)
-        return []
-    monkeypatch.setattr(pipeline, "_refinement_passes", lambda options: [symmetric, polish])
     trace = SimpleNamespace(width=48, height=24, options=SimpleNamespace(
         simplify_tolerance=1.0, curve_tolerance=1.0, trace_level="pixel",
         max_sampling_colors=8, min_region_size=1))
     callbacks = []
-    output = drawing_refine.auto_refine(trace, (original,), on_pass=lambda name, regions: callbacks.append(
+    passes = RefinementPasses(**{name: name in {'symmetry', 'smooth'} for name in RefinementPasses.model_fields})
+    output = drawing_refine.auto_refine(trace, (original,), refinement_passes=passes, on_pass=lambda name, regions: callbacks.append(
         (regions, _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions))))))
-    assert len(callbacks) == 2
+    assert len(callbacks) == 3
+    assert all(regions[0].is_leaf and regions[0].footprint.area == pytest.approx(192)
+        and regions[0].diagnostics['symmetry']['mode'] == 'intrinsic'
+        and regions[0].diagnostics['materialization']['operation'] == 'self_symmetry_union'
+        for regions, _ in callbacks)
     assert all(len(render.report["targets"]) == 1 for _, render in callbacks)
-    assert output[0].current == callbacks[0][0][0].current == callbacks[1][0][0].current
+    assert all(output[0].current == regions[0].current for regions, _ in callbacks)
 
 
 def test_repeated_singleton_union_preserves_counter_and_detached_ownership():

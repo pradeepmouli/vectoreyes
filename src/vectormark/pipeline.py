@@ -1058,15 +1058,21 @@ def _refinement_report(objects, opt: Options, *, fallback_reason: str | None = N
 
 def _idealize_refinement(arr: np.ndarray, opt: Options, width: int, height: int) -> tuple[str, IdealizeReport]:
     """Experimental trace-vectorize + geometry-refinement pipeline."""
-    from .refinement.framework import select_refinements
     from .refinement.trace import trace_regions
+    from .drawing import Canvas
+    from .refinement.replay_binding import capture_replay_state, working_regions_from_state
+    from .drawing_materialization import materialize_self_symmetry_state
+    from .drawing_refinement import refine_canonical_drawing
+    from .drawing_adapter import normalize_drawing_addresses
+    from .refinement.topology_binding import normalize_working_topology
 
     objects, masks = trace_regions(arr, opt)
-    optimized = select_refinements(
-        objects,
-        masks,
-        _refinement_passes(opt),
-    )
+    state = materialize_self_symmetry_state(capture_replay_state(
+        normalize_working_topology(normalize_drawing_addresses(objects)), Canvas(width, height)))
+    selected = refine_canonical_drawing(state, epsilon=opt.epsilon, max_error=opt.max_error,
+        cubic=opt.cubic_paths, no_symmetry=opt.no_symmetry,
+        corner_normalize=opt.corner_normalize, refinement_passes=opt.refinement_passes)
+    optimized = working_regions_from_state(selected.state)
     trace_body, trace_defs = _render_refinement_body(
         objects,
         flatten=opt.flatten,

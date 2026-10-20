@@ -313,12 +313,13 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
     assert trace.root_path_evidence == ()
 
 
-def test_auto_callback_and_stitch_publish_identical_target_trees(monkeypatch):
-    import vectormark.pipeline as pipeline
-    monkeypatch.setattr(pipeline, "_refinement_passes", lambda options: [split_compound_pass])
+def test_auto_callback_and_stitch_publish_identical_target_trees():
+    from vectormark.refinement_settings import RefinementPasses
     source = _region(DISCONNECTED)
     callbacks = []
-    result = drawing_refine.auto_refine(_trace(), (source,), on_pass=lambda name, regions: callbacks.append(regions))
+    passes = RefinementPasses(**{name: name == 'split_compound' for name in RefinementPasses.model_fields})
+    result = drawing_refine.auto_refine(_trace(), (source,), refinement_passes=passes,
+        on_pass=lambda name, regions: callbacks.append(regions))
     assert callbacks
     for regions in (*callbacks, result, drawing_refine.stitch_regions(_trace(), (source,))):
         assert tuple(leaf.drawing_id for root in regions for leaf in root.leaves()) == ("r1-1", "r1-2")
