@@ -2950,3 +2950,34 @@ re-renders the saved Radish bundle successfully. Browser checks include actual
 JSON download, failed-trial parent display, missing-comparison handling, region
 filtering and 390 px mobile overflow. Focused lint, JS syntax and whitespace
 checks pass. No fitting defaults changed and no live deployment occurred.
+
+### Source-supported boundary detail diagnostic — 2026-10-20
+
+Simplicity is not an independent fidelity goal. The first quantitative detail
+comparison is now a separate `DrawingEngine.assess_boundary_detail` operation:
+one explicitly paired region-local boundary, a retained/cleaned/declared source
+reference with revision identity, and the candidate canonical path. It measures
+local turning at multiple source-pixel scales, exposing unsupported and missing
+detail separately with positions and spatial-alignment RMS. Command counts do
+not enter the measurement. Native arc-length sampling and winding/cyclic phase
+normalization keep exact subdivision and degree elevation materially invariant.
+Pixel registration, sample budget and scales are explicit; unusable measurements
+are `not_assessed`, not zero or silently coarsened.
+
+This is diagnostic infrastructure, not a validated perceptual objective or a
+new automatic gate. It changes no fit/default/acceptance logic. Fine-scale raw
+polyline turning includes raster noise; scale persistence and localized review
+are necessary before interpreting a difference as design detail. Source-backed
+corner/inflection matching, topology-aware boundary correspondence, primitive/
+clone boundary resolution and browser/MCP report integration remain open.
+Boundary distance, topology and fill retain their separate evaluation roles.
+
+Validation: 19 new detail regressions plus 11 existing revision-quality tests
+pass against both source and the isolated compiled wheel; the new metric module
+is confirmed as a native extension. The complete source suite passes: 1,485
+tests, 1,037 existing warnings, 153.03s. Source scoring remains unavailable
+without the optional renderer, as before. Cached production Radish v0/v0.4
+boundaries were assessed without retracing or replacing captured artifacts;
+source/native summaries match to displayed precision. Targeted metric lint and
+whitespace checks pass; existing unused evidence re-export imports in
+`drawing_engine.py` remain unchanged. No full native-suite claim or deployment.

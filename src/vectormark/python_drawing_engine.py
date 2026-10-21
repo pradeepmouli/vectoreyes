@@ -13,6 +13,7 @@ from typing import Literal, TypedDict
 import numpy as np
 
 from .background import BackgroundColor
+from .boundary_detail import BoundaryDetailAssessment, BoundaryDetailRequest, assess_boundary_detail
 from .color import infer_max_sampling_colors, white_canvas_mask
 from .drawing import Drawing, _walk_regions
 from .drawing_actions import (
@@ -78,6 +79,9 @@ def _region_changes(before: Drawing, after: Drawing) -> _RegionChanges:
 
 class PythonDrawingEngine:
     """Shared deterministic operations for v0, automatic and agent orchestration."""
+
+    def assess_boundary_detail(self, request: BoundaryDetailRequest) -> BoundaryDetailAssessment:
+        return assess_boundary_detail(request)
 
     def fit_path(self, request: FitPathRequest) -> FitPathResult:
         return PythonPathFitter().fit_path(request)

@@ -14,6 +14,7 @@ from math import isfinite
 from typing import Generic, Literal, Protocol, TypeVar
 
 from .drawing import Drawing
+from .boundary_detail import BoundaryDetailAssessment, BoundaryDetailRequest
 from .drawing_actions import ActionSettings, DrawingAction, DrawingPlan, PathAction, PathFitStrategy
 from .drawing_trace import TraceOptions
 from .immutable_value import freeze_value
@@ -265,6 +266,9 @@ class DrawingEngine(Protocol[EvidenceT]):
         matches: Sequence[RegionMatch] | None = None,
     ) -> QualityReport:
         """Assess region-aware shape fidelity independently from paint."""
+
+    def assess_boundary_detail(self, request: BoundaryDetailRequest) -> BoundaryDetailAssessment:
+        """Compare source-supported turning independently from command counts."""
 
     def refine_automatically(
         self, drawing: Drawing, evidence: EvidenceT, *,

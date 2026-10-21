@@ -57,3 +57,48 @@ server schema are saved; an unexposed server build identity is labeled unknown.
 For Codex/Claude distribution, see [the shared agent plugin](plugins.md).
 It packages the existing reconstruction skill; it does not duplicate the
 engine or require the in-chat widget.
+
+## Source-supported boundary detail
+
+`DrawingEngine.assess_boundary_detail(BoundaryDetailRequest(...))` is a
+diagnostic-only operation for one explicitly paired, region-local closed
+boundary. Use the retained material polyline from trace evidence as `source`
+and the current canonical path as `candidate`; both are `PathGeometry`.
+Supply the region ID, both revision identities and `reference_kind`:
+`retained_polyline`, `cleaned_polyline`, or `declared_geometry`. The first two
+require line-only source commands. The operation does not retrieve evidence,
+guess hole/component matches, retrace, fit, or modify the drawing. Call it for
+each boundary whose correspondence is known. It is an engine API, not yet an
+automatically populated browser-report field or MCP tool.
+
+The default scales are 1, 2, 4 and 8 source pixels, with at most 0.25-pixel
+arc-length spacing. `units_per_pixel` explicitly registers canvas lengths to
+source pixels (isotropic only); no translation/rotation/scale fit is performed.
+Native path measurement makes sampling independent of command subdivision,
+within numerical resolution. Winding is normalized, and cyclic spatial
+least-squares aligns the starting position. Normalized arc length provides
+the remaining pairing; this is not semantic feature matching. The alignment
+RMS and localized source/candidate positions are included so a poor pairing
+is visible rather than mistaken for authoritative feature correspondence.
+
+At each scale, Gaussian-smoothed tangents yield signed local turning per pixel.
+Positive differences in absolute turning are reported as **unsupported detail**;
+negative differences are **missing detail**. A separate signed-turn mismatch
+exposes changes in bend direction. Each integral is in radians over source arc
+length, not a count of commands or detected corners. `diagnostics()` exports
+the measurements and all local samples as JSON. Points are in source pixels.
+These are descriptive signals, not validated perceptual scores: displaced
+features and arc-length misregistration can contribute to both directions.
+
+Smaller-scale differences may reflect anti-aliasing or compression; persistence
+across scales is evidence to review, not proof of design intent. Keep boundary
+distance, topology and fill evaluation separate. Exact curve subdivision or
+degree elevation must not materially change this diagnostic. A more complex
+candidate matching a complex source is not penalized. No acceptance threshold,
+minimum-command objective or blended quality score is introduced.
+
+Degenerate boundaries, insufficient scale support and exhausted sampling
+budgets produce `not_assessed` with an explicit reason, never a zero error or
+silent coarsening. Invalid settings/provenance are request errors. Primitive,
+clone and compound-boundary resolution and persistent corner/inflection
+matching remain separate integration work; callers must not invent a pairing.
