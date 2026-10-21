@@ -79,8 +79,15 @@ versions with their actual parent links. Its guide-inclusive lineage review
    keeps the submitted guide visually separate from the requested base, newly
    retained guide baseline/actual parent, and current original-filled result.
 5. **`get_drawing_artifact(drawing_id, version, artifact)`** retrieves `svg`,
-   `preview`/`preview_png`, `review_panel`, `labeled_svg`, `raw_trace`, `plan`,
-   or `versions`. Returned `drawing://...` references are retained artifact
+   `preview`/`preview_png`, `review_panel`, `labeled_svg`, `path_map`,
+   `command_map`, `raw_trace`, `boundary_detail`, `plan`, or `versions`.
+   `boundary_detail` returns JSON-only multiscale turning measurements against
+   retained material polylines: localized unsupported/missing turning, signed
+   mismatch, alignment RMS, source revision and sampling settings. It is
+   diagnostic, not a fidelity score or acceptance gate. `region_ids` may
+   restrict detail targets. Missing/ambiguous pairing and symbolic geometries
+   are explicitly unassessed, not measured as zero. No widget is returned.
+   Returned `drawing://...` references are retained artifact
    identifiers, not downloadable HTTP URLs. `versions` is metadata-only, and
    `plan` distinguishes submitted input from the effective replay recipe.
    Artifact reads render/project retained values; they do not rerun fitting,

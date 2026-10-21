@@ -2981,3 +2981,33 @@ boundaries were assessed without retracing or replacing captured artifacts;
 source/native summaries match to displayed precision. Targeted metric lint and
 whitespace checks pass; existing unused evidence re-export imports in
 `drawing_engine.py` remain unchanged. No full native-suite claim or deployment.
+
+### Boundary detail report and MCP integration — 2026-10-20
+
+The offline report and on-demand `boundary_detail` MCP artifact now share one
+adapter and the existing DrawingEngine measurement. The raw-trace source-path
+codec is shared too. Only exact retained region/path pairs with unchanged
+boundary sets are measured; duplicates, missing evidence, merged source roots,
+unsupported symbolic geometry and canvas mismatches remain explicitly
+unassessed. No pairing by position, new segmentation or source retracing.
+
+Review / Edit includes per-boundary unsupported/missing turning, signed
+mismatch, alignment RMS, scale selection and the existing region filter.
+Read-only location markers show sampled differences on source/current candidate,
+not corners or command addresses; the whole section is hidden on the fill track.
+Inline summaries are bounded, with full samples/provenance/settings available
+in content-addressed derived JSON files. Captured response/source/SVG files are
+not replaced. The live artifact is JSON-only, optionally region-filtered, and
+does not automatically add expensive measurements to trace/refine responses.
+
+Validation: all 1,485 source tests pass (1,037 existing warnings, 134.78s).
+Thirteen temporary integration regressions follow the existing report plan;
+these plus eight existing temporary report checks and thirty detail/quality
+tests pass against the installed wheel (51 total, 10.30s). A real in-process
+FastMCP client confirms text-only content and serverInfo-only metadata, no UI.
+The compiled-wheel report writer re-renders the cached production Radish bundle;
+all thirty immutable capture files remain byte-identical. Browser checks cover
+scale/region selection, source/candidate markers, JSON download, hidden fill
+track and 390px layout without page overflow. Adapter/report lint, JS syntax and
+whitespace checks pass; four pre-existing unused imports in the MCP surface
+remain unchanged. No full native-suite claim, live deployment or server restart.

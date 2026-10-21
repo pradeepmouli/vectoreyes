@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import io
+from hashlib import sha256
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ from .bundle import RunBundle
 from .models import ViewSpec
 from .views import export_view, safe_svg
 from .inspection import _fields, build_inspection, compare_inspections
+from .detail import build_detail_report, detail_summary
 
 
 def parameter_snapshot(bundle: RunBundle, version: str) -> dict[str, Any]:
@@ -85,6 +87,12 @@ def write_report(bundle: RunBundle) -> Path:
                                "inspector_svg": out.with_suffix(".svg").read_text(), "file": f"{prefix}/svg.svg",
                                 "parameters": parameter_snapshot(bundle, version),
                                 "parent_version": response.get('parent_version')}
+        detail = build_detail_report(response, captured('raw_trace'))
+        detail_bytes = json.dumps(detail, allow_nan=False).encode()
+        detail_file = f"{prefix}/boundary-detail.{sha256(detail_bytes).hexdigest()[:16]}.json"
+        bundle.write_artifact(detail_file, detail_bytes)
+        versions[version]["boundary_detail"] = detail_summary(detail)
+        versions[version]["boundary_detail_file"] = detail_file
         # Use the exact current geometry's coverage for both source and paint
         # inspection. This is a comparison support mask, not a new segmentation.
         if bundle.artifact_path("source.png").exists():

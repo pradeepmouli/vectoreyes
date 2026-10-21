@@ -43,7 +43,60 @@ function renderParameters(){
   if(trial)$('exact-request').href='trials/'+encodeURIComponent(trial.id)+'.json';
 }
 let comparisonReference='parent';
+let detailScale=4,detailOverlay=false,detailMetric='unsupported';
+function renderDetailOverlay(){
+  document.querySelectorAll('[data-detail-overlay]').forEach(e=>e.remove());
+  if(!detailOverlay||track!=='shape')return;
+  const value=versions[current()],key=detailMetric+'_curvature_per_px';
+  for(const row of value?.boundary_detail?.regions||[]){
+    if(region&&row.id!==region)continue;
+    for(const boundary of row.boundaries){
+      const scale=boundary.scales.find(s=>s.scale_px===detailScale);if(!scale)continue;
+      const samples=[...scale.hotspots].filter(s=>s[key]>0).sort((a,b)=>b[key]-a[key]).slice(0,6);
+      for(const svg of document.querySelectorAll('.viewport>svg')){
+        const source=svg.id==='source-svg';if(!source&&svg.dataset.version!==current())continue;
+        const group=document.createElementNS(NS,'g');group.setAttribute('data-detail-overlay','true');group.setAttribute('pointer-events','none');
+        for(const sample of samples){
+          const point=source?sample.source_point:sample.candidate_point,circle=document.createElementNS(NS,'circle');
+          circle.setAttribute('cx',point[0]*boundary.policy.units_per_pixel);circle.setAttribute('cy',point[1]*boundary.policy.units_per_pixel);
+          circle.setAttribute('r','4');circle.setAttribute('fill',detailMetric==='unsupported'?'#a23d70':'#24759a');circle.setAttribute('stroke','white');circle.setAttribute('stroke-width','1');
+          const title=document.createElementNS(NS,'title');title.textContent=row.id+' / '+boundary.candidate_path_id+' · '+sample[key].toFixed(4)+' rad/px';circle.append(title);group.append(circle);
+        }
+        svg.append(group);
+      }
+    }
+  }
+}
+function renderDetail(){
+  let box=$('boundary-detail');if(!box){box=text('section','','card');box.id='boundary-detail';$('workspace').insertBefore(box,$('workspace').querySelector('.inspector'))}
+  const value=versions[current()];box.replaceChildren();box.hidden=!value||track!=='shape';if(box.hidden)return;
+  box.append(text('h2','Source-supported boundary detail'));
+  box.append(text('p','Turning differences from retained material polylines, not a quality score. Fine-scale differences can be anti-aliasing or raster noise. Feature displacement can contribute to both directions.','muted'));
+  const controls=text('div','','toolbar'),label=text('label','Scale '),select=document.createElement('select');select.setAttribute('aria-label','Boundary detail scale');
+  const scales=[...new Set((value.boundary_detail?.regions||[]).flatMap(r=>r.boundaries.flatMap(b=>b.scales.map(s=>s.scale_px))))].sort((a,b)=>a-b);
+  if(!scales.includes(detailScale)&&scales.length)detailScale=scales[0];
+  for(const scale of scales){const option=text('option',scale+' px');option.value=scale;select.append(option)}
+  select.value=detailScale;select.disabled=!scales.length;select.onchange=()=>{detailScale=Number(select.value);renderDetail();renderDetailOverlay()};label.append(select);controls.append(label);
+  const locations=text('label','Show locations '),check=document.createElement('input');check.type='checkbox';check.checked=detailOverlay;check.onchange=()=>{detailOverlay=check.checked;renderDetailOverlay()};locations.append(check);controls.append(locations);
+  const metric=document.createElement('select');metric.setAttribute('aria-label','Boundary detail locations');for(const kind of ['unsupported','missing']){const option=text('option',kind==='unsupported'?'Unsupported turning':'Missing turning');option.value=kind;metric.append(option)}metric.value=detailMetric;metric.onchange=()=>{detailMetric=metric.value;renderDetailOverlay()};controls.append(metric);
+  if(value.boundary_detail_file){const link=text('a','Download full detail JSON','button');link.href=value.boundary_detail_file;link.download='';controls.append(link)}box.append(controls);
+  const table=text('table'),head=text('tr');for(const title of ['Region / path','Unsupported (rad)','Missing (rad)','Signed mismatch (rad)','Alignment RMS (px)','Status']){const th=text('th',title);th.scope='col';head.append(th)}const thead=text('thead');thead.append(head);table.append(thead);const body=text('tbody');
+  const rows=value.boundary_detail?.regions||[];
+  for(const row of rows){if(region&&row.id!==region)continue;
+    const boundaries=row.boundaries.length?row.boundaries:[null];for(const boundary of boundaries){
+      const scale=boundary?.scales.find(s=>s.scale_px===detailScale),tr=text('tr');tr.dataset.detailRegionId=row.id;
+      const th=text('th',row.id+(boundary?' / '+boundary.candidate_path_id:''));th.scope='row';tr.append(th);
+      for(const item of [scale?.unsupported_turn_radians,scale?.missing_turn_radians,scale?.signed_turn_difference_radians,boundary?.alignment_rms_px])tr.append(text('td',item==null?'—':item.toFixed(3)));
+      tr.append(text('td',(row.reason||boundary?.reason||boundary?.status||'not_assessed').replaceAll('_',' ')));body.append(tr);
+    }
+  }
+  table.append(body);const scroll=text('div','','count-table');scroll.append(table);box.append(scroll);
+  if(!rows.length)box.append(text('p','Not assessed: no captured source-boundary evidence.','muted'));
+  box.append(text('p','Alignment uses cyclic spatial matching and normalized arc length—not semantic feature correspondence. Locations mark up to six sampled differences per boundary, not detected corners. Full JSON includes provenance, settings, and every sample.','muted'));
+}
 function renderCounts(){
+  renderDetail();
+  queueMicrotask(renderDetailOverlay);
   let box=$('region-counts');
   if(!box){
     box=text('section','','card');box.id='region-counts';

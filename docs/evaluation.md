@@ -68,8 +68,28 @@ Supply the region ID, both revision identities and `reference_kind`:
 `retained_polyline`, `cleaned_polyline`, or `declared_geometry`. The first two
 require line-only source commands. The operation does not retrieve evidence,
 guess hole/component matches, retrace, fit, or modify the drawing. Call it for
-each boundary whose correspondence is known. It is an engine API, not yet an
-automatically populated browser-report field or MCP tool.
+each boundary whose correspondence is known. Review / Edit now includes a
+**Source-supported boundary detail** section with a scale selector, per-boundary
+unsupported/missing turning, signed mismatch, alignment RMS and explicit
+assessment status. The existing region filter applies here too. Optional
+read-only location markers show up to six sampled differences per boundary
+on the source and current candidate, not detected corners or plan addresses.
+The detail section is shape-only; it is hidden on the fill track.
+
+Download full detail JSON for every sample and its provenance/settings. Inline
+report data retains a bounded hotspot summary; full results are written to a
+content-addressed derived JSON file alongside each version. Report regeneration
+recomputes from captured response/raw-trace evidence without replacing captures
+or retracing. Missing, duplicate, merged, changed-boundary-set and unsupported
+symbolic geometry cases stay explicitly unassessed; boundaries are never
+paired by list position. Root trace regions already assembled from material
+regions remain valid: the retained root polyline is their reference.
+
+Live MCP clients can retrieve the same JSON via
+`get_drawing_artifact(drawing_id, version, artifact="boundary_detail")`.
+`structuredContent.boundary_detail` holds the data, with no widget or image
+content. `region_ids` optionally restricts the selected targets. The operation
+is on demand and does not run automatically during trace/refine.
 
 The default scales are 1, 2, 4 and 8 source pixels, with at most 0.25-pixel
 arc-length spacing. `units_per_pixel` explicitly registers canvas lengths to
@@ -101,4 +121,4 @@ Degenerate boundaries, insufficient scale support and exhausted sampling
 budgets produce `not_assessed` with an explicit reason, never a zero error or
 silent coarsening. Invalid settings/provenance are request errors. Primitive,
 clone and compound-boundary resolution and persistent corner/inflection
-matching remain separate integration work; callers must not invent a pairing.
+matching remain separate work; callers must not invent a pairing.

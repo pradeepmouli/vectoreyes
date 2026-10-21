@@ -495,6 +495,7 @@ class DrawingArtifactsOutput(_DrawingOutputSchema):
     path_map: str = Field(description="SVG map of individual L/Q/C/A segments with colors and an exact command-ID side legend.")
     command_map: str = Field(description="SVG map of individual command endpoints for path operations.")
     raw_trace: str = Field(description="Raw trace provenance artifact.")
+    boundary_detail: str = Field(description="Source-supported multiscale boundary detail JSON; diagnostic only.")
     plan: str = Field(description="JSON provenance for the operation that created this version.")
     versions: str = Field(description="JSON manifest of every live version and branch for this drawing.")
 
@@ -854,6 +855,7 @@ class DrawingArtifactOutput(_DrawingOutputSchema):
     svg: str | None = None
     trace: dict[str, Any] | None = None
     source_paths: list[SourcePolylineOutput] | None = None
+    boundary_detail: dict[str, Any] | None = None
     plan: dict[str, Any] | None = None
     versions: list[dict[str, Any]] | None = None
 
@@ -1049,6 +1051,7 @@ def _drawing_artifact_refs(drawing_id: str, version_id: str) -> dict[str, str]:
         "path_map": base + ".paths.svg",
         "command_map": base + ".commands.svg",
         "raw_trace": base + ".trace.json",
+        "boundary_detail": base + ".detail.json",
         "plan": base + ".plan.json",
         "versions": f"drawing://{drawing_id}/versions.json",
     }
@@ -1562,7 +1565,7 @@ def refine_drawing(
 
 @mcp.tool(title="Get drawing artifact", output_schema=DrawingArtifactOutput.model_json_schema(), description="Retrieve artifact contents for a live drawing without opening the review UI. For artifact='svg', structuredContent.svg contains the complete SVG text and mime_type is image/svg+xml; save that text verbatim to an .svg file and provide a downloadable file link when requested. A drawing:// reference is an artifact identifier, not an HTTP download URL. JSON artifacts return structured data; PNG artifacts return image content. labeled_svg colors regions with an exact-ID legend. path_map colors individual L/Q/C/A segments and includes separate segment and retained-anchor legends: point corners, rounded corner spans with entry/exit markers, and stored inflection/extremum/junction anchors. Anchor metadata includes exact source anchor IDs and referenced command IDs; no features are redetected. Use IDs, not hue guesses. command_map overlays version-scoped command IDs at their endpoints, including moves. Filter path_map and command_map with region_ids and command_types before selecting commands for refinement plans. Primitives and clones have no local path commands to label.")
 def get_drawing_artifact(
-    drawing_id: str, version: str = "v0", artifact: Literal["svg", "preview", "preview_png", "review_panel", "labeled_svg", "path_map", "command_map", "raw_trace", "plan", "versions"] = "svg",
+    drawing_id: str, version: str = "v0", artifact: Literal["svg", "preview", "preview_png", "review_panel", "labeled_svg", "path_map", "command_map", "raw_trace", "boundary_detail", "plan", "versions"] = "svg",
     ctx: Context | None = None,
     region_ids: list[str] | None = None,
     command_types: list[Literal["move", "line", "quadratic", "cubic", "arc"]] | None = None,
@@ -1595,30 +1598,23 @@ def get_drawing_artifact(
                 content=[TextContent(type="text", text=json.dumps(payload))],
                 structuredContent={"mime_type": "application/json", "plan": payload},
             )
-        if artifact == "raw_trace":
+        if artifact in {"raw_trace", "boundary_detail"}:
+            from .evaluation.detail import build_detail_report, retained_source_paths
             _selected, _paint, evidence = _DRAWINGS.load_replay(drawing_id, version)
             payload = evidence.trace.to_public_dict(include_region_map=True)
-            source_paths = [
-                {
-                    "region_id": record.region_id,
-                    "path_id": record.path_id,
-                    "source_path_id": record.fit.source.path.id,
-                    "commands": [
-                        {"id": command.id, "end": list(command.end)}
-                        for command in record.fit.source.path.commands
-                    ],
-                    "corners": [
-                        {
-                            "id": anchor.id,
-                            "entry_command_id": anchor.entry_command_id,
-                            "exit_command_id": anchor.exit_command_id,
-                            "owned_command_ids": list(anchor.owned_command_ids),
-                        }
-                        for anchor in record.fit.source.anchors
-                    ],
-                }
-                for record in evidence.root_paths
-            ]
+            source_paths = retained_source_paths(evidence.root_paths)
+            if artifact == "boundary_detail":
+                report = canonical_drawing_summary(stored.drawing, stored.replay.path_correspondence)
+                if region_ids:
+                    known = {target["id"] for target in report["targets"]}
+                    if not set(region_ids).issubset(known):
+                        raise ToolError("[INVALID_ARGUMENT] unknown detail region selection")
+                    report["targets"] = [target for target in report["targets"] if target["id"] in region_ids]
+                detail = build_detail_report({"drawing_id": drawing_id, "version": stored.id,
+                    "width": stored.drawing.canvas.width, "height": stored.drawing.canvas.height,
+                    "report": report}, {"trace": payload, "source_paths": source_paths})
+                return CallToolResult(content=[TextContent(type="text", text=json.dumps(detail, allow_nan=False))],
+                    structuredContent={"mime_type": "application/json", "boundary_detail": detail})
             return CallToolResult(
                 content=[TextContent(type="text", text=json.dumps({"trace": payload, "source_paths": source_paths}))],
                 structuredContent={"mime_type": "application/json", "trace": payload, "source_paths": source_paths},
@@ -1732,7 +1728,7 @@ def get_drawing_artifact(
             raise ToolError("[REVIEW_PANEL_UNAVAILABLE] review panel renderer is unavailable")
         content = ImageContent(type="image", data=base64.b64encode(panel).decode(), mimeType="image/png")
         return CallToolResult(content=[content], structuredContent={"mime_type": "image/png"})
-    raise ToolError("[ARTIFACT_UNKNOWN] artifact must be svg, preview, preview_png, review_panel, labeled_svg, raw_trace, plan, or versions")
+    raise ToolError("[ARTIFACT_UNKNOWN] artifact must be svg, preview, preview_png, review_panel, labeled_svg, path_map, command_map, raw_trace, boundary_detail, plan, or versions")
 
 
 @mcp.resource("drawing://{drawing_id}/{version}.svg", mime_type="image/svg+xml")
