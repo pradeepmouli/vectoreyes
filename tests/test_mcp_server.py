@@ -534,6 +534,18 @@ def _assert_full_square_target(svg: str) -> None:
     assert footprint.area > 900
 
 
+def _assert_pass_revision_chain(result):
+    executed = [stage for stage in result['passes'] if stage['status'] != 'disabled']
+    outputs = result['outputs']
+    assert len(outputs) == len(executed) + 1
+    assert [item['version'] for item in outputs] == [f'v{i}' for i in range(len(outputs))]
+    assert [item['parent_version'] for item in outputs] == [None, *[item['version'] for item in outputs[:-1]]]
+    assert [stage['version'] for stage in executed] == [item['version'] for item in outputs[1:]]
+    assert [stage['name'] for stage in executed] == [item['label'] for item in outputs[1:]]
+    assert result['version'] == outputs[-1]['version']
+    assert any(stage['status'] == 'unchanged' for stage in executed)
+
+
 def test_trace_auto_refines_the_retained_trace_into_a_live_child_version():
     ctx = SimpleNamespace(session=object())
     result = trace_drawing(
@@ -542,11 +554,9 @@ def test_trace_auto_refines_the_retained_trace_into_a_live_child_version():
 
     assert result is not None
     assert result["drawing_id"]
-    assert result["version"] == "v1"
-    assert result["parent_version"] == "v0"
+    _assert_pass_revision_chain(result)
     assert result["baseline_version"] == "v0"
-    assert [output["version"] for output in result["outputs"]] == ["v0", "v1"]
-    assert result["artifacts"]["svg"].endswith("/v1.svg")
+    assert result["artifacts"]["svg"].endswith(f"/{result['version']}.svg")
 
 
 def test_source_render_failure_does_not_publish_a_live_drawing(monkeypatch):
@@ -996,8 +1006,7 @@ def test_stdio_server_exposes_only_the_drawing_first_surface():
     assert "Baseline" in widget
     assert auto.structured_content is not None
     assert auto.structured_content["drawing_id"]
-    assert auto.structured_content["version"] == "v1"
-    assert [output["version"] for output in auto.structured_content["outputs"]] == ["v0", "v1"]
+    _assert_pass_revision_chain(auto.structured_content)
     assert refined.structured_content["version"] == "v0.0"
     assert refined.structured_content["requested_base_version"] == "v0"
     assert refined.structured_content["parent_version"] == "v0"
@@ -1051,14 +1060,15 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
                 "options": {"refine": "auto", "max_sampling_colors": 4},
             })
             assert not traced.is_error
-            assert [output["version"] for output in traced.structured_content["outputs"]] == ["v0", "v1"]
+            _assert_pass_revision_chain(traced.structured_content)
+            final_version = traced.structured_content['version']
             targets_by_version = {
                 output["version"]: [target["id"] for target in output["report"]["targets"]]
                 for output in traced.structured_content["outputs"]
             }
             assert targets_by_version["v0"] == ["r1"]
-            assert targets_by_version["v1"] == ["r1"]
-            auto_target = traced.structured_content["outputs"][1]["report"]["targets"][0]
+            assert targets_by_version[final_version] == ["r1"]
+            auto_target = traced.structured_content["outputs"][-1]["report"]["targets"][0]
             assert auto_target["diagnostics"]["symmetry"]["materialized"] is True
             assert set(auto_target["diagnostics"]["symmetry"]["axis"]) == {"point", "angle_degrees"}
             assert any(content.type == "image" for content in traced.content)
@@ -1067,17 +1077,17 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
             assert next(content for content in wire["content"] if content["type"] == "image")["mimeType"] == "image/png"
             drawing_id = traced.structured_content["drawing_id"]
             base_svgs = {}
-            for version in ("v0", "v1"):
+            for version in ("v0", final_version):
                 artifact = await client.call_tool("get_drawing_artifact", {
                     "drawing_id": drawing_id, "version": version, "artifact": "svg",
                 })
                 assert not artifact.is_error
                 base_svgs[version] = artifact.structured_content["svg"]
-            _assert_full_square_target(base_svgs["v1"])
+            _assert_full_square_target(base_svgs[final_version])
 
         # The live drawing belongs to the drawing store, not the HTTP session.
         async with Client(url, mode=mode, read_timeout_seconds=30) as client:
-            for base_version in ("v0", "v1"):
+            for base_version in ("v0", final_version):
                 target_ids = targets_by_version[base_version]
                 if base_version == "v0":
                     ops = [{"op": "fit_primitive", "target": target_ids[0], "type": "circle"}]

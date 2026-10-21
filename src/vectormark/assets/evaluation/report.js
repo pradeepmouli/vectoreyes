@@ -21,6 +21,7 @@ function sourcePane(){const s=document.createElementNS(NS,'svg');s.id='source-sv
 function pane(title,svg){const p=text('div','', 'pane');p.appendChild(text('h2',title));const v=text('div','', 'viewport');v.appendChild(svg);let start=null;v.onpointerdown=e=>{if(e.target.closest('[data-command-id],[data-anchor-id],[data-region-id]'))return;start={x:e.clientX,y:e.clientY,box:[...(viewport||fullViewport())]};v.setPointerCapture(e.pointerId)};v.onpointermove=e=>{if(!start)return;const scale=Math.min(v.clientWidth/start.box[2],v.clientHeight/start.box[3]);viewport=[start.box[0]-(e.clientX-start.x)/scale,start.box[1]-(e.clientY-start.y)/scale,start.box[2],start.box[3]];applyViewport()};v.onpointerup=()=>start=null;v.onpointercancel=()=>start=null;p.appendChild(v);return p}
 function versionSvg(version){const v=versions[version],s=svgNode(track==='shape'?v.inspector_svg:v.svg);s.dataset.version=version;if(track==='shape'){for(const e of s.querySelectorAll('[data-command-id]'))e.style.display=layers.has('commands')&&(!region||e.getAttribute('data-command-id').startsWith(region+'.'))?'':'none';for(const e of s.querySelectorAll('[data-anchor-id],[data-anchor-ref]')){const id=e.getAttribute('data-anchor-id')||e.getAttribute('data-anchor-ref');e.style.display=layers.has('features')&&(!region||id.startsWith(region+'.'))?'':'none'}for(const [attr,layer]of [['data-path-id','paths'],['data-region-id','regions'],['data-source-path-id','source']])for(const e of s.querySelectorAll('['+attr+']')){const selected=attr==='data-region-id'?e.getAttribute(attr)===region:!region||(attr==='data-source-path-id'?e.getAttribute('data-source-region-id')===region:e.getAttribute(attr).startsWith(region+'.'));e.style.display=layers.has(layer)&&(attr==='data-region-id'||selected)?'':'none'}}s.onclick=e=>{const target=e.target.closest('[data-command-id],[data-anchor-id],[data-region-id],[data-path-id]');if(!target)return;const id=target.getAttribute('data-command-id')||target.getAttribute('data-anchor-id')||target.getAttribute('data-region-id')||target.getAttribute('data-path-id');if(version!==current()){$('mapping-note').textContent='Parent selection: '+id+' in '+version+'. Select the candidate to author its plan; version IDs are not interchangeable.';return}if(target.hasAttribute('data-region-id'))selectRegion(id);else inspect(id)};return s}
 function renderParameters(){
+  renderPassHistory();
   if(!$('parameters')){
     const box=text('details','','card');box.id='parameters';
     box.append(text('summary','Parameters used'),text('p','','muted'));
@@ -29,7 +30,7 @@ function renderParameters(){
       box.append(text('h2',title));const pre=text('pre','');pre.id=id;box.append(pre);
     }
     const exact=text('a','Download exact trial record');exact.id='exact-request';box.append(exact);
-    $('workspace').insertBefore(box,$('workspace').querySelector('.inspector'));
+    $('workspace').append(box);
   }
   const version=current(),parameters=versions[version]?.parameters;
   const options=parameters?.trace_options?.value||parameters?.observed_trace_options;
@@ -41,6 +42,20 @@ function renderParameters(){
   $('effective-parameters').textContent=JSON.stringify(parameters||{availability:'No captured parameters'},null,2);
   $('exact-request').hidden=!trial;
   if(trial)$('exact-request').href='trials/'+encodeURIComponent(trial.id)+'.json';
+}
+
+function renderPassHistory(){
+  if(!bundle.passes?.length)return;
+  if(!$('pass-history'))$('workspace').insertBefore($('pass-history-template').content.cloneNode(true),$('workspace').querySelector('.inspector'));
+  $('pass-list').replaceChildren();
+  for(const stage of bundle.passes){
+    const button=text('option',(stage.status==='disabled'?'☐ ':'☑ ')+stage.name.replace(/_pass$/,'').replaceAll('_',' ')+
+      ' · '+stage.status+(stage.version?' · '+stage.version:''),'pass-row');
+    button.value=stage.version||'';button.selected=stage.version===current();
+    button.disabled=!stage.version||!versions[stage.version];
+    $('pass-list').append(button);
+  }
+  $('pass-list').onchange=()=>{trial=bundle.trials.find(t=>t.candidate_version===$('pass-list').value);if(trial)$('trial').value=trial.id;region=selection=viewport=null;render()};
 }
 let comparisonReference='parent';
 let detailScale=4,detailOverlay=false,detailMetric='unsupported';
@@ -100,7 +115,7 @@ function renderCounts(){
   let box=$('region-counts');
   if(!box){
     box=text('section','','card');box.id='region-counts';
-    $('workspace').insertBefore(box,$('workspace').querySelector('.inspector'));
+      $('workspace').append(box);
   }
   box.replaceChildren();
   const version=current(),value=versions[version];box.hidden=!value;if(!value)return;

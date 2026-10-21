@@ -14,6 +14,62 @@ def disabled(**enabled):
         for name in RefinementPasses.model_fields})
 
 
+def test_engine_retains_replayable_pass_results_without_reexecuting_discovery(monkeypatch):
+    from tests.test_python_drawing_engine import source
+    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectormark.drawing_engine import TraceDrawingRequest
+    from vectormark.drawing_trace import TraceOptions
+    from vectormark.drawing_replay import propose_effective_recipe
+    from vectormark.drawing_recipe import drawing_revision
+    import vectormark.drawing_refinement as refinement
+    _, raster = source()
+    engine = PythonDrawingEngine()
+    baseline = engine.trace_drawing(TraceDrawingRequest('drw_stages', raster,
+        TraceOptions(max_sampling_colors=2, remove_background='off'),
+        min_region_fraction=0, initial_stitch=False))
+    original = refinement.refine_canonical_drawing
+    calls = []
+    def observe(*args, **kwargs):
+        calls.append(True)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(refinement, 'refine_canonical_drawing', observe)
+    result = engine.refine_automatically(baseline.drawing, baseline.evidence)
+    assert len(calls) == 1
+    assert result.passes
+    assert result.passes[-1].name == 'resolve_original_paint'
+    previous = baseline.drawing
+    for stage in result.passes:
+        assert stage.status in {'changed', 'unchanged', 'disabled'}
+        if stage.result is None:
+            assert stage.status == 'disabled'
+            continue
+        assert (stage.result.drawing != previous) == (stage.status == 'changed')
+        replayed = propose_effective_recipe(drawing_id='drw_stages',
+            evidence=stage.result.evidence.geometry, paint=stage.result.evidence.paint,
+            recipe=stage.result.evidence.recipe)
+        assert replayed.drawing == stage.result.drawing
+        assert drawing_revision(replayed.drawing) == drawing_revision(stage.result.drawing)
+        assert replayed.replay.path_correspondence == stage.result.evidence.replay.path_correspondence
+        previous = stage.result.drawing
+    assert previous == result.drawing
+
+
+def test_disabled_refinement_passes_have_receipts_not_duplicate_snapshots():
+    from tests.test_python_drawing_engine import source
+    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectormark.drawing_engine import TraceDrawingRequest
+    from vectormark.drawing_trace import TraceOptions
+    _, raster = source()
+    engine = PythonDrawingEngine()
+    baseline = engine.trace_drawing(TraceDrawingRequest('drw_disabled', raster,
+        TraceOptions(max_sampling_colors=2, remove_background='off'),
+        min_region_fraction=0, initial_stitch=False))
+    result = engine.refine_automatically(baseline.drawing, baseline.evidence,
+        refinement_passes=disabled())
+    assert len(result.passes) == 10
+    assert all(stage.status == 'disabled' and stage.result is None for stage in result.passes[:-1])
+
+
 def test_automatic_engine_refinement_never_projects_a_sampling_scene(monkeypatch):
     from tests.test_python_drawing_engine import source
     from vectormark.python_drawing_engine import PythonDrawingEngine
@@ -44,8 +100,7 @@ def test_canonical_multi_pass_respects_toggles_and_replays(stitch):
     result = refine_canonical_drawing(state, epsilon=1, max_error=1,
         refinement_passes=disabled(stitch=stitch),
         on_pass=lambda name, current: observed.append((name, current)))
-    assert [name for name, _ in observed] == (['corner_normalize_pass', 'seams_pass']
-        if stitch else ['corner_normalize_pass'])
+    assert [name for name, _ in observed] == (['seams_pass'] if stitch else [])
     assert len({batch.batch_id for batch in result.batches}) == len(result.batches)
     replayed = replay_automatic_batches(state, result.batches)
     assert replayed.drawing == result.state.drawing

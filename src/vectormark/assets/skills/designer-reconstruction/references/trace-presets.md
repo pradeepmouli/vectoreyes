@@ -1,7 +1,7 @@
 # Trace starting-point presets
 
 Pass one of these objects as `trace_drawing.options`. They are examples, not
-literal preset names accepted by the server. Inspect source, v0, optional v1,
+literal preset names accepted by the server. Inspect source, v0, selected pass revisions,
 region map, and difference before accepting a result. Input must be PNG.
 
 ## Black-and-white artwork / cutting-file baseline
@@ -31,7 +31,7 @@ known. One visible ink plus transparency is still a useful two-color source.
 Zero relative filtering and hole cleanup preserve small details, but also
 preserve specks. Inspect isolated shapes and thin bridges at the intended cutting
 scale. This is a geometry baseline, not certification of fabrication readiness.
-Refine the retained v0 with a plan, or retrace with `refine="auto"` to compare v0/v1.
+Refine the retained v0 with a plan, or use `refine="auto"` to inspect the pass-revision chain.
 Do not set fitting tolerances to zero as a detail-preservation shortcut: that can
 chase every raster irregularity and greatly increase command count and cost.
 
@@ -39,7 +39,7 @@ chase every raster irregularity and greatly increase command count and cost.
 v0. Set it false to retain detected point boundaries rather than those intervals
 when diagnosing over-rounding. Corner detection still runs and source curvature
 is still fitted; use explicit corner declarations to request sharp geometry.
-`corner_normalize` is a separate opt-in v1 refinement pass, not trace rounding.
+`corner_normalize` is a separate opt-in refinement pass, not trace rounding.
 It only normalizes existing retained corners and never detects new ones.
 Rounding classification uses source-contour inset and edge-fit confidence, not
 fillet radius alone: shallow turns can amplify pixel noise into a large radius.
@@ -64,7 +64,7 @@ size no longer lowers the relative minimum protected straight-edge length.
 When the source palette is known, replace sampling auto with that count; set an
 output count separately if exact palette reduction is desired. Unlimited output
 does not mean gradients are enabled. Check primitive, clone, and symmetry
-diagnostics and inspect v1 against v0; disable only a demonstrably harmful auto
+diagnostics and inspect each selected pass revision against its parent; disable only a demonstrably harmful auto
 pass using `refinement_passes`, or continue with explicit declarations from v0.
 Default region filtering can discard small lettering: lower it if the source
 contains important small features. Do not silently use cutting settings for a

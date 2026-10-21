@@ -194,28 +194,7 @@ def _replay_drawing_with_producers(
                 and paint_input is not None
             ):
                 step = replace(step, input_revision=canonical_input_revision(paint_input))
-            if evidence.geometry_to_paint != AffineTransform():
-                raise ValueError(
-                    "non-identity geometry-to-paint refill requires an exact sampler"
-                )
-            rgb = raster_pixels(paint.source)
-            if step.scope == "retain":
-                pass
-            elif step.scope == "all":
-                state = replace(state, drawing=refill_drawing_from_source(
-                    state.drawing, rgb, source_masks=source_paint_masks(state.region_evidence),
-                    invalidate_all=True,
-                    share_root_gradients=step.share_root_gradients,
-                    allow_gradients=paint.output_settings.allow_gradients,
-                ))
-            else:
-                if paint_input is None:
-                    raise ValueError("changed paint resolution has no preceding geometry input")
-                if canonical_input_revision(paint_input) != step.input_revision:
-                    raise ValueError("changed paint resolution input revision mismatch")
-                state = replace(state, drawing=refill_drawing_from_source(
-                    state.drawing, rgb, source_masks=source_paint_masks(state.region_evidence),
-                    before=paint_input.drawing, allow_gradients=paint.output_settings.allow_gradients))
+            state = _resolve_original_paint(state, evidence, paint, step, paint_input)
             paint_input = None
             if rebound_steps is not None:
                 rebound_steps.append(step)
@@ -264,12 +243,43 @@ def _replay_drawing_with_producers(
             index += 1
             continue
         raise TypeError(f"unsupported effective recipe step: {type(step).__qualname__}")
-    if finalize_output:
+    state = _finalize_replay_state(state, paint, constrain_output=finalize_output)
+    return state, producers, corner_replays
+
+
+def _resolve_original_paint(
+    state: ReplayState, evidence: GeometryEvidence, paint: PaintEvidence,
+    step: ResolveOriginalPaintOperation, paint_input: ReplayState | None = None,
+) -> ReplayState:
+    """Shared paint execution for recipe replay and already-computed pass states."""
+    if evidence.geometry_to_paint != AffineTransform():
+        raise ValueError("non-identity geometry-to-paint refill requires an exact sampler")
+    if step.scope == "retain":
+        return state
+    rgb = raster_pixels(paint.source)
+    if step.scope == "all":
+        return replace(state, drawing=refill_drawing_from_source(
+            state.drawing, rgb, source_masks=source_paint_masks(state.region_evidence),
+            invalidate_all=True, share_root_gradients=step.share_root_gradients,
+            allow_gradients=paint.output_settings.allow_gradients))
+    if paint_input is None:
+        raise ValueError("changed paint resolution has no preceding geometry input")
+    if canonical_input_revision(paint_input) != step.input_revision:
+        raise ValueError("changed paint resolution input revision mismatch")
+    return replace(state, drawing=refill_drawing_from_source(
+        state.drawing, rgb, source_masks=source_paint_masks(state.region_evidence),
+        before=paint_input.drawing, allow_gradients=paint.output_settings.allow_gradients))
+
+
+def _finalize_replay_state(
+    state: ReplayState, paint: PaintEvidence, *, constrain_output: bool = True,
+) -> ReplayState:
+    """Apply output policy without reexecuting geometry or source-paint fitting."""
+    if constrain_output:
         state = replace(state, drawing=constrain_drawing_output_paint(
             state.drawing, raster_pixels(paint.source), paint.output_settings))
-    state = replace(state, drawing=replace(state.drawing,
+    return replace(state, drawing=replace(state.drawing,
         background=paint.background, output_settings=paint.output_settings))
-    return state, producers, corner_replays
 
 
 def _path_geometry(
@@ -1550,6 +1560,15 @@ def propose_effective_recipe(
     state, _producers, corner_replays = _replay_drawing_with_producers(
         evidence, paint, recipe
     )
+    return _record_execution(drawing_id, evidence, paint, recipe, state, corner_replays)
+
+
+def _record_execution(
+    drawing_id: str, evidence: GeometryEvidence, paint: PaintEvidence,
+    recipe: EffectiveDrawingRecipe, state: ReplayState,
+    corner_replays: list[tuple[ApplyCornerRecipeOperation, CornerRecipeReplay]],
+) -> ReplayExecution:
+    """Bind a computed state to its exact recipe and source correspondence."""
     drawing = replace(state.drawing, drawing_id=drawing_id)
     replay = ReplayRecord(
         evidence_revision=evidence.revision,

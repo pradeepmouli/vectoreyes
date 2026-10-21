@@ -3011,3 +3011,28 @@ scale/region selection, source/candidate markers, JSON download, hidden fill
 track and 390px layout without page overflow. Adapter/report lint, JS syntax and
 whitespace checks pass; four pre-existing unused imports in the MCP surface
 remain unchanged. No full native-suite claim, live deployment or server restart.
+
+### Pass results use ordinary revisions — 2026-10-21
+
+The automatic refinement entry point now retains the computed state and exact
+batches of every executed pass. MCP publishes each as an ordinary immutable
+DrawingStore child, even when it changes neither geometry nor fill. Disabled
+passes are checklist outcomes without revisions. Shared replay helpers bind
+paint policy and source correspondence without rerunning discovery or replaying
+every recipe prefix just to construct history. The final source-paint resolution
+is its own revision. Consumers use the returned final version, not a v1 alias.
+
+Conversion controls group optional tracing and refinement stages into checklists
+while keeping fitter policies distinct. The existing offline report selects pass
+revisions and compares actual parents; parameters and per-region complexity now
+follow the inspector. The runner captures outputs from the one trace request,
+not invented separate mutations. Existing shared plugin guidance reflects this
+contract. Local radish has v0-v9 with every artifact capture successful; its final
+SVG remains byte-identical to the previously deployed result. Desktop/mobile
+checks confirm pass selection and bottom diagnostic placement. Full validation
+and build evidence are maintained in the existing operation-outcomes ledger.
+
+Validation: 1,487 source tests pass (1,037 existing warnings); the built native
+wheel passes 82 focused engine/MCP/replay/capture checks. UI build, shared-plugin
+check, scoped lint, JavaScript syntax and whitespace checks pass. The compiled
+runtime remains isolated; there is no new deployment or server restart.

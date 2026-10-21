@@ -96,6 +96,7 @@ interface TraceOptionsInput {
   remove_background: "auto" | "off" | "on";
   preprocess: {
     max_size_px: number;
+    crop_to_content: boolean;
     preserve_transparency: boolean;
     quantize: boolean;
   };
@@ -292,7 +293,7 @@ const DEFAULT_TRACE_OPTIONS: TraceOptionsInput = {
   support_weighted_corners: false,
   gradient_pretrace: false,
   remove_background: "auto",
-  preprocess: { max_size_px: 2048, preserve_transparency: true, quantize: false },
+  preprocess: { max_size_px: 2048, crop_to_content: true, preserve_transparency: true, quantize: false },
 };
 
 const FALLBACK_ENUMS: Record<string, string[]> = {
@@ -482,11 +483,21 @@ function TraceControls({
       </p>
 
       <div className="select-grid">
-        {enumSelect("refine", "Refine")}
         {enumSelect("trace_level", "Boundary")}
         {enumSelect("fit_strategy", "Path fitting")}
         {enumSelect("remove_background", "Background")}
       </div>
+
+        <fieldset className="pass-checklist">
+          <legend>Trace stages</legend>
+          <div className="toggle-row">
+            <label className="toggle"><input checked={form.preprocess.crop_to_content} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, crop_to_content: event.target.checked } }))} /> Crop to content</label>
+            <label className="toggle"><input checked={form.gradient_pretrace} type="checkbox" onChange={(event) => setOption("gradient_pretrace", event.target.checked)} /> Gradient preprocessing</label>
+            <label className="toggle"><input checked={form.preprocess.quantize} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, quantize: event.target.checked } }))} /> Pre-quantize colors</label>
+            <label className="toggle"><input checked={form.initial_stitch} type="checkbox" onChange={(event) => setOption("initial_stitch", event.target.checked)} /> Initial stitch</label>
+          </div>
+          <p className="control-note">Selected stages run in the engine’s fixed order before the v0 trace is published.</p>
+        </fieldset>
 
       <div className="number-grid">
         <label className="field">Max sampling colors
@@ -542,19 +553,16 @@ function TraceControls({
           </label>
         </div>
           <div className="toggle-row">
-              <label className="toggle"><input checked={form.initial_stitch} type="checkbox" onChange={(event) => setOption("initial_stitch", event.target.checked)} /> Initial stitch in v0</label>
-            <label className="toggle"><input checked={form.corner_normalize} type="checkbox" onChange={(event) => setOption("corner_normalize", event.target.checked)} /> Normalize corners in v1</label>
             <label className="toggle"><input checked={form.corner_rounding} type="checkbox" onChange={(event) => setOption("corner_rounding", event.target.checked)} /> Protect rounded corners in v0</label>
             <label className="toggle"><input checked={form.support_weighted_corners} type="checkbox" onChange={(event) => setOption("support_weighted_corners", event.target.checked)} /> Support-weighted corners</label>
-            <label className="toggle"><input checked={form.gradient_pretrace} type="checkbox" onChange={(event) => setOption("gradient_pretrace", event.target.checked)} /> Gradient pretrace</label>
           <label className="toggle"><input checked={form.preprocess.preserve_transparency} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, preserve_transparency: event.target.checked } }))} /> Preserve alpha</label>
-          <label className="toggle"><input checked={form.preprocess.quantize} type="checkbox" onChange={(event) => setForm((current) => ({ ...current, preprocess: { ...current.preprocess, quantize: event.target.checked } }))} /> Pre-quantize</label>
         </div>
           </details>
 
-          <details className="trace-advanced">
-            <summary>Automatic refinement passes</summary>
-            <p className="control-note">Used only with refine=auto. Pass order is fixed; final source fills are always resolved.</p>
+            <fieldset className="pass-checklist">
+              <legend>Refinement stages</legend>
+              <label className="toggle"><input type="checkbox" checked={form.refine === "auto"} onChange={(event) => setOption("refine", event.target.checked ? "auto" : "none")} /> Run selected refinements</label>
+              <p className="control-note">Each executed pass produces a revision, even if unchanged. Order is fixed; source fills are resolved last.</p>
             <div className="toggle-row">
               {Object.entries(schema?.refinement_passes?.properties ?? {}).map(([name, definition]) => (
                 <label className="toggle" key={name} title={definition.description}>
@@ -564,8 +572,9 @@ function TraceControls({
                   {name.replaceAll("_", " ")}
                 </label>
               ))}
+                <label className="toggle"><input checked={form.corner_normalize} disabled={form.refine !== "auto"} type="checkbox" onChange={(event) => setOption("corner_normalize", event.target.checked)} /> Normalize corners</label>
             </div>
-          </details>
+            </fieldset>
 
         {lastTraceOptions && <details className="trace-advanced">
           <summary>Last trace parameters</summary>

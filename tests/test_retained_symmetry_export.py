@@ -171,7 +171,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization():
     passes = RefinementPasses(**{name: name in {'symmetry', 'smooth'} for name in RefinementPasses.model_fields})
     output = drawing_refine.auto_refine(trace, (original,), refinement_passes=passes, on_pass=lambda name, regions: callbacks.append(
         (regions, _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions))))))
-    assert len(callbacks) == 3
+    assert len(callbacks) == 2  # Disabled corner normalization is not executed.
     assert all(regions[0].is_leaf and regions[0].footprint.area == pytest.approx(192)
         and regions[0].diagnostics['symmetry']['mode'] == 'intrinsic'
         and regions[0].diagnostics['materialization']['operation'] == 'self_symmetry_union'

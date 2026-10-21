@@ -1,7 +1,7 @@
 """Default refinement orchestrates independently replayable canonical actions."""
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 
 from .drawing_proposals import (
@@ -46,12 +46,19 @@ def discover_topology_proposals(state: ReplayState, *, scope: tuple[int, ...] = 
     return (CanonicalProposal(identities, intent, prepared=prepared),)
 
 
+@dataclass(frozen=True)
+class CanonicalRefinementResult(CanonicalDetectionResult):
+    """Computed per-pass states and their exact batches, without rediscovery."""
+
+    passes: tuple[tuple[str, CanonicalDetectionResult], ...] = ()
+
+
 def refine_canonical_drawing(
     state: ReplayState, *, epsilon: float, max_error: float,
     corner_normalize: bool = False, refinement_passes: RefinementPasses | None = None,
     no_symmetry: bool = False, cubic: bool = False,
     on_pass: Callable[[str, ReplayState], None] | None = None,
-) -> CanonicalDetectionResult:
+) -> CanonicalRefinementResult:
     """Run the shared schedule on canonical values; retain every accepted choice."""
     discoverers = {
         'occlusion_pass': partial(discover_occlusion_proposals, no_symmetry=no_symmetry),
@@ -66,15 +73,18 @@ def refine_canonical_drawing(
             max_error=max_error, corner_normalize=corner_normalize),
         'seams_pass': partial(discover_seam_proposals, epsilon=epsilon, max_error=max_error, cubic=cubic),
     }
-    batches, outcomes = [], []
+    batches, outcomes, passes = [], [], []
     for ordinal, name in enumerate(refinement_pass_names(refinement_passes or RefinementPasses(),
             no_symmetry=no_symmetry)):
+        if name == 'corner_normalize_pass' and not corner_normalize:
+            continue
         discover = discoverers[name]
         result = _select_region_scopes(state, lambda current, scope: discover(current, scope=scope),
             target_id=None, pass_name=name, pass_ordinal=ordinal)
         state = result.state
         batches.extend(result.batches)
         outcomes.extend(result.outcomes)
+        passes.append((name, result))
         if on_pass is not None:
             on_pass(name, state)
-    return CanonicalDetectionResult(state, tuple(batches), tuple(outcomes))
+    return CanonicalRefinementResult(state, tuple(batches), tuple(outcomes), tuple(passes))

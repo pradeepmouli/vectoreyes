@@ -136,14 +136,22 @@ async def trace_run(root: Path, client: ToolClient, image: Path, options: dict[s
         run = bundle.load()
         run.drawing_id, run.baseline_version = result["drawing_id"], "v0"
         run.build = {"server_identity": "not_exposed", "schema_sha256": hashlib.sha256(bundle.artifact_path("tool-schemas.json").read_bytes()).hexdigest() if bundle.artifact_path("tool-schemas.json").exists() else None}
-        run.options = result.get("trace", {}).get("options", options)
+        run.options = result.get("trace_options", options)
         bundle.save(run)
-        trial.execution, trial.candidate_version = "succeeded", result["version"]
-        bundle.save_trial(trial)
-        try:
-            trial.artifact_errors = await capture_version(bundle, client, result)
-        except Exception as exc:
-            trial.artifact_errors = {"capture": str(exc)}
+        bundle.write_artifact("trace-response.json", _json_bytes(result))
+        for index, output in enumerate(result["outputs"]):
+            receipt = trial if index == 0 else TrialRecord(
+                id=f"t{index:04d}", base_version=output.get("parent_version"),
+                hypothesis=output.get("label", "Trace output"),
+                request={"trace_output_receipt": {"request_trial": trial.id,
+                    "version": output["version"], "label": output.get("label")}})
+            receipt.execution, receipt.candidate_version = "succeeded", output["version"]
+            response = {**result, **output}
+            try:
+                receipt.artifact_errors = await capture_version(bundle, client, response)
+            except Exception as exc:
+                receipt.artifact_errors = {"capture": str(exc)}
+            bundle.save_trial(receipt)
     trial.elapsed_seconds = time.perf_counter()-started
     bundle.save_trial(trial)
     return bundle

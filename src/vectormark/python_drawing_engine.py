@@ -21,6 +21,7 @@ from .drawing_actions import (
 )
 from .drawing_engine import (
     DetectPathFeaturesRequest, DetectPathFeaturesResult,
+    AutomaticRefinementResult, DrawingPassResult,
     DrawingActionRequest, DrawingActionResult, FitPathRequest, FitPathResult,
     PathActionRequest, PathActionResult, RasterImage, TraceDrawingRequest, TraceDrawingResult,
 )
@@ -33,7 +34,9 @@ from .drawing_refine import stitch_regions_with_intent
 from .drawing_render import trace_summary
 from .drawing_assembly import assemble_drawing_roots
 from .drawing_replay import (
-    extend_recipe_with_plan, propose_effective_recipe, raster_pixels, replay_drawing, )
+    extend_recipe_with_plan, propose_effective_recipe, raster_pixels,
+    _finalize_replay_state, _record_execution, _replay_drawing_with_producers,
+    _resolve_original_paint, )
 from .drawing_trace import PythonTraceEngine, TraceOptions, TraceResult
 from .material_pretrace import preprocess_material_trace
 from .output_settings import DrawingOutputSettings
@@ -41,7 +44,7 @@ from .path_geometry import PathGeometry
 from .python_path_fitter import PythonPathFitter, validate_explicit_fit_source
 from .fit import _detect_path_features
 from .path_fit_evidence import bind_source_path_features, source_node_command_id
-from .refinement_settings import RefinementPasses
+from .refinement_settings import RefinementPasses, refinement_pass_names
 from .quality import GeometryPolicy
 from .revision_quality import QualityReport, RegionMatch, assess_revision
 
@@ -209,26 +212,52 @@ class PythonDrawingEngine:
     def refine_automatically(
         self, drawing: Drawing, evidence: PythonEngineEvidence, *,
         corner_normalize: bool = False, refinement_passes: RefinementPasses | None = None,
-    ) -> DrawingActionResult[PythonEngineEvidence]:
+    ) -> AutomaticRefinementResult[PythonEngineEvidence]:
         """Orchestrate existing refinement passes and retain their accepted operations."""
         validate_replay_record(drawing=drawing, evidence=evidence.geometry,
             paint=evidence.paint, recipe=evidence.recipe, replay=evidence.replay)
         # Appended steps replay before the final output-palette projection.
         # Capture their inputs at that same boundary, not from the published fill.
-        baseline = replay_drawing(evidence.geometry, evidence.paint, evidence.recipe,
-            finalize_output=False)
+        baseline, _producers, corner_replays = _replay_drawing_with_producers(
+            evidence.geometry, evidence.paint, evidence.recipe, finalize_output=False)
         trace = evidence.geometry.trace
         from .drawing_refinement import refine_canonical_drawing
         automatic = refine_canonical_drawing(baseline,
             epsilon=trace.options.simplify_tolerance, max_error=trace.options.curve_tolerance,
             corner_normalize=corner_normalize, refinement_passes=refinement_passes)
-        recipe = replace(evidence.recipe, steps=(*evidence.recipe.steps, *automatic.batches,
-            ResolveOriginalPaintOperation(scope="all", share_root_gradients=trace.material_pretrace is None)))
-        execution = propose_effective_recipe(drawing_id=drawing.drawing_id,
-            evidence=evidence.geometry, paint=evidence.paint, recipe=recipe)
-        return DrawingActionResult(execution.drawing,
+        observed = dict(automatic.passes)
+        recipe = evidence.recipe
+        passes: list[DrawingPassResult[PythonEngineEvidence]] = []
+        previous = drawing
+        for name in refinement_pass_names(RefinementPasses()):
+            stage = observed.get(name)
+            if stage is None:
+                passes.append(DrawingPassResult(name, "disabled"))
+                continue
+            recipe = replace(recipe, steps=(*recipe.steps, *stage.batches))
+            execution = _record_execution(drawing.drawing_id, evidence.geometry, evidence.paint,
+                recipe, _finalize_replay_state(stage.state, evidence.paint), corner_replays)
+            changed = execution.drawing != previous
+            result = DrawingActionResult(execution.drawing,
+                replace(evidence, recipe=recipe, replay=execution.replay),
+                **_region_changes(previous, execution.drawing))
+            passes.append(DrawingPassResult(name, "changed" if changed else "unchanged", result))
+            previous = execution.drawing
+        paint_step = ResolveOriginalPaintOperation(scope="all",
+            share_root_gradients=trace.material_pretrace is None)
+        recipe = replace(recipe, steps=(*recipe.steps, paint_step))
+        final_state = _finalize_replay_state(_resolve_original_paint(
+            automatic.state, evidence.geometry, evidence.paint, paint_step), evidence.paint)
+        execution = _record_execution(drawing.drawing_id, evidence.geometry, evidence.paint,
+            recipe, final_state, corner_replays)
+        final = DrawingActionResult(execution.drawing,
             replace(evidence, recipe=recipe, replay=execution.replay),
-            **_region_changes(drawing, execution.drawing))
+            **_region_changes(previous, execution.drawing))
+        changed = execution.drawing != previous
+        passes.append(DrawingPassResult("resolve_original_paint",
+            "changed" if changed else "unchanged", final))
+        return AutomaticRefinementResult(final.drawing, final.evidence,
+            **_region_changes(drawing, final.drawing), passes=tuple(passes))
 
     def apply_plan(
         self, drawing: Drawing, evidence: PythonEngineEvidence, plan: DrawingPlan,

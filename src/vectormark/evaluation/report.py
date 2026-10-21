@@ -117,6 +117,8 @@ def write_report(bundle: RunBundle) -> Path:
     source = bundle.artifact_path("source.png")
     data = {"run": run.model_dump(mode="json"), "trials": trials, "versions": versions,
             "source": "data:image/png;base64,"+base64.b64encode(source.read_bytes()).decode() if source.exists() else None}
+    trace_response = bundle.artifact_path("trace-response.json")
+    data["passes"] = json.loads(trace_response.read_text()).get("passes", []) if trace_response.exists() else []
     assets = files("vectormark").joinpath("assets/evaluation")
     template = assets.joinpath("report.html").read_text()
     encoded = json.dumps(data, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")

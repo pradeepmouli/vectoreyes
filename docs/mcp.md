@@ -36,6 +36,14 @@ integration points change, rather than silently reverting to a 4 MiB limit.
 
 ## Workflow
 
+Automatic refinement publishes an ordinary immutable revision for each executed
+pass, including a no-change result. `outputs` begins with the v0 trace and then
+follows the fixed pass order; `passes` links each outcome to its revision, or
+null for a disabled pass. Use the response's `version` as the final version,
+not a hard-coded v1. Intermediate versions support the same artifact and plan
+operations as any other revision. Trace/refinement checklists control existing
+optional stages without changing their order. Fitter policies remain separate.
+
 ### Packaged reconstruction skill
 
 The server uses FastMCP 4.1 and exposes the packaged

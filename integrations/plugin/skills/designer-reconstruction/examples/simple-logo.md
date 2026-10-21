@@ -7,8 +7,8 @@ against the actual source, not defaults to apply to every logo.
 
 1. Submit `trace_drawing` with the attached ImageRef and
    `{"refine":"auto","max_sampling_colors":4,"fit_strategy":"progressive_allow_lines"}`.
-   Inspect v0 and v1; use whichever preserves the intended silhouette better.
-2. Read the region map. Assume the circle is `r1` and ribbon is `r2` in v1.
+   Inspect v0 and the returned pass revisions; use whichever preserves the intended silhouette better.
+2. Read the selected version's region map. Assume the circle is `r1` and ribbon is `r2` there.
    If the circle is already a recognized circle, do not fit it again. Otherwise
    use `primitive-plan.json`, substituting the real drawing ID and region ID.
 3. Inspect the child. If a ribbon side remains unnecessarily fragmented, fetch

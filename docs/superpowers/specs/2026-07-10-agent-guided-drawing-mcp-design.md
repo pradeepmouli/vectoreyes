@@ -7,11 +7,11 @@
 
 Replace the logo-specific MCP surface with one drawing-oriented entry point.
 `trace_drawing` creates a retained trace that an agent can refine through
-versioned plans, with optional automatic refinement as its first child version.
+versioned plans, with optional automatic refinement as a chain of child revisions.
 
 ```text
 trace_drawing(image, { refine: "auto", ... })
-  -> drawing_id + pre-optimizer v0 + automatic v1 + review artifacts
+  -> drawing_id + trace v0 + one revision per executed refinement pass + review artifacts
 
 trace_drawing(image, { refine: "none", ... })
   -> drawing_id + version v0 + trace paths + labeled region map
@@ -41,9 +41,10 @@ provide a portable trace import/export format.
 
 `refine` is required and has exactly two values:
 
-- `auto`: retain pre-optimizer v0, run automatic optimization as immutable v1,
-  and return both outputs plus the review artifacts. Later plans may branch
-  from either version.
+- `auto`: retain trace v0 and one ordinary immutable revision per executed
+  refinement pass, including no-change results. Disabled passes create no
+  revision. Return all outputs and the selected final version; never assume v1.
+  Later plans may branch from any retained version.
 - `none`: retain and return only pre-optimizer v0 so an agent can inspect and
   refine the decomposition without automatic geometry decisions.
 

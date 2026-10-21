@@ -446,8 +446,8 @@ mcp = FastMCP(
         "discarded and the vector drawing can become the source of truth. Treat the source-minus-SVG diff as a fidelity gate: "
         "remove every visible structural, geometric, alignment, proportion, or fill discrepancy. Residuals limited to normal SVG "
         "versus raster antialiasing, resampling, and continuous-gradient approximation are acceptable; merely being a close trace is not. "
-        "There are three geometry modalities. Both trace_drawing refine modes are interactive: refine='auto' always returns pre-refinement v0 plus automatic v1, "
-        "whose final fills are re-fitted from the original source RGB; refine='none' returns only v0 and retains "
+        "There are three geometry modalities. Both trace_drawing refine modes are interactive: refine='auto' returns pre-refinement v0 plus one normal child revision per executed refinement pass, including unchanged results. "
+        "Use the returned version for the final result; its fills are re-fitted from the original source RGB. refine='none' returns only v0 and retains "
         "unrefined trace roots when you need to judge the raw decomposition before any automatic cleanup. Use retrace_drawing only when you can supply "
         "a better palette-labelled geometry guide; its guide colours are temporary labels and all final fills are still fitted from the original source. "
         "For trace options, use max_sampling_colors='auto' when palette complexity is unknown: it selects the smallest 8/16/32/64 palette whose perceptual improvement "
@@ -762,17 +762,27 @@ class TraceVersionOutput(_DrawingOutputSchema):
 
     version: str = Field(description="Opaque version ID for this retained canonical Drawing.")
     parent_version: str | None = Field(description="Actual retained parent version, or null for the source baseline.")
+    label: str = "revision"
     artifacts: DrawingArtifactsOutput
     report: DrawingReportOutput
 
 
+class TracePassOutput(_DrawingOutputSchema):
+    """Checklist outcome linked to an ordinary retained revision when executed."""
+
+    name: str
+    status: Literal["changed", "unchanged", "disabled"]
+    version: str | None
+
+
 class TraceDrawingOutput(_DrawingOutputSchema):
-    """Trace envelope with one pre-refinement output and optional automatic child."""
+    """Trace baseline followed by one ordinary revision per executed pass."""
 
     drawing_id: str
     outputs: list[TraceVersionOutput] = Field(
-        description="Ordered immutable trace outputs: [v0] for refine='none', or [v0, v1] for refine='auto'.",
+        description="Ordered retained revisions: v0 trace, then one child for every executed refinement pass, including unchanged results. Use version for the final result; do not assume v1.",
     )
+    passes: list[TracePassOutput]
     version: str
     parent_version: str | None = Field(
         description="Actual parent of the selected current version."
@@ -1175,11 +1185,11 @@ def _trace_result(image: ImageRef, options: TraceDrawingOptions):
       "actual parent (or an explicit no-parent tile), current result, addressable region and segment maps, and amplified source-minus-SVG diff. Inspect that panel before choosing any refine_drawing plan. "
         "The final SVG must be a designer-quality replacement for the supplied render: eliminate visible design discrepancies, "
         "not merely achieve a close trace; renderer-level antialiasing and gradient residuals are the only acceptable diff. "
-        "Both refine modes retain a live drawing: refine='auto' returns two immutable outputs, pre-refinement v0 and automatic v1; "
+        "Both refine modes retain a live drawing: refine='auto' returns v0 plus one normal revision per executed pass, including unchanged outcomes; use the returned version for the final result. "
         "refine='none' retains raw trace roots for diagnostic review. "
         "Use max_sampling_colors='auto' when palette complexity is unknown. fit_strategy='quadratic' is the stable default; "
         "'progressive' protects pre-fit straight sides then uses Q/C recursion, and 'progressive_allow_lines' also permits L/Q/C fitting during recursion. "
-        "Set corner_normalize=true to canonicalize recognized rounded corners to one endpoint-preserving quadratic in v1 automatic refinement; v0 is unchanged. "
+        "Set corner_normalize=true to canonicalize recognized rounded corners to one endpoint-preserving quadratic during automatic refinement; v0 is unchanged. "
         "Set support_weighted_corners=true when a shallow rounded corner is distributed across adjacent trace vertices; "
         "the detector aggregates that turn only when it meets a credible long support edge. "
         "Set gradient_pretrace=true for gradient-heavy artwork: it traces a simplified material proxy while retaining the original raster for geometry and fills. "
@@ -1222,24 +1232,28 @@ def trace_drawing(
             baseline_candidate_index=0,
         )
     ]
+    pass_results = []
     if options.refine == "auto":
         automatic = _ENGINE.refine_automatically(
             baseline_result.drawing, state,
             corner_normalize=options.corner_normalize,
             refinement_passes=options.refinement_passes,
         )
-        candidates.append(
-            VersionCandidate(
-                drawing=automatic.drawing,
-                evidence=None,
-                submitted_plan=None,
-                submitted_edits=(),
-                effective_recipe=automatic.evidence.recipe,
-                replay=automatic.evidence.replay,
-                label="auto",
-                baseline_candidate_index=0,
-            )
-        )
+        for stage in automatic.passes:
+            candidate_index = None
+            if stage.result is not None:
+                candidate_index = len(candidates)
+                candidates.append(VersionCandidate(
+                    drawing=stage.result.drawing,
+                    evidence=None,
+                    submitted_plan=None,
+                    submitted_edits=(),
+                    effective_recipe=stage.result.evidence.recipe,
+                    replay=stage.result.evidence.replay,
+                    label=stage.name,
+                    baseline_candidate_index=0,
+                ))
+            pass_results.append((stage.name, stage.status, candidate_index))
 
     def prepare(published):
         selected = published[-1]
@@ -1276,6 +1290,7 @@ def trace_drawing(
             {
                 "version": item.id,
                 "parent_version": item.parent_id,
+                "label": item.label or "trace",
                 "artifacts": _drawing_artifact_refs(drawing_id, item.id),
                 "report": canonical_drawing_summary(
                     item.drawing, item.replay.path_correspondence
@@ -1286,6 +1301,9 @@ def trace_drawing(
         result = {
             "drawing_id": drawing_id,
             "outputs": outputs,
+            "passes": [{"name": name, "status": status,
+                "version": published[index].id if index is not None else None}
+                for name, status, index in pass_results],
             "version": selected.id,
             "parent_version": selected.parent_id,
             "requested_base_version": None,

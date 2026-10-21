@@ -237,6 +237,22 @@ class DrawingActionResult(Generic[EvidenceT]):
         object.__setattr__(self, "diagnostics", freeze_value(self.diagnostics))
 
 
+@dataclass(frozen=True)
+class DrawingPassResult(Generic[EvidenceT]):
+    """An executed pass carries a normal revision result, even when unchanged."""
+
+    name: str
+    status: Literal["changed", "unchanged", "disabled"]
+    result: DrawingActionResult[EvidenceT] | None = None
+
+
+@dataclass(frozen=True)
+class AutomaticRefinementResult(DrawingActionResult[EvidenceT]):
+    """Final result plus ordered, independently replayable pass revisions."""
+
+    passes: tuple[DrawingPassResult[EvidenceT], ...] = ()
+
+
 class DrawingEngine(Protocol[EvidenceT]):
     """Deterministic pre-refinement and geometry-operation implementation."""
 
@@ -273,5 +289,5 @@ class DrawingEngine(Protocol[EvidenceT]):
     def refine_automatically(
         self, drawing: Drawing, evidence: EvidenceT, *,
         corner_normalize: bool = False, refinement_passes: RefinementPasses | None = None,
-    ) -> DrawingActionResult[EvidenceT]:
+    ) -> AutomaticRefinementResult[EvidenceT]:
         """Orchestrate selectable passes through the existing geometry operations."""

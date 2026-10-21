@@ -11,6 +11,11 @@ python -m vectormark.evaluation report output/run
 ```
 
 Open `output/run/index.html`: a clean artwork handoff leads into Review / Edit.
+The pass-revision list selects normal retained versions and compares each with
+its actual parent. Every executed refinement pass creates a revision, including
+unchanged outcomes; disabled passes have no revision. The runner captures the
+returned outputs from one trace request, not separate trace executions.
+Parameters and per-region complexity appear below the artwork inspector.
 The selected trial's **Parameters used** disclosure separates its submitted
 request from retained parameters for the displayed artwork. Trace options
 link to their captured response; effective recipe/action overrides and output
