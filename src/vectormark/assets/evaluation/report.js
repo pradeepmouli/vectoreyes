@@ -4,6 +4,7 @@ const $=id=>document.getElementById(id),NS='http://www.w3.org/2000/svg';
 let track='shape',region=null,selection=null,viewport=null,trial=null;
 const layers=new Set(['regions']);
 const versions=bundle.versions;
+queueMicrotask(()=>{renderPassHistory();renderRerunSettings()});
 function text(tag,value,cls){const e=document.createElement(tag);e.textContent=value;if(cls)e.className=cls;return e}
 let svgSerial=0;
 function svgNode(markup){const root=document.importNode(new DOMParser().parseFromString(markup,'image/svg+xml').documentElement,true),prefix='view'+(++svgSerial)+'-',ids=new Map();for(const e of [root,...root.querySelectorAll('[id]')])if(e.id){ids.set(e.id,prefix+e.id);e.id=prefix+e.id}for(const e of [root,...root.querySelectorAll('*')])for(const attr of [...e.attributes]){let value=attr.value;if(attr.localName==='href'&&value.startsWith('#')&&ids.has(value.slice(1)))value='#'+ids.get(value.slice(1));value=value.replace(/url\(\s*(['"]?)#([^)'"\s]+)\1\s*\)/g,(whole,quote,id)=>ids.has(id)?'url(#'+ids.get(id)+')':whole);if(value!==attr.value)e.setAttributeNS(attr.namespaceURI,attr.name,value)}return root}
@@ -46,7 +47,7 @@ function renderParameters(){
 
 function renderPassHistory(){
   if(!bundle.passes?.length)return;
-  if(!$('pass-history'))$('workspace').insertBefore($('pass-history-template').content.cloneNode(true),$('workspace').querySelector('.inspector'));
+  if(!$('pass-history'))$('handoff').append($('pass-history-template').content.cloneNode(true));
   $('pass-list').replaceChildren();
   for(const stage of bundle.passes){
     const button=text('option',(stage.status==='disabled'?'☐ ':'☑ ')+stage.name.replace(/_pass$/,'').replaceAll('_',' ')+
@@ -55,7 +56,76 @@ function renderPassHistory(){
     button.disabled=!stage.version||!versions[stage.version];
     $('pass-list').append(button);
   }
-  $('pass-list').onchange=()=>{trial=bundle.trials.find(t=>t.candidate_version===$('pass-list').value);if(trial)$('trial').value=trial.id;region=selection=viewport=null;render()};
+  $('pass-list').onchange=()=>{trial=bundle.trials.find(t=>t.candidate_version===$('pass-list').value);if(trial)$('trial').value=trial.id;region=selection=viewport=null;render();updateHandoffVersion(current())};
+}
+
+function updateHandoffVersion(version){
+  const value=versions[version];if(!value)return;
+  $('artwork').replaceChildren(svgNode(value.svg));
+  $('download-svg').href=value.file;
+  $('download-svg').download=bundle.run.title.replace(/[^a-z0-9_-]/gi,'-')+'-'+version+'.svg';
+  const accepted=bundle.run.accepted_version===version;
+  $('status').textContent=accepted?'Accepted':'Provisional · '+version;
+  $('delivery-note').textContent=accepted?'Exact accepted SVG, ready to download.':'Selected revision '+version+'; not yet accepted.';
+  $('download-svg').textContent=accepted?'Download SVG':'Download provisional SVG';
+}
+
+function renderRerunSettings(){
+  const box=text('section','','card');box.id='rerun-settings';
+  box.append(text('h2','Prepare a rerun'),text('p','Edit a copy of the captured settings, then hand them to the agent/MCP with the original PNG. Nothing runs or changes in this report.','muted'));
+  $('handoff').append(box);
+  if(!bundle.rerun?.options){box.append(text('p','Captured trace parameters are unavailable. No defaults have been invented.'));return}
+  const options=structuredClone(bundle.rerun.options),form=document.createElement('form');form.className='rerun-grid';
+  const friendly=name=>name.replaceAll('_',' ');
+  const field=(name,value,definition,owner)=>{
+    const label=text('label',friendly(name),'rerun-field');label.title=definition.description||'';
+    const choices=definition.enum||definition.anyOf?.find(v=>v.enum)?.enum;
+    let input;
+    if(typeof value==='boolean'){
+      input=document.createElement('input');input.type='checkbox';input.checked=value;
+      input.onchange=()=>{owner[name]=input.checked};label.classList.add('rerun-toggle');
+    }else if(choices){
+      input=document.createElement('select');for(const choice of choices){const option=text('option',choice);option.value=choice;input.append(option)}input.value=value;
+      input.onchange=()=>{owner[name]=input.value};
+    }else{
+      input=document.createElement('input');input.type='text';input.value=value??'';
+      const alternatives=definition.anyOf||[definition],numeric=alternatives.find(v=>['number','integer'].includes(v.type))||(typeof value==='number'?{type:Number.isInteger(value)?'integer':'number'}:null);
+      input.oninput=()=>{const raw=input.value.trim();let parsed=raw||null,valid=true;
+        if(numeric&&raw!=='auto'&&raw!==''){
+          parsed=Number(raw);valid=Number.isFinite(parsed)&&(numeric.type!=='integer'||Number.isInteger(parsed))&&
+            (numeric.minimum==null||parsed>=numeric.minimum)&&(numeric.maximum==null||parsed<=numeric.maximum)&&
+            (numeric.exclusiveMaximum==null||parsed<numeric.exclusiveMaximum);
+        }else if(numeric&&raw==='auto')valid=alternatives.some(v=>v.const==='auto');
+        if(raw===''&&!alternatives.some(v=>v.type==='null'))valid=false;
+        const pattern=definition.pattern||alternatives.find(v=>v.pattern)?.pattern;
+        if(pattern&&raw)valid=valid&&new RegExp(pattern).test(raw);
+        input.setCustomValidity(valid?'':'Enter a value allowed by the captured schema.');if(valid)owner[name]=parsed;
+      };
+    }
+    input.setAttribute('aria-label',friendly(name));input.dataset.option=name;label.append(input);return label;
+  };
+  for(const [name,value]of Object.entries(options)){
+    const definition=bundle.rerun.schema?.[name]||{};
+    if(value&&typeof value==='object'){
+      const group=text('fieldset','','rerun-group');group.append(text('legend',name==='refinement_passes'?'Refinement pass checklist':friendly(name)));
+      if(name==='refinement_passes')group.append(text('p','Used with refine = auto, in the fixed engine order.','muted'));
+      for(const [key,item]of Object.entries(value))group.append(field(key,item,definition.properties?.[key]||{},value));form.append(group);
+    }else form.append(field(name,value,definition,options));
+  }
+  form.onsubmit=e=>e.preventDefault();box.append(form);
+  const actions=text('div','','toolbar'),copy=text('button','Copy agent/MCP rerun instructions'),save=text('button','Download options JSON'),source=text('a','Download original PNG','button'),status=text('p','','muted');status.id='rerun-status';status.setAttribute('role','status');
+  source.href='original.png';source.download='';
+  const prompt=()=> 'Rerun VectorMark trace_drawing using the original PNG attached with this request (SHA-256 '+bundle.run.source_sha256+'). Supply it using image or image_data, and use exactly these options. Create a new drawing; do not modify the retained revisions in the report.\n\n'+JSON.stringify(options,null,2);
+  copy.onclick=async()=>{if(!form.reportValidity())return;const value=prompt();try{await navigator.clipboard.writeText(value);status.textContent='Copied. Attach original.png with these instructions to the agent.'}catch{const area=document.createElement('textarea');area.value=value;area.setAttribute('aria-label','Rerun instructions');status.replaceChildren(area);area.select()}};
+  save.onclick=()=>{if(form.reportValidity())download('vectormark-rerun-options.json',JSON.stringify(options,null,2),'application/json')};
+  actions.append(copy,save,source);box.append(actions,status);
+}
+
+function differencePane(){
+  const value=versions[current()],svg=document.createElementNS(NS,'svg');svg.dataset.rasterDiff=current();svg.setAttribute('viewBox',fullViewport().join(' '));
+  if(value?.raster_diff){const image=document.createElementNS(NS,'image');image.setAttribute('href',value.raster_diff);image.setAttribute('width',fullViewport()[2]);image.setAttribute('height',fullViewport()[3]);svg.append(image)}
+  else{const message=document.createElementNS(NS,'text');message.setAttribute('x','20');message.setAttribute('y','40');message.textContent='Diff unavailable: source/canvas evidence missing.';svg.append(message)}
+  return svg;
 }
 let comparisonReference='parent';
 let detailScale=4,detailOverlay=false,detailMetric='unsupported';
@@ -83,7 +153,7 @@ function renderDetailOverlay(){
   }
 }
 function renderDetail(){
-  let box=$('boundary-detail');if(!box){box=text('section','','card');box.id='boundary-detail';$('workspace').insertBefore(box,$('workspace').querySelector('.inspector'))}
+    let box=$('boundary-detail');if(!box){box=text('section','','card');box.id='boundary-detail';$('workspace').append(box)}
   const value=versions[current()];box.replaceChildren();box.hidden=!value||track!=='shape';if(box.hidden)return;
   box.append(text('h2','Source-supported boundary detail'));
   box.append(text('p','Turning differences from retained material polylines, not a quality score. Fine-scale differences can be anti-aliasing or raster noise. Feature displacement can contribute to both directions.','muted'));
@@ -158,7 +228,7 @@ function renderCounts(){
   table.append(body);const scroll=text('div','','count-table');scroll.append(table);box.append(scroll);
   box.append(text('p','Unavailable means missing retained evidence, not zero detected features. Deltas require the same drawing, region ID and source-region lineage; merges and splits are not guessed.','muted'));
 }
-function render(){const version=current();renderParameters();renderCounts();$('panes').replaceChildren();if(!version){$('panes').appendChild(text('p','No published artwork. Inspect the trial error below.'));return}const r=versions[version].inspection;$('regions').replaceChildren();for(const item of r.regions){const b=text('button',labelForRegion(item.id),'region');b.setAttribute('aria-pressed',String(item.id===region));b.onclick=()=>selectRegion(item.id);$('regions').appendChild(b)}$('panes').appendChild(pane('Original source',sourcePane()));if(track==='shape'&&trial?.base_version&&versions[trial.base_version]&&trial.base_version!==version)$('panes').appendChild(pane('Parent · '+trial.base_version,versionSvg(trial.base_version)));$('panes').appendChild(pane((trial?.candidate_version===version?'Candidate':'Baseline / parent')+' · '+version,versionSvg(version)));applyViewport();inspect(selection||region);$('export-svg').disabled=false;$('export-png').disabled=false;$('mapping-note').textContent=track==='fill'?'Fill track: geometry remains fixed for each exported version. Cross-version paint verdicts require verified common geometry/support; no fill score is inferred from these pictures.':$('mapping-note').textContent}
+function render(){const version=current();renderParameters();renderCounts();$('panes').replaceChildren();if(!version){$('panes').appendChild(text('p','No published artwork. Inspect the trial error below.'));return}const r=versions[version].inspection;$('regions').replaceChildren();for(const item of r.regions){const b=text('button',labelForRegion(item.id),'region');b.setAttribute('aria-pressed',String(item.id===region));b.onclick=()=>selectRegion(item.id);$('regions').appendChild(b)}$('panes').appendChild(pane('Original source',sourcePane()));if(track==='shape'&&trial?.base_version&&versions[trial.base_version]&&trial.base_version!==version)$('panes').appendChild(pane('Parent · '+trial.base_version,versionSvg(trial.base_version)));$('panes').appendChild(pane((trial?.candidate_version===version?'Candidate':'Baseline / parent')+' · '+version,versionSvg(version)));const diff=pane('Raster → SVG diff · 4×',differencePane());diff.append(text('p','Black = matching pixels. Full appearance diff includes geometry, paint and antialiasing; overlays are excluded.','muted'));if(versions[version].raster_diff_file){const link=text('a','Download diff PNG');link.href=versions[version].raster_diff_file;link.download='';diff.append(link)}$('panes').append(diff);applyViewport();inspect(selection||region);$('export-svg').disabled=false;$('export-png').disabled=false;$('mapping-note').textContent=track==='fill'?'Fill track: geometry remains fixed for each exported version. Cross-version paint verdicts require verified common geometry/support; no fill score is inferred from these pictures.':$('mapping-note').textContent}
 function selectRegion(id){region=id;selection=id;layers.add('commands');layers.add('features');for(const check of document.querySelectorAll('#layers input'))check.checked=layers.has(check.value);render()}
 function focus(){if(!region)return;const svg=versionSvg(current());svg.style.position='absolute';svg.style.visibility='hidden';document.body.appendChild(svg);const paths=svg.querySelectorAll('[data-path-id]');let boxes=[];for(const p of paths)if(p.getAttribute('data-path-id').startsWith(region+'.')){p.style.display='';const box=p.getBBox();if(box.width||box.height)boxes.push(box)}if(!boxes.length){svg.remove();$('mapping-note').textContent='No exact local path bounds. Keep whole drawing or pan/zoom manually.';return}const minX=Math.min(...boxes.map(b=>b.x))-18,minY=Math.min(...boxes.map(b=>b.y))-18,maxX=Math.max(...boxes.map(b=>b.x+b.width))+18,maxY=Math.max(...boxes.map(b=>b.y+b.height))+18;svg.remove();viewport=[minX,minY,maxX-minX,maxY-minY];applyViewport()}
 function zoom(factor){const b=viewport||fullViewport(),w=b[2]*factor,h=b[3]*factor;viewport=[b[0]+(b[2]-w)/2,b[1]+(b[3]-h)/2,w,h];applyViewport()}

@@ -16,6 +16,16 @@ its actual parent. Every executed refinement pass creates a revision, including
 unchanged outcomes; disabled passes have no revision. The runner captures the
 returned outputs from one trace request, not separate trace executions.
 Parameters and per-region complexity appear below the artwork inspector.
+Boundary detail also follows the inspector. The synchronized comparison includes
+an absolute raster-to-clean-SVG RGB diff, amplified 4× on white; annotations and
+neutral review coloring never enter it. Black indicates matching pixels. This
+is a full-appearance diagnostic, not a combined shape/fill acceptance score.
+
+The first page contains retained pass history and an editable copy of the captured
+trace parameters/pass selections. Copy agent/MCP rerun instructions or download
+the options JSON and original PNG. This portable handoff prepares a new trace;
+it does not execute a request or modify existing drawings. Historical parameters
+under Review / Edit remain the actual captured values, not pending edits.
 The selected trial's **Parameters used** disclosure separates its submitted
 request from retained parameters for the displayed artwork. Trace options
 link to their captured response; effective recipe/action overrides and output

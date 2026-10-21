@@ -102,6 +102,19 @@ def write_report(bundle: RunBundle) -> Path:
             mask = Image.open(io.BytesIO(bytes(resvg_py.svg_to_bytes(svg_string=neutral_svg(svg))))).convert("RGBA")
             with Image.open(bundle.artifact_path("source.png")) as image:
                 reference = image.convert("RGBA")
+            from ..raster_review import raster_difference
+            rendered = Image.open(io.BytesIO(bytes(resvg_py.svg_to_bytes(svg_string=svg)))).convert("RGBA")
+            if reference.size == rendered.size:
+                buffer = io.BytesIO()
+                raster_difference(reference, rendered).save(buffer, format="PNG")
+                diff_bytes = buffer.getvalue()
+                diff_file = f"{prefix}/raster-diff.{sha256(diff_bytes).hexdigest()[:16]}.png"
+                bundle.write_artifact(diff_file, diff_bytes)
+                versions[version]["raster_diff"] = "data:image/png;base64,"+base64.b64encode(diff_bytes).decode()
+                versions[version]["raster_diff_file"] = diff_file
+                versions[version]["raster_diff_status"] = "absolute_rgb_4x_white_canvas"
+            else:
+                versions[version]["raster_diff_status"] = "unavailable_source_canvas_mismatch"
             if reference.size == mask.size:
                 reference.putalpha(mask.getchannel("A"))
                 buffer = io.BytesIO(); reference.save(buffer, format="PNG")
@@ -119,6 +132,15 @@ def write_report(bundle: RunBundle) -> Path:
             "source": "data:image/png;base64,"+base64.b64encode(source.read_bytes()).decode() if source.exists() else None}
     trace_response = bundle.artifact_path("trace-response.json")
     data["passes"] = json.loads(trace_response.read_text()).get("passes", []) if trace_response.exists() else []
+    baseline = versions.get(run.baseline_version, {})
+    retained_options = baseline.get("parameters", {}).get("trace_options", {}).get("value")
+    schema = json.loads(trace_response.read_text()).get("trace_options_schema", {}) if trace_response.exists() else {}
+    schemas_file = bundle.artifact_path("tool-schemas.json")
+    definitions = json.loads(schemas_file.read_text()).get("trace_drawing", {}).get("$defs", {}) if schemas_file.exists() else {}
+    for name, definition in tuple(schema.items()):
+        if definition.get("$ref", "").startswith("#/$defs/"):
+            schema[name] = {**definitions.get(definition["$ref"].rsplit("/", 1)[-1], {}), **definition}
+    data["rerun"] = {"options": retained_options, "schema": schema}
     assets = files("vectormark").joinpath("assets/evaluation")
     template = assets.joinpath("report.html").read_text()
     encoded = json.dumps(data, ensure_ascii=False, allow_nan=False).replace("<", "\\u003c").replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")

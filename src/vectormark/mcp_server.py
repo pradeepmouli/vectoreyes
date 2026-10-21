@@ -272,8 +272,8 @@ def _render_review_panel_png(
 
         source = Image.fromarray(np.asarray(source_rgb, dtype=np.uint8)).convert("RGB")
         current = render_svg(current_svg)
-        difference = np.abs(np.asarray(source, dtype=np.int16) - np.asarray(current, dtype=np.int16))
-        difference = Image.fromarray(np.clip(difference * 4, 0, 255).astype(np.uint8), "RGB")
+        from .raster_review import raster_difference
+        difference = raster_difference(source, current)
         legend = Image.new("RGB", (380, 320), "#111827")
         legend_draw = ImageDraw.Draw(legend)
         legend_draw.multiline_text(
