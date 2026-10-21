@@ -42,7 +42,55 @@ function renderParameters(){
   $('exact-request').hidden=!trial;
   if(trial)$('exact-request').href='trials/'+encodeURIComponent(trial.id)+'.json';
 }
-function render(){const version=current();renderParameters();$('panes').replaceChildren();if(!version){$('panes').appendChild(text('p','No published artwork. Inspect the trial error below.'));return}const r=versions[version].inspection;$('regions').replaceChildren();for(const item of r.regions){const b=text('button',labelForRegion(item.id),'region');b.setAttribute('aria-pressed',String(item.id===region));b.onclick=()=>selectRegion(item.id);$('regions').appendChild(b)}$('panes').appendChild(pane('Original source',sourcePane()));if(track==='shape'&&trial?.base_version&&versions[trial.base_version]&&trial.base_version!==version)$('panes').appendChild(pane('Parent · '+trial.base_version,versionSvg(trial.base_version)));$('panes').appendChild(pane((trial?.candidate_version===version?'Candidate':'Baseline / parent')+' · '+version,versionSvg(version)));applyViewport();inspect(selection||region);$('export-svg').disabled=false;$('export-png').disabled=false;$('mapping-note').textContent=track==='fill'?'Fill track: geometry remains fixed for each exported version. Cross-version paint verdicts require verified common geometry/support; no fill score is inferred from these pictures.':$('mapping-note').textContent}
+let comparisonReference='parent';
+function renderCounts(){
+  let box=$('region-counts');
+  if(!box){
+    box=text('section','','card');box.id='region-counts';
+    $('workspace').insertBefore(box,$('workspace').querySelector('.inspector'));
+  }
+  box.replaceChildren();
+  const version=current(),value=versions[version];box.hidden=!value;if(!value)return;
+  box.append(text('h2','Per-region complexity'));
+  const controls=text('div','','toolbar'),label=text('label','Compare with '),select=document.createElement('select');
+  select.setAttribute('aria-label','Count comparison reference');
+  for(const [key,title] of [['parent','Parent'],['baseline','Baseline']]){
+    const option=text('option',title);option.value=key;option.disabled=!value.comparisons?.[key];select.append(option);
+  }
+  if(!value.comparisons?.[comparisonReference])comparisonReference='baseline';
+  select.value=comparisonReference;select.onchange=()=>{comparisonReference=select.value;renderCounts()};
+  label.append(select);controls.append(label);
+  const exportButton=text('button','Download counts JSON');
+  exportButton.onclick=()=>download(version+'-counts.json',JSON.stringify({drawing_id:value.inspection.drawing_id,version,
+    regions:value.inspection.regions.map(r=>({id:r.id,counts:r.counts})),comparisons:value.comparisons},null,2),'application/json');
+  controls.append(exportButton);box.append(controls);
+  const comparison=value.comparisons?.[comparisonReference];
+  const comparable=comparison?.status==='compared';
+  box.append(text('p',(comparable?'Comparing '+comparison.reference_version+' → '+version+'. ':'Comparison unavailable; showing '+version+' only. ')+
+    'Local retained paths and commands, excluding moves. Primitive and clone geometry has no local path commands. Counts are not a quality verdict.','muted'));
+  const table=text('table'),head=text('tr');
+  for(const title of ['Region','Paths','L / Q / C / A','Free','Corner-owned','Corners (point / rounded)','Δ segments','Δ corners','Match']){
+    const th=text('th',title);th.scope='col';head.append(th);
+  }
+  const thead=text('thead');thead.append(head);table.append(thead);const body=text('tbody');
+  const rows=comparable?comparison.regions:value.inspection.regions.map(r=>({id:r.id,after:r.counts,status:'comparison_unavailable'}));
+  const number=v=>v==null?'Unavailable':String(v);
+  const types=c=>c?['line','quadratic','cubic','arc'].map(k=>c.by_type?.[k]??0).join(' / '):'—';
+  const corners=c=>c?c.corners==null?'Unavailable':c.corners+' ('+c.point_corners+' / '+c.rounded_corners+')':'—';
+  const pair=(row,format)=>row.before?format(row.before)+' → '+(row.after?format(row.after):'—'):row.after?format(row.after):'—';
+  const delta=v=>v==null?'—':v>0?'+'+v:String(v);
+  for(const row of rows){
+    if(region&&row.id!==region)continue;
+    const tr=text('tr');tr.dataset.regionCountId=row.id;
+    const th=text('th',row.id);th.scope='row';tr.append(th);
+    for(const cell of [pair(row,c=>number(c.paths)),pair(row,types),pair(row,c=>number(c.free_commands)),
+      pair(row,c=>number(c.corner_commands)),pair(row,corners),delta(row.delta?.commands),delta(row.delta?.corners),row.status.replaceAll('_',' ')])tr.append(text('td',cell));
+    body.append(tr);
+  }
+  table.append(body);const scroll=text('div','','count-table');scroll.append(table);box.append(scroll);
+  box.append(text('p','Unavailable means missing retained evidence, not zero detected features. Deltas require the same drawing, region ID and source-region lineage; merges and splits are not guessed.','muted'));
+}
+function render(){const version=current();renderParameters();renderCounts();$('panes').replaceChildren();if(!version){$('panes').appendChild(text('p','No published artwork. Inspect the trial error below.'));return}const r=versions[version].inspection;$('regions').replaceChildren();for(const item of r.regions){const b=text('button',labelForRegion(item.id),'region');b.setAttribute('aria-pressed',String(item.id===region));b.onclick=()=>selectRegion(item.id);$('regions').appendChild(b)}$('panes').appendChild(pane('Original source',sourcePane()));if(track==='shape'&&trial?.base_version&&versions[trial.base_version]&&trial.base_version!==version)$('panes').appendChild(pane('Parent · '+trial.base_version,versionSvg(trial.base_version)));$('panes').appendChild(pane((trial?.candidate_version===version?'Candidate':'Baseline / parent')+' · '+version,versionSvg(version)));applyViewport();inspect(selection||region);$('export-svg').disabled=false;$('export-png').disabled=false;$('mapping-note').textContent=track==='fill'?'Fill track: geometry remains fixed for each exported version. Cross-version paint verdicts require verified common geometry/support; no fill score is inferred from these pictures.':$('mapping-note').textContent}
 function selectRegion(id){region=id;selection=id;layers.add('commands');layers.add('features');for(const check of document.querySelectorAll('#layers input'))check.checked=layers.has(check.value);render()}
 function focus(){if(!region)return;const svg=versionSvg(current());svg.style.position='absolute';svg.style.visibility='hidden';document.body.appendChild(svg);const paths=svg.querySelectorAll('[data-path-id]');let boxes=[];for(const p of paths)if(p.getAttribute('data-path-id').startsWith(region+'.')){p.style.display='';const box=p.getBBox();if(box.width||box.height)boxes.push(box)}if(!boxes.length){svg.remove();$('mapping-note').textContent='No exact local path bounds. Keep whole drawing or pan/zoom manually.';return}const minX=Math.min(...boxes.map(b=>b.x))-18,minY=Math.min(...boxes.map(b=>b.y))-18,maxX=Math.max(...boxes.map(b=>b.x+b.width))+18,maxY=Math.max(...boxes.map(b=>b.y+b.height))+18;svg.remove();viewport=[minX,minY,maxX-minX,maxY-minY];applyViewport()}
 function zoom(factor){const b=viewport||fullViewport(),w=b[2]*factor,h=b[3]*factor;viewport=[b[0]+(b[2]-w)/2,b[1]+(b[3]-h)/2,w,h];applyViewport()}

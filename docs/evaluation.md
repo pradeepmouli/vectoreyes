@@ -20,6 +20,20 @@ effective settings for an unpublished candidate.
 The report is self-contained for offline inspection; SVG download targets the
 exact saved file beside it. It does not execute plans from browser selections.
 
+Review / Edit also shows **Per-region complexity**, comparing the displayed
+version with its captured parent or baseline. It lists local paths, L/Q/C/A
+segments, corner-owned/free commands and point/rounded corners, with downloadable
+JSON. Select a region to focus the table. Missing corner evidence is unavailable,
+not zero; primitive/clone geometry has no local path commands. Count deltas need
+the same drawing, region ID and nonempty source-region lineage. Missing,
+ambiguous or changed lineage stays unpaired rather than guessing merge/split
+correspondence. Fewer commands alone are not a quality verdict.
+
+Report regeneration derives inspection counts from captured production responses,
+not from re-tracing the image or trusting an old derived inspection summary.
+Saved response, recipe, source, SVG and inspection artifacts remain unchanged.
+An SVG without its captured response is not a count-bearing production version.
+
 The run records exact requests, failures, candidate versions, artifacts and
 independent shape/fill verdicts. No version is accepted automatically. Use
 `review --track shape|fill` and then `accept` only after actual image review.

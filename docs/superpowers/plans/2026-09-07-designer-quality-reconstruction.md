@@ -2915,3 +2915,38 @@ Validation: all 1,466 source tests pass (144.28s, 1,037 existing warnings).
 The 37-case focused group also passes against the compiled engine (2.49s,
 two existing warnings). No engine code changed, so no native rebuild or
 deployment was required for this diagnostic-only retirement.
+
+### Production-state complexity review — 2026-10-20
+
+The existing evaluation report now compares local per-region path/command and
+corner counts against the captured parent and baseline. It reuses exact stored
+production responses, parameter snapshots and canonical annotation maps; no
+alternative tracing, fitting or feature detection is introduced. Derived
+inspection views are rebuilt from those responses without replacing immutable
+capture files. Missing/null/stale corner provenance remains unavailable rather
+than becoming zero corners or classifying all commands as free.
+
+Counts include local paths, L/Q/C/A commands, corner-owned/free commands, and
+point/rounded corners. The UI supports region filtering, parent/baseline
+selection and JSON download. Clones and primitives explicitly have no local
+path commands. Deltas require the same drawing ID, unique region IDs and
+matching nonempty source-region lineage; other cases remain unpaired. This
+does not yet supply general merge/split correspondence or a quality verdict.
+
+The saved production progressive/subpixel 2 px Radish bundle was re-rendered
+without re-tracing: its existing v0.4 plan revision shows navy 19→15 and red
+6→5 drawable commands, with corner counts unchanged. All 30 retained response,
+recipe, raw-trace, inspection and SVG artifacts remain byte-identical. This is
+a historical plan comparison, not a new automatic-fitting benchmark. Browser
+checks cover selection, missing comparisons, failed trials, JSON download and
+mobile table overflow. Temporary regression checks follow the existing report
+plan's no-new-permanent-tests constraint. Broader appearance, design-constraint,
+fill-completion and autonomous evaluation work remains open.
+
+Validation: all 1,466 source tests pass (159.94s, 1,037 existing warnings).
+Eight temporary report checks pass against source and the final installed wheel
+(3.11s for the wheel run); the packaged JS/CSS match source bytes. The wheel
+re-renders the saved Radish bundle successfully. Browser checks include actual
+JSON download, failed-trial parent display, missing-comparison handling, region
+filtering and 390 px mobile overflow. Focused lint, JS syntax and whitespace
+checks pass. No fitting defaults changed and no live deployment occurred.

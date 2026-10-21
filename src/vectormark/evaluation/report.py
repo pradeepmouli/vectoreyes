@@ -11,7 +11,7 @@ from typing import Any
 from .bundle import RunBundle
 from .models import ViewSpec
 from .views import export_view, safe_svg
-from .inspection import _fields
+from .inspection import _fields, build_inspection, compare_inspections
 
 
 def parameter_snapshot(bundle: RunBundle, version: str) -> dict[str, Any]:
@@ -64,10 +64,17 @@ def write_report(bundle: RunBundle) -> Path:
     for version in dict.fromkeys(t["candidate_version"] for t in trials if t["candidate_version"]):
         prefix = f"versions/{version}"
         svg_file = bundle.artifact_path(f"{prefix}/svg.svg")
-        snapshot_file = bundle.artifact_path(f"{prefix}/inspection.json")
-        if not svg_file.exists() or not snapshot_file.exists():
+        response_file = bundle.artifact_path(f"{prefix}/response.json")
+        if not svg_file.exists() or not response_file.exists():
             continue
-        svg, inspection = svg_file.read_text(), json.loads(snapshot_file.read_text())
+        response = json.loads(response_file.read_text())
+        def captured(kind):
+            path = bundle.artifact_path(f"{prefix}/{kind}.json")
+            return json.loads(path.read_text()) if path.exists() else {}
+        # Recompute derived views from captured engine output, not a potentially
+        # stale derived inspection. Never rewrite the immutable capture files.
+        svg = svg_file.read_text()
+        inspection = build_inspection(response, captured('raw_trace'), captured('plan'))
         safe_svg(svg)
         mapping = bundle.artifact_path(f"{prefix}/path_map.svg")
         out = bundle.artifact_path(f"{prefix}/inspector")
@@ -76,7 +83,8 @@ def write_report(bundle: RunBundle) -> Path:
         import xml.etree.ElementTree as ET
         versions[version] = {"inspection": inspection, "svg": ET.tostring(safe_svg(svg), encoding="unicode"),
                                "inspector_svg": out.with_suffix(".svg").read_text(), "file": f"{prefix}/svg.svg",
-                               "parameters": parameter_snapshot(bundle, version)}
+                                "parameters": parameter_snapshot(bundle, version),
+                                "parent_version": response.get('parent_version')}
         # Use the exact current geometry's coverage for both source and paint
         # inspection. This is a comparison support mask, not a new segmentation.
         if bundle.artifact_path("source.png").exists():
@@ -94,6 +102,10 @@ def write_report(bundle: RunBundle) -> Path:
                 versions[version]["fill_support"] = "current_geometry_coverage"
             else:
                 versions[version]["fill_support"] = "unavailable_source_canvas_mismatch"
+    for value in versions.values():
+        value['comparisons'] = {name: compare_inspections(versions[reference]['inspection'], value['inspection'])
+            if reference in versions else None
+            for name, reference in (('baseline', run.baseline_version), ('parent', value['parent_version']))}
     source = bundle.artifact_path("source.png")
     data = {"run": run.model_dump(mode="json"), "trials": trials, "versions": versions,
             "source": "data:image/png;base64,"+base64.b64encode(source.read_bytes()).decode() if source.exists() else None}
