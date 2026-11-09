@@ -2,7 +2,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from tests._render import render_svg
-from vectormark.pipeline import AxisLine, IdealizeReport, Options, idealize
+from vectoreyes.pipeline import AxisLine, IdealizeReport, Options, idealize
 
 
 def _disc(n=64):

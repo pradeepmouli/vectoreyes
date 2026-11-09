@@ -1,16 +1,16 @@
 import numpy as np
 
-from vectormark.skia_geometry import SkPath, affinity
-from vectormark.candidate import FlatFill, LinearGradientFill
-from vectormark.emit import refinement_objects_to_svg
-from vectormark.fit import Shape
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.refinement.passes.clones import clones_pass
+from vectoreyes.skia_geometry import SkPath, affinity
+from vectoreyes.candidate import FlatFill, LinearGradientFill
+from vectoreyes.emit import refinement_objects_to_svg
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.refinement.passes.clones import clones_pass
 
 
 def _mask_for_polygon(poly: SkPath, shape_hw: tuple[int, int] = (96, 96)) -> np.ndarray:
-    from vectormark.refinement.gate import rasterize
+    from vectoreyes.refinement.gate import rasterize
 
     return rasterize(poly, shape_hw)
 
@@ -120,7 +120,7 @@ def test_clones_pass_checks_nearby_descriptor_buckets_before_rejecting(monkeypat
     masks = {obj.id: _mask_for_polygon(obj.footprint) for obj in objects}
 
     monkeypatch.setattr(
-        "vectormark.clone_detection._best_transform",
+        "vectoreyes.clone_detection._best_transform",
         lambda _canonical, target, **_kwargs: ((1.0, 0.0, 0.0, 1.0, 34.0, 22.0), target),
     )
     proposals = clones_pass(objects, masks)
@@ -183,7 +183,7 @@ def test_clones_pass_does_not_chain_targets_as_canonicals(monkeypatch):
             return (1.0, 0.0, 0.0, 1.0, target_flat.centroid.x - canonical_flat.centroid.x, 0.0), target_flat
         return None
 
-    monkeypatch.setattr("vectormark.clone_detection._best_transform", _nontransitive_match)
+    monkeypatch.setattr("vectoreyes.clone_detection._best_transform", _nontransitive_match)
     objects = [canonical, middle, target]
     masks = {obj.id: _mask_for_polygon(obj.footprint) for obj in objects}
 

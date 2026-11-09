@@ -1,7 +1,7 @@
 # Agent-Guided Drawing MCP Design
 
 **Date:** 2026-07-10  
-**Area:** `src/vectormark/mcp_server.py` plus new trace, plan, and session-state modules.
+**Area:** `src/vectoreyes/mcp_server.py` plus new trace, plan, and session-state modules.
 
 ## Goal
 
@@ -24,7 +24,24 @@ refine_drawing(plan)
 
 The drawing workflow is stateful and MCP-server-local. It retains an immutable
 `Drawing` snapshot for every version. A `DrawingRegion` carries canonical typed
-geometry, fill, z-order, stable region ID, and region-level source provenance.
+geometry, fill, z-order, stable region ID, optional lowercase hyphenated name,
+and region-level source provenance. Parent regions with children are groups;
+there is no independent Group or Layer engine type. `set_region_name` is a
+metadata-only action, performed before geometric revisions. Region inputs accept
+stable ID strings or explicit `{"name":"orange-band"}` selectors; accepted
+recipes resolve names to IDs in the selected version/ordered plan state.
+Ambiguous names fail with matching IDs, and renaming cannot retarget old recipes.
+Commands, paths and feature IDs remain version-scoped fitted addresses.
+
+Cutouts are relationships between ordinary regions: `assign_cutout(source,
+targets)` retains geometry and declares subtraction at export. The source owns
+the stable target IDs in `cutout_targets`; an empty list removes the relationship.
+Parent targets cover descendants. Self/subtree subtraction, nested operands and
+cycles are rejected; referenced targets cannot be silently retired. This is
+independent of color-inferred automatic background cutouts and paint order.
+Editable SVG supplies standard titles, Inkscape labels and versioned metadata;
+parent regions serialize as groups without changing paint order. Plain SVG
+omits application extensions, and visual rendering always uses standard SVG.
 Raster masks, Skia footprints, and optimizer IDs are private engine evidence;
 they are not fields on the scene contract.
 `refine_drawing` accepts no image and reads the opaque `drawing_id` from the
@@ -154,7 +171,7 @@ planning when a root needs a custom path.
 
 ```json
 {
-  "version": "vectormark.plan.v1",
+  "version": "vectoreyes.plan.v1",
   "drawing_id": "drw_<opaque>",
   "base_version": "v0",
   "label": "optional user-facing description",
@@ -242,10 +259,12 @@ fit_path(target)
 fit_primitive(target, type)
 update_geometry(target, ops[])
 set_fill(target, fill)
-assign_clone(source, target, transforms[])
+assign_clone(source, target, transforms[], symbolic=true)
+reconstruct_occlusion(target, regions[], children[], base_z?)
+normalize_topology()
 set_symmetry(target, axis)
 align(target, reference, axes)
-stitch(targets?)
+stitch(targets?, cubic=false, post_symmetry=false, allow_underlap=true)
 set_z_order(targets[])
 ```
 
@@ -273,7 +292,7 @@ scene, plan, store, or MCP contracts.
 
 Drawing actions may lower to the same path machinery internally without
 changing the public plan hierarchy. `merge` and `split` create a new outline
-and refit it; `set_symmetry` half-fits, mirrors, and unions a path; `stitch`
+and refit it; `set_symmetry` mirrors and unions the retained path without refitting; `stitch`
 reconciles corresponding region boundaries. `align`, `assign_clone`, and fill
 assignment remain region operations.
 
@@ -292,8 +311,17 @@ assignment remain region operations.
   command-addressed operations update retained path geometry without changing
   the geometry representation. Agents do not author final SVG coordinates.
 - `assign_clone` establishes a source/target relationship and applies one or more
-  transforms. The target becomes `CloneGeometry`; its fill remains independent
-  of the source, so visually related clones may use different fills.
+  transforms. By default the target becomes `CloneGeometry`; `symbolic=false`
+  materializes the transforms without fitting, with one child per instance when
+  there are multiple transforms. Its fill remains independent of the source.
+- `reconstruct_occlusion` publishes an explicit typed graph of completed
+  primitives, retained source boundaries, and intersection lenses through the
+  automatic reconstruction constructor. Child paint comes from named source
+  regions; dependency and live-clone checks remain mandatory.
+- `normalize_topology` is drawing-wide retained component/ownership normalization,
+  including command correspondence and dependent clones, not an intentional split.
+  These two structural declarations must be final in a plan; edit their returned
+  regions in a subsequent revision.
 - `set_symmetry` establishes self-symmetry for a target from an explicit axis.
   The resulting geometry is a `PathGeometryWithSymmetry`. Before seam polish,
   self-symmetry is materialized and unioned so the axis cannot emit a hairline.
@@ -345,7 +373,8 @@ snap(target, reference)
 break(target)
 reverse(target)
 mirror(target, reference, axis)
-simplify()
+simplify(linelet_only=false, samples=16, cubic=false, max_boundary_error?)
+smooth(max_boundary_error?)
 normalize_corners()
 ```
 
@@ -364,9 +393,15 @@ normalize_corners()
 - `set_parallel` preserves the target's existing length unless `distance` is
   supplied; without a distance it fits parallel geometry within the retained
   region evidence.
-- `simplify` and `normalize_corners` are path-only. Corner normalization may
+- `simplify`, `smooth` and `normalize_corners` are path-only. Corner normalization may
   operate only on existing pre-fit corner provenance; it cannot invent a new
   corner from a post-fit tangent.
+- Simplification and smoothing use the same discovery and execution as automatic
+  passes. Their optional `max_boundary_error` defaults to resolved `max_error`;
+  explicit zero is valid. Automatic linelet-only cleanup can be requested via
+  `linelet_only=true`; the public broader simplification default is unchanged.
+  Cleanup positions/repetitions among direct edits are preserved, and replay
+  applies recorded operations/settings without rediscovery.
 
 Corner diagnostics distinguish boundary anchors from owned geometry. Each
 rounded span records `entry_command` and `exit_command` (command-end anchor
@@ -464,7 +499,7 @@ target-level geometry/fill/provenance summaries. Call
 
 ### Trace-engine boundary and native follow-up
 
-The tracing implementation is VectorMark's own pipeline: palette segmentation,
+The tracing implementation is vectorEyes's own pipeline: palette segmentation,
 `find_contours`, and custom line/Bézier fitting. It is not Potrace or vtracer.
 The MCP MVP wraps it behind a `TraceEngine.trace(rgb, options) -> TraceResult`
 boundary. The initial implementation uses the existing Python/scikit-image

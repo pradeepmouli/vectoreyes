@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from vectormark.pipeline import Options, idealize
-from vectormark.symmetry import _axis_mismatch, detect_symmetry_rotation
+from vectoreyes.pipeline import Options, idealize
+from vectoreyes.symmetry import _axis_mismatch, detect_symmetry_rotation
 
 from tests._render import render_svg, ssim
 

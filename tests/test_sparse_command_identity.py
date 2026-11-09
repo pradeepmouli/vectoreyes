@@ -1,9 +1,9 @@
 from dataclasses import replace
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import ActionSettings, UpdateGeometryAction
-from vectormark.path_geometry import parse_svg_paths
-from vectormark.path_operations import apply_region_path_operations
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import ActionSettings, UpdateGeometryAction
+from vectoreyes.path_geometry import parse_svg_paths
+from vectoreyes.path_operations import apply_region_path_operations
 
 
 def test_sparse_command_ids_cannot_be_shadowed_by_synthetic_closure():

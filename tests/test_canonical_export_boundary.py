@@ -1,6 +1,6 @@
 """Only canonical drawings may cross the SVG/report serialization boundary."""
 
-from vectormark import drawing_refine
+from vectoreyes import drawing_refine
 
 
 def test_working_region_executor_has_no_parallel_export_adapter():
@@ -12,11 +12,11 @@ def test_working_region_executor_has_no_parallel_export_adapter():
 
 def test_trace_diagnostics_describe_published_paint():
     import numpy as np
-    from vectormark.drawing_engine import RasterImage, TraceDrawingRequest
-    from vectormark.drawing_fill import serialize_fill
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.output_settings import DrawingOutputSettings
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectoreyes.drawing_engine import RasterImage, TraceDrawingRequest
+    from vectoreyes.drawing_fill import serialize_fill
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.output_settings import DrawingOutputSettings
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
 
     rgb = np.full((32, 32, 3), 255, dtype=np.uint8)
     rgb[6:26, 6:26] = (20, 80, 140)

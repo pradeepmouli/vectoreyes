@@ -3,11 +3,11 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing import Canvas
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing import Canvas
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import (
     CirclePrimitive, CornerAnchor, EllipsePrimitive, PolygonPrimitive,
     PrimitiveGeometry, RectanglePrimitive, RoundedRectanglePrimitive,
     geometry_from_svg_d,
@@ -24,9 +24,9 @@ from vectormark.path_geometry import (
      {'points': ((0, 0), (8, 0), (0, 8))}),
 ])
 def test_retained_primitive_publication_preserves_evidence_and_paint(primitive, kind, params):
-    from vectormark.drawing import DrawingRegion
-    from vectormark.drawing_adapter import publish_selected_leaf
-    from vectormark.primitive_fitting import primitive_geometry_from_shape
+    from vectoreyes.drawing import DrawingRegion
+    from vectoreyes.drawing_adapter import publish_selected_leaf
+    from vectoreyes.primitive_fitting import primitive_geometry_from_shape
     original = Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8})
     raster = np.ones((10, 10), dtype=bool)
     target = RegionSample(id=7, current=original, original=original, raster=raster,
@@ -44,8 +44,8 @@ def test_retained_primitive_publication_preserves_evidence_and_paint(primitive, 
 
 
 def test_selected_leaf_publication_retains_canonical_path_and_source_identity():
-    from vectormark.drawing import DrawingRegion
-    from vectormark.drawing_adapter import publish_selected_leaf
+    from vectoreyes.drawing import DrawingRegion
+    from vectoreyes.drawing_adapter import publish_selected_leaf
     path = annotated()
     target = RegionSample(id=7, current=Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8}),
         fill=FlatFill('#ABCDEF'), source_regions=('material-1',),
@@ -60,8 +60,8 @@ def test_selected_leaf_publication_retains_canonical_path_and_source_identity():
 
 
 def test_selected_leaf_publication_does_not_restore_retired_corner_diagnostics():
-    from vectormark.drawing import DrawingRegion
-    from vectormark.drawing_adapter import publish_selected_leaf
+    from vectoreyes.drawing import DrawingRegion
+    from vectoreyes.drawing_adapter import publish_selected_leaf
     target = RegionSample(id=7, current=Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8}),
         fill=FlatFill('#ABCDEF'), diagnostics={'corners': {'stale': True}, 'retained': True})
     selected = DrawingRegion(id='r7', geometry=PrimitiveGeometry(CirclePrimitive((4, 4), 3)),
@@ -78,10 +78,10 @@ def annotated():
 
 
 def test_automatic_primitive_replay_publishes_selected_values_without_refitting(monkeypatch):
-    from vectormark.refinement.automatic_replay import select_refinements_with_intent, replay_batches
-    from vectormark.refinement.passes.primitives import primitives_pass
-    from vectormark.refinement.trace import trace_regions
-    from vectormark.pipeline import Options
+    from vectoreyes.refinement.automatic_replay import select_refinements_with_intent, replay_batches
+    from vectoreyes.refinement.passes.primitives import primitives_pass
+    from vectoreyes.refinement.trace import trace_regions
+    from vectoreyes.pipeline import Options
     yy, xx = np.ogrid[:100, :100]
     image = np.full((100, 100, 3), 255, np.uint8)
     image[(yy - 50) ** 2 + (xx - 50) ** 2 <= 30 ** 2] = (200, 30, 30)
@@ -89,18 +89,18 @@ def test_automatic_primitive_replay_publishes_selected_values_without_refitting(
     accepted = select_refinements_with_intent(regions, masks, [primitives_pass])
     def forbidden(*args, **kwargs):
         pytest.fail('retained primitive replay ran recognition')
-    monkeypatch.setattr('vectormark.refinement.passes.primitives.recognize_primitive_geometry', forbidden)
-    monkeypatch.setattr('vectormark.primitive_fitting.recognize_primitive', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.passes.primitives.recognize_primitive_geometry', forbidden)
+    monkeypatch.setattr('vectoreyes.primitive_fitting.recognize_primitive', forbidden)
     replayed = replay_batches(regions, accepted.batches, masks=masks)
     assert replayed[0].current == accepted.objects[0].current
     assert replayed[0].fill == accepted.objects[0].fill
-    from vectormark.primitive_fitting import primitive_geometry_from_shape
+    from vectoreyes.primitive_fitting import primitive_geometry_from_shape
     assert primitive_geometry_from_shape(replayed[0].current) == accepted.batches[0].operations[0].intent.action.primitive
 
 
 def test_corner_publication_keeps_downstream_precision_and_siblings():
-    from vectormark.drawing_replay import restore_corner_annotations
-    from vectormark.refinement.replay_binding import capture_replay_state
+    from vectoreyes.drawing_replay import restore_corner_annotations
+    from vectoreyes.refinement.replay_binding import capture_replay_state
     raw = 'M0 0 L10.123456789 0 L10 10 L0 10 Z'
     shape = Shape('path', {'d': raw, 'path_ids': ('r1.p0',), 'debug': 'preserved'})
     target = RegionSample(id=1, current=shape, fill=None, drawing_id='r1', raster=np.ones((12, 12), dtype=bool))
@@ -121,8 +121,8 @@ def test_corner_publication_keeps_downstream_precision_and_siblings():
     (Shape('path', {'d': 'M0 0 Q5 0 10 0 L10 10 L0 10 Z'}), 'command topology'),
 ])
 def test_corner_publication_rejects_incompatible_downstream_geometry(shape, reason):
-    from vectormark.drawing_replay import restore_corner_annotations
-    from vectormark.refinement.replay_binding import capture_replay_state
+    from vectoreyes.drawing_replay import restore_corner_annotations
+    from vectoreyes.refinement.replay_binding import capture_replay_state
     target = RegionSample(id=1, current=shape, fill=None, drawing_id='r1')
     state = capture_replay_state((target,), Canvas(12, 12))
     with pytest.raises(ValueError, match=reason):
@@ -131,7 +131,7 @@ def test_corner_publication_rejects_incompatible_downstream_geometry(shape, reas
 
 @pytest.mark.parametrize('branch', [False, True])
 def test_root_metadata_publication_keeps_selected_geometry_and_evidence(branch):
-    from vectormark.drawing_adapter import restore_working_root_metadata
+    from vectoreyes.drawing_adapter import restore_working_root_metadata
 
     original = RegionSample(1, Shape('rect', {'x': 0, 'y': 0, 'w': 8, 'h': 8}),
         None, drawing_id='r7', source_regions=('material3',))
@@ -151,7 +151,7 @@ def test_root_metadata_publication_keeps_selected_geometry_and_evidence(branch):
 
 @pytest.mark.parametrize('explicit_addresses', [False, True])
 def test_working_evidence_uses_the_same_scoped_addresses_as_canonical_geometry(explicit_addresses):
-    from vectormark.drawing_adapter import working_region_evidence
+    from vectoreyes.drawing_adapter import working_region_evidence
 
     shape = Shape('rect', {'x': 0, 'y': 0, 'w': 2, 'h': 2})
     children = tuple(RegionSample(1, shape, None,
@@ -170,7 +170,7 @@ def test_working_evidence_uses_the_same_scoped_addresses_as_canonical_geometry(e
 
 
 def test_canonical_child_publication_preserves_implicit_address_raster():
-    from vectormark.drawing_adapter import drawing_from_region_samples, publish_region_update
+    from vectoreyes.drawing_adapter import drawing_from_region_samples, publish_region_update
 
     shape = Shape('rect', {'x': 0, 'y': 0, 'w': 2, 'h': 2})
     left = RegionSample(1, shape, None, raster=np.ones((3, 3), dtype=bool))

@@ -1,6 +1,6 @@
 import numpy as np
-from vectormark.color import srgb_to_oklab, oklab_to_srgb, delta_e
-from vectormark.color import extract_palette, quantize
+from vectoreyes.color import srgb_to_oklab, oklab_to_srgb, delta_e
+from vectoreyes.color import extract_palette, quantize
 
 
 def test_oklab_roundtrip():

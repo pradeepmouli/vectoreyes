@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_actions import MergeAction, SplitAction
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.drawing_adapter import drawing_from_region_samples, publish_drawing_update
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_actions import MergeAction, SplitAction
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.drawing_adapter import drawing_from_region_samples, publish_drawing_update
 
 
 def leaf(identity, x, *, drawing_id=None, source="source"):
@@ -23,11 +23,11 @@ def leaf(identity, x, *, drawing_id=None, source="source"):
 
 
 def test_partition_actions_consume_canonical_drawing_without_working_regions():
-    from vectormark.drawing import Canvas, Drawing, DrawingRegion
-    from vectormark.drawing_fill import FlatFill as CanonicalFill
-    from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
-    from vectormark.geometry_native import region_path
-    from vectormark.drawing_partition import merge_regions, split_region
+    from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+    from vectoreyes.drawing_fill import FlatFill as CanonicalFill
+    from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
+    from vectoreyes.geometry_native import region_path
+    from vectoreyes.drawing_partition import merge_regions, split_region
     source = DrawingRegion('orange', PrimitiveGeometry(RectanglePrimitive((0, 0), 10, 10)),
         fill=CanonicalFill('#123456'), source_region_ids=('material-a',))
     neighbor = DrawingRegion('teal', PrimitiveGeometry(RectanglePrimitive((10, 0), 10, 10)),
@@ -49,8 +49,8 @@ def test_partition_actions_consume_canonical_drawing_without_working_regions():
 
 
 def test_canonical_merge_publication_retains_union_of_source_observations():
-    from vectormark.drawing_adapter import drawing_from_region_samples, publish_drawing_update
-    from vectormark.drawing_partition import merge_regions
+    from vectoreyes.drawing_adapter import drawing_from_region_samples, publish_drawing_update
+    from vectoreyes.drawing_partition import merge_regions
     left, right = leaf(1, 0, drawing_id='r1', source='a'), leaf(2, 10, drawing_id='r2', source='b')
     drawing = drawing_from_region_samples('merge', width=40, height=20, regions=(left, right))
     result = publish_drawing_update(merge_regions(drawing,
@@ -62,7 +62,7 @@ def test_canonical_merge_publication_retains_union_of_source_observations():
 
 
 def test_merge_engine_removes_only_selected_scoped_children():
-    from vectormark.drawing_partition import merge_regions
+    from vectoreyes.drawing_partition import merge_regions
 
     selected, sibling = leaf(1, 0, source="a"), leaf(2, 20, source="b")
     root = RegionSample.branch(id=10, drawing_id="r1", children=(selected, sibling))
@@ -89,8 +89,8 @@ def test_merge_engine_removes_only_selected_scoped_children():
     ],
 )
 def test_split_engine_preserves_scope_union_and_source_evidence(divider):
-    from vectormark.drawing_adapter import working_leaf_targets
-    from vectormark.drawing_partition import split_region
+    from vectoreyes.drawing_adapter import working_leaf_targets
+    from vectoreyes.drawing_partition import split_region
 
     source, sibling = leaf(1, 0, source="a"), leaf(2, 20, source="b")
     root = RegionSample.branch(id=10, drawing_id="r1", children=(source, sibling))
@@ -125,7 +125,7 @@ def test_split_engine_preserves_scope_union_and_source_evidence(divider):
     ],
 )
 def test_split_engine_rejects_invalid_divider_without_mutating_input(divider, message):
-    from vectormark.drawing_partition import split_region
+    from vectoreyes.drawing_partition import split_region
 
     source = leaf(1, 0, drawing_id="r1")
     shape = source.current
@@ -136,3 +136,106 @@ def test_split_engine_rejects_invalid_divider_without_mutating_input(divider, me
     assert drawing.region('r1').geometry is geometry
     assert source.current is shape
     assert source.is_leaf
+
+
+@pytest.mark.parametrize('divider', [
+    'M6 8 Q0 10 6 12',
+    'M6 12 Q0 10 6 8',
+    'M10 0 L10 20',
+])
+def test_path_split_preserves_existing_holes(divider):
+    from vectoreyes.drawing_partition import split_region
+    from vectoreyes.geometry_native import region_path
+    from vectoreyes.skia_geometry import SkPath
+
+    shape = Shape('path', {'d': (
+        'M0 0 L20 0 L20 20 L0 20 Z '
+        'M6 6 L6 14 L14 14 L14 6 Z '
+        'M2 2 L2 4 L4 4 L4 2 Z'
+    ), 'fill_rule': 'evenodd'})
+    source = RegionSample(1, shape, FlatFill('#123456'), 0, drawing_id='r1')
+    drawing = drawing_from_region_samples('holes', width=30, height=20, regions=(source,))
+    original = region_path(drawing.region('r1'), {})
+
+    result = split_region(drawing, SplitAction(
+        op='split', target='r1', divider={'type': 'path', 'd': divider},
+    ))
+
+    children = result.region('r1').children
+    a, b = (region_path(child, {}) for child in children)
+    assert not a.is_empty and not b.is_empty
+    assert a.intersection(b).area < 1e-6
+    assert a.union(b).symmetric_difference(original).area < 1e-6
+    holes = SkPath.from_svg_d('M6 6 L14 6 L14 14 L6 14 Z M2 2 L4 2 L4 4 L2 4 Z')
+    assert a.union(b).intersection(holes).area < 1e-6
+    assert all(child.fill == drawing.region('r1').fill for child in children)
+    assert drawing.region('r1').is_leaf
+
+
+def test_path_split_does_not_discard_disconnected_geometry():
+    from vectoreyes.drawing_partition import _split_footprint_by_path
+    from vectoreyes.skia_geometry import SkPath
+
+    footprint = SkPath.from_svg_d(
+        'M0 0 L20 0 L20 20 L0 20 Z M25 0 L28 0 L28 3 L25 3 Z'
+    )
+    a, b = _split_footprint_by_path(footprint, 'M10 0 L10 20')
+    assert a.union(b).symmetric_difference(footprint).area < 1e-6
+    assert a.intersection(b).area < 1e-6
+
+
+def test_path_split_rejects_endpoints_on_different_boundary_rings():
+    from vectoreyes.drawing_partition import _split_footprint_by_path
+    from vectoreyes.skia_geometry import SkPath
+
+    footprint = SkPath.from_svg_d(
+        'M0 0 L20 0 L20 20 L0 20 Z M6 6 L6 14 L14 14 L14 6 Z'
+    )
+    with pytest.raises(ValueError, match='same boundary'):
+        _split_footprint_by_path(footprint, 'M0 10 L6 10')
+
+
+@pytest.mark.parametrize('divider', ['M6 10 Q0 0 10 6', 'M10 6 Q0 0 6 10'])
+def test_curved_hole_split_does_not_leave_remote_boundary_slivers(divider):
+    from vectoreyes.drawing_partition import _split_footprint_by_path
+    from vectoreyes.skia_geometry import SkPath
+
+    source = SkPath.from_svg_d(
+        'M0 0 L20 0 L20 20 L0 20 Z '
+        'M6 10 C6 12.209139 7.790861 14 10 14 '
+        'C8 12 8 8 10 6 '
+        'C7.790861 6 6 7.790861 6 10 Z'
+    )
+    a, b = _split_footprint_by_path(source, divider)
+    detail = min((a, b), key=lambda path: path.area)
+    assert detail.bounds[2] <= 10.001
+    assert detail.bounds[3] <= 10.001
+    assert a.union(b).symmetric_difference(source).area < 1e-5
+    assert a.intersection(b).area < 1e-5
+
+
+def test_split_publication_preserves_native_evenodd_cutouts(monkeypatch):
+    from vectoreyes import drawing_partition
+    from vectoreyes.geometry_native import region_path
+    from vectoreyes.skia_geometry import SkPath
+
+    # PathOps may return even-odd contours with matching winding directions.
+    left = SkPath.from_svg_d(
+        'M0 0 L10 0 L10 20 L0 20 Z M2 2 L4 2 L4 4 L2 4 Z',
+        fill_rule='evenodd',
+    )
+    right = SkPath.from_svg_d('M10 0 L20 0 L20 20 L10 20 Z')
+    shape = Shape('path', {'d': (
+        'M0 0 L20 0 L20 20 L0 20 Z M2 2 L4 2 L4 4 L2 4 Z'
+    ), 'fill_rule': 'evenodd'})
+    drawing = drawing_from_region_samples('parity', width=20, height=20, regions=(
+        RegionSample(1, shape, FlatFill('#123456'), 0, drawing_id='r1'),
+    ))
+    monkeypatch.setattr(drawing_partition, '_split_footprint_by_path', lambda *_: (left, right))
+
+    result = drawing_partition.split_region(drawing, SplitAction(
+        op='split', target='r1', divider={'type': 'path', 'd': 'M10 0 L10 20'},
+    ))
+
+    actual = region_path(result.region('r1-1'), {})
+    assert actual.symmetric_difference(left).area < 1e-6

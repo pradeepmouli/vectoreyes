@@ -1,8 +1,8 @@
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.quality import GeometryPolicy
-from vectormark.refinement.framework import _replacement_preserves_scene
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.quality import GeometryPolicy
+from vectoreyes.refinement.framework import _replacement_preserves_scene
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 def leaf(identity, left, right):

@@ -13,14 +13,14 @@ from xml.etree import ElementTree
 
 import numpy as np
 import pytest
-import vectormark.mcp_server as mcp_server_module
+import vectoreyes.mcp_server as mcp_server_module
 from mcp import Client, ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from fastmcp.exceptions import ToolError
 from PIL import Image, ImageDraw
 from PIL.PngImagePlugin import PngInfo
 
-from vectormark.mcp_server import (
+from vectoreyes.mcp_server import (
     WIDGET_URI,
     ImageRef,
     GeometryGuideOptions,
@@ -121,7 +121,7 @@ def test_unrefined_trace_refine_and_artifact_share_one_live_region_forest():
 
     refined = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": drawing_id,
             "base_version": "v0",
             "ops": [{"op": "fit_primitive", "target": "r1", "type": "circle"}],
@@ -154,14 +154,14 @@ def test_mcp_corner_actions_follow_reported_path_addresses_and_replay_without_de
     )
 
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran after retained evidence capture")
         ),
     )
     added = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": "v0",
             "ops": [{
@@ -192,7 +192,7 @@ def test_mcp_corner_actions_follow_reported_path_addresses_and_replay_without_de
     )
     replaced = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": added["version"],
             "ops": [{
@@ -217,7 +217,7 @@ def test_mcp_corner_actions_follow_reported_path_addresses_and_replay_without_de
 
     removed = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": replaced["version"],
             "ops": [{
@@ -238,7 +238,7 @@ def test_mcp_corner_actions_follow_reported_path_addresses_and_replay_without_de
     retained = path["corner_features"][0]
     never_added = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": "v0",
             "ops": [{
@@ -267,7 +267,7 @@ def test_mcp_corner_actions_follow_reported_path_addresses_and_replay_without_de
 
     normalized = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": removed["version"],
             "ops": [{
@@ -304,7 +304,7 @@ def test_mcp_corner_actions_address_one_cutout_subpath_without_rewriting_outer(
         if command["corner_boundary"]["editable"]
     )
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran after retained evidence capture")
         ),
@@ -312,7 +312,7 @@ def test_mcp_corner_actions_address_one_cutout_subpath_without_rewriting_outer(
 
     added = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": "v0",
             "ops": [{
@@ -335,7 +335,7 @@ def test_mcp_corner_actions_address_one_cutout_subpath_without_rewriting_outer(
 
     removed = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": added["version"],
             "ops": [{
@@ -376,7 +376,7 @@ def test_mcp_corner_actions_refit_one_cutout_span_without_detection(monkeypatch)
         for item in cutout["corner_features"]
     }
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran after retained evidence capture")
         ),
@@ -384,7 +384,7 @@ def test_mcp_corner_actions_refit_one_cutout_span_without_detection(monkeypatch)
 
     rounded = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": "v0",
             "ops": [
@@ -435,7 +435,7 @@ def test_mcp_split_accepts_an_explicit_infinite_line_divider():
 
     split = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": "v0",
             "ops": [
@@ -459,7 +459,7 @@ def test_trace_options_name_the_absence_of_automatic_refinement_none():
 
 def test_unrefined_trace_stitches_retained_roots_before_creating_v0(monkeypatch):
     observed: list[int] = []
-    import vectormark.python_drawing_engine as engine_module
+    import vectoreyes.python_drawing_engine as engine_module
     original_stitch = engine_module.stitch_regions_with_intent
 
     def observe(trace, regions, *, enabled=True):
@@ -483,7 +483,7 @@ def test_mcp_detect_symmetry_exposes_an_axis_for_a_follow_up_set_symmetry_plan()
 
     detected = refine_drawing(
         {
-            "version": "vectormark.plan.v1", "drawing_id": drawing_id, "base_version": "v0",
+            "version": "vectoreyes.plan.v1", "drawing_id": drawing_id, "base_version": "v0",
             "ops": [{"op": "detect_symmetry", "target": "r1", "settings": {"epsilon": 0.5}}],
         },
         ctx,
@@ -500,7 +500,7 @@ def test_mcp_detect_symmetry_exposes_an_axis_for_a_follow_up_set_symmetry_plan()
 
     set_result = refine_drawing(
         {
-            "version": "vectormark.plan.v1", "drawing_id": drawing_id, "base_version": detected["version"],
+            "version": "vectoreyes.plan.v1", "drawing_id": drawing_id, "base_version": detected["version"],
             "ops": [{"op": "set_symmetry", "target": source["id"],
                       "axis": detected_axis}],
         },
@@ -508,7 +508,7 @@ def test_mcp_detect_symmetry_exposes_an_axis_for_a_follow_up_set_symmetry_plan()
     ).structured_content
     assert set_result is not None
     updated = next(item for item in set_result["report"]["targets"]
-                   if item["diagnostics"].get("symmetry", {}).get("mode") == "explicit_self")
+                   if item["diagnostics"].get("symmetry", {}).get("mode") == "self")
     assert updated["root_id"] == "r1"
     assert updated["diagnostics"]["symmetry"]["axis"] == detected_axis
     assert updated["diagnostics"]["symmetry"]["materialized"] is True
@@ -516,15 +516,15 @@ def test_mcp_detect_symmetry_exposes_an_axis_for_a_follow_up_set_symmetry_plan()
     assert get_drawing_artifact(drawing_id, detected["version"], "svg", ctx).structured_content["svg"] == detected_svg
     with pytest.raises(ToolError, match="PLAN_INVALID"):
         refine_drawing({
-            "version": "vectormark.plan.v1", "drawing_id": drawing_id, "base_version": detected["version"],
+            "version": "vectoreyes.plan.v1", "drawing_id": drawing_id, "base_version": detected["version"],
             "ops": [{"op": "set_symmetry", "target": "r1-2", "axis": detected_axis}],
         }, ctx)
 
 
 def _assert_full_square_target(svg: str) -> None:
     """A joined test-square target retains all four sides, not one mirror half."""
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import to_polygon
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import to_polygon
 
     target = next(element for element in ElementTree.fromstring(svg).iter() if element.get("id") == "r1")
     assert target.tag.endswith("path")
@@ -610,7 +610,7 @@ def test_guide_and_refine_render_failures_do_not_publish_or_consume_ids(monkeypa
     with pytest.raises(ToolError, match="candidate render failed"):
         refine_drawing(
             {
-                "version": "vectormark.plan.v1",
+                "version": "vectoreyes.plan.v1",
                 "drawing_id": drawing_id,
                 "base_version": "v0",
                 "ops": [
@@ -680,7 +680,7 @@ def test_output_schema_validation_failures_are_atomic_for_all_mutations(monkeypa
         with pytest.raises(ToolError, match="response schema rejected"):
             refine_drawing(
                 {
-                    "version": "vectormark.plan.v1",
+                    "version": "vectoreyes.plan.v1",
                     "drawing_id": drawing_id,
                     "base_version": "v0",
                     "ops": [{
@@ -776,7 +776,7 @@ def test_geometry_guide_retraces_geometry_but_refills_every_leaf_from_the_origin
     # still the only retained paint source.
     descendant = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": child.id,
             "ops": [{"op": "fit_primitive", "target": "r1", "type": "rounded_rect"}],
@@ -810,8 +810,8 @@ def test_geometry_guide_requires_the_live_trace_canvas_without_silent_resampling
 def test_trace_auto_threads_trace_controls_into_python_trace_and_auto_refinement(monkeypatch):
     captured = {}
 
-    from vectormark.python_drawing_engine import PythonDrawingEngine
-    import vectormark.drawing_refinement as refinement_module
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
+    import vectoreyes.drawing_refinement as refinement_module
     original_engine = PythonDrawingEngine.refine_automatically
     original_refine = refinement_module.refine_canonical_drawing
 
@@ -884,7 +884,7 @@ def test_render_drawing_accepts_widget_result_shape():
 def test_trace_drawing_surfaces_image_error_codes():
     async def call():
         return await mcp.call_tool(
-            "trace_drawing",
+            "vectoreyes_trace_drawing",
             {"image_data": {"data_uri": "data:image/png;base64,AA=="}, "options": {"refine": "auto"}},
         )
 
@@ -903,11 +903,11 @@ def test_refine_drawing_converts_an_executor_error_into_a_plan_error(monkeypatch
     def fail(*_args, **_kwargs):
         raise ValueError("executor rejected this valid-looking plan")
 
-    monkeypatch.setattr("vectormark.drawing_region_actions.fit_region_primitive", fail)
+    monkeypatch.setattr("vectoreyes.drawing_region_actions.fit_region_primitive", fail)
     with pytest.raises(ToolError, match="PLAN_INVALID.*executor rejected"):
         refine_drawing(
             {
-                "version": "vectormark.plan.v1",
+                "version": "vectoreyes.plan.v1",
                 "drawing_id": traced["drawing_id"],
                 "base_version": "v0",
                 "ops": [{"op": "fit_primitive", "target": "r1", "type": "circle"}],
@@ -920,8 +920,8 @@ def test_stdio_server_exposes_only_the_drawing_first_surface():
     async def list_tools_and_run_drawing_workflow():
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "vectormark.mcp_server"],
-            env={**os.environ, "VECTORMARK_MCP_TRANSPORT": "stdio"},
+            args=["-m", "vectoreyes.mcp_server"],
+            env={**os.environ, "VECTOREYES_MCP_TRANSPORT": "stdio"},
         )
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
@@ -930,19 +930,19 @@ def test_stdio_server_exposes_only_the_drawing_first_surface():
                 resources = await session.list_resources()
                 widget = await session.read_resource(WIDGET_URI)
                 auto = await session.call_tool(
-                    "trace_drawing",
+                    "vectoreyes_trace_drawing",
                     {"image_data": {"data_uri": _png_data_uri()}, "options": {"refine": "auto", "max_sampling_colors": 4}},
                 )
                 traced = await session.call_tool(
-                    "trace_drawing",
+                    "vectoreyes_trace_drawing",
                     {"image_data": {"data_uri": _png_data_uri()}, "options": {"refine": "none", "max_sampling_colors": 4}},
                 )
                 drawing_id = traced.structured_content["drawing_id"]
                 refined = await session.call_tool(
-                    "refine_drawing",
+                    "vectoreyes_refine_drawing",
                     {
                         "plan": {
-                            "version": "vectormark.plan.v1",
+                            "version": "vectoreyes.plan.v1",
                             "drawing_id": drawing_id,
                             "base_version": "v0",
                             "ops": [{"op": "fit_primitive", "target": "r1", "type": "circle"}],
@@ -950,22 +950,23 @@ def test_stdio_server_exposes_only_the_drawing_first_surface():
                     },
                 )
                 artifact = await session.call_tool(
-                    "get_drawing_artifact",
+                    "vectoreyes_get_drawing_artifact",
                     {"drawing_id": drawing_id, "version": refined.structured_content["version"], "artifact": "svg"},
                 )
                 return initialized, tools, [str(resource.uri) for resource in resources.resources], widget.contents[0].text, auto, refined, artifact
 
     initialized, tools, resources, widget, auto, refined, artifact = asyncio.run(list_tools_and_run_drawing_workflow())
 
-    assert set(tools) == {"trace_drawing", "retrace_drawing", "refine_drawing", "get_drawing_artifact", "render_drawing"}
+    assert set(tools) == {"vectoreyes_trace_drawing", "vectoreyes_retrace_drawing", "vectoreyes_refine_drawing", "vectoreyes_name_regions", "vectoreyes_get_drawing_artifact", "vectoreyes_render_drawing"}
+    assert not (tools['vectoreyes_name_regions'].meta or {}).get('openai/outputTemplate')
     assert "refine='none'" in (initialized.instructions or "")
-    assert tools["trace_drawing"].meta["openai/fileParams"] == ["image"]
-    assert tools["retrace_drawing"].meta["openai/fileParams"] == ["geometry_guide"]
-    refine_schema = tools["refine_drawing"].input_schema
+    assert tools["vectoreyes_trace_drawing"].meta["openai/fileParams"] == ["image"]
+    assert tools["vectoreyes_retrace_drawing"].meta["openai/fileParams"] == ["geometry_guide"]
+    refine_schema = tools["vectoreyes_refine_drawing"].input_schema
     plan_schema = refine_schema["$defs"]["DrawingPlan"]
     assert "oneOf" in plan_schema["properties"]["ops"]["items"]
     assert "fit_primitive" in str(refine_schema)
-    trace_output_schema = tools["trace_drawing"].output_schema
+    trace_output_schema = tools["vectoreyes_trace_drawing"].output_schema
     target_geometry_schema = trace_output_schema["$defs"]["DrawingTargetOutput"]["properties"]["geometry"]
     assert target_geometry_schema["discriminator"]["propertyName"] == "type"
     assert "additionalProperties" not in target_geometry_schema
@@ -981,7 +982,7 @@ def test_stdio_server_exposes_only_the_drawing_first_surface():
         "report",
     }
     assert "svg" not in trace_output_schema["properties"]
-    refine_output_schema = tools["refine_drawing"].output_schema
+    refine_output_schema = tools["vectoreyes_refine_drawing"].output_schema
     assert set(refine_output_schema["required"]) >= {
         "drawing_id",
         "outputs",
@@ -997,13 +998,13 @@ def test_stdio_server_exposes_only_the_drawing_first_surface():
     assert path_fit_schema["between"]["anyOf"][0]["maxItems"] == 2
     assert "match_length" in str(refine_schema)
     assert "quadratic" in str(refine_schema)
-    for tool_name in ("trace_drawing", "retrace_drawing", "refine_drawing", "get_drawing_artifact", "render_drawing"):
+    for tool_name in ("vectoreyes_trace_drawing", "vectoreyes_retrace_drawing", "vectoreyes_refine_drawing", "vectoreyes_get_drawing_artifact", "vectoreyes_render_drawing"):
         assert tools[tool_name].output_schema is not None
     assert WIDGET_URI in resources
-    assert "Trace & refine" in widget
-    assert "Requested base" in widget
-    assert "Actual parent" in widget
-    assert "Baseline" in widget
+    assert WIDGET_URI == "ui://vectoreyes/logo-widget.html"
+    assert "Your vector artwork" in widget
+    assert "vectorEyes" in widget
+    assert "vectoreyes_get_drawing_artifact" in widget
     assert auto.structured_content is not None
     assert auto.structured_content["drawing_id"]
     _assert_pass_revision_chain(auto.structured_content)
@@ -1021,9 +1022,9 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
         port = listener.getsockname()[1]
     env = {
         **os.environ,
-        "VECTORMARK_MCP_TRANSPORT": "streamable-http",
-        "VECTORMARK_MCP_HOST": "127.0.0.1",
-        "VECTORMARK_MCP_PORT": str(port),
+        "VECTOREYES_MCP_TRANSPORT": "streamable-http",
+        "VECTOREYES_MCP_HOST": "127.0.0.1",
+        "VECTOREYES_MCP_PORT": str(port),
     }
 
     async def workflow(process):
@@ -1053,9 +1054,9 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
             data_uri = "data:image/png;base64," + base64.b64encode(encoded.getvalue()).decode()
         async with Client(url, mode=mode, read_timeout_seconds=30) as client:
             tools = (await client.list_tools()).tools
-            assert len(tools) == 5
+            assert {tool.name for tool in tools} == {'vectoreyes_trace_drawing','vectoreyes_retrace_drawing','vectoreyes_refine_drawing','vectoreyes_name_regions','vectoreyes_get_drawing_artifact','vectoreyes_render_drawing'}
             assert all(tool.output_schema is not None for tool in tools)
-            traced = await client.call_tool("trace_drawing", {
+            traced = await client.call_tool("vectoreyes_trace_drawing", {
                 "image_data": {"data_uri": data_uri},
                 "options": {"refine": "auto", "max_sampling_colors": 4},
             })
@@ -1078,7 +1079,7 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
             drawing_id = traced.structured_content["drawing_id"]
             base_svgs = {}
             for version in ("v0", final_version):
-                artifact = await client.call_tool("get_drawing_artifact", {
+                artifact = await client.call_tool("vectoreyes_get_drawing_artifact", {
                     "drawing_id": drawing_id, "version": version, "artifact": "svg",
                 })
                 assert not artifact.is_error
@@ -1100,8 +1101,8 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
                         }
                         for target_id in target_ids
                     ]
-                refined = await client.call_tool("refine_drawing", {"plan": {
-                    "version": "vectormark.plan.v1",
+                refined = await client.call_tool("vectoreyes_refine_drawing", {"plan": {
+                    "version": "vectoreyes.plan.v1",
                     "drawing_id": drawing_id,
                     "base_version": base_version,
                     "ops": ops,
@@ -1110,7 +1111,7 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
                 assert refined.structured_content["version"] == f"{base_version}.0"
                 assert refined.structured_content["report"]["targets"]
                 for artifact in ("svg", "labeled_svg", "plan", "preview", "versions"):
-                    result = await client.call_tool("get_drawing_artifact", {
+                    result = await client.call_tool("vectoreyes_get_drawing_artifact", {
                         "drawing_id": drawing_id,
                         "version": refined.structured_content["version"],
                         "artifact": artifact,
@@ -1130,13 +1131,13 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
                         assert any(content.type == "image" for content in result.content)
                     elif artifact == "versions":
                         assert result.structured_content["versions"]
-                unchanged = await client.call_tool("get_drawing_artifact", {
+                unchanged = await client.call_tool("vectoreyes_get_drawing_artifact", {
                     "drawing_id": drawing_id, "version": base_version, "artifact": "svg",
                 })
                 assert not unchanged.is_error
                 assert unchanged.structured_content["svg"] == base_svgs[base_version]
-            stale = await client.call_tool("refine_drawing", {"plan": {
-                "version": "vectormark.plan.v1", "drawing_id": drawing_id, "base_version": "v1",
+            stale = await client.call_tool("vectoreyes_refine_drawing", {"plan": {
+                "version": "vectoreyes.plan.v1", "drawing_id": drawing_id, "base_version": "v1",
                 "ops": [{"op": "set_fill", "target": "r1-2", "fill": {"type": "flat", "color": "#1464F0"}}],
             }})
             assert stale.is_error
@@ -1144,7 +1145,7 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
 
     with (tmp_path / "server.log").open("w") as log:
         process = subprocess.Popen(
-            [sys.executable, "-m", "vectormark.mcp_server"],
+            [sys.executable, "-m", "vectoreyes.mcp_server"],
             env=env, stdout=log, stderr=subprocess.STDOUT,
         )
         try:
@@ -1159,7 +1160,7 @@ def test_http_artifacts_and_branches_survive_transport_reconnect(mode, tmp_path)
 
 
 def test_drawing_artifact_accepts_the_preview_alias_returned_by_trace_and_refine():
-    from vectormark.mcp_server import get_drawing_artifact
+    from vectoreyes.mcp_server import get_drawing_artifact
 
     artifact_type = get_type_hints(get_drawing_artifact)["artifact"]
 

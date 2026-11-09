@@ -3,13 +3,13 @@ from types import MappingProxyType
 
 import pytest
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_engine import (
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_engine import (
     DrawingActionResult,
     PathActionResult,
     TraceDrawingResult,
 )
-from vectormark.drawing_fill import (
+from vectoreyes.drawing_fill import (
     GradientStop,
     LinearGradientFill,
     RadialGradientFill,
@@ -18,8 +18,8 @@ from vectormark.drawing_fill import (
     serialize_fill,
     transform_fill,
 )
-from vectormark.json_value import to_json_value
-from vectormark.path_geometry import (
+from vectoreyes.json_value import to_json_value
+from vectoreyes.path_geometry import (
     AffineTransform,
     CloneGeometry,
     ClosedPath,

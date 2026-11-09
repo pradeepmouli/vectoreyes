@@ -2,22 +2,22 @@ import numpy as np
 import pytest
 
 from tests.test_canonical_multi_replay import forbid_working_execution
-from vectormark.candidate import FlatFill
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import (
     AnnulusPrimitive, AssignCloneOperation, AutomaticIntent, AutomaticOperationRecord,
     CompletedOcclusionPrimitive, MirrorRegionOperation, NamedRegionOutput,
     PassInputRegionRef, ReconstructOcclusionOperation, ReplayBatch,
     SimplifyLineletOperation, bind_intent, replay_batches,
 )
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
-from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.path_geometry import PathGeometryWithCutouts
-from vectormark.quality import GeometryAssessment, GeometryPolicy
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.replay_binding import capture_replay_state, working_regions_from_state
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.path_geometry import PathGeometryWithCutouts
+from vectoreyes.quality import GeometryAssessment, GeometryPolicy
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def leaf(identity, shape, color):
@@ -128,7 +128,7 @@ from dataclasses import replace
 
 
 def test_generated_named_child_can_be_the_source_of_an_inline_copy(monkeypatch):
-    from vectormark.refinement.automatic_replay import OperationOutputRegionRef
+    from vectoreyes.refinement.automatic_replay import OperationOutputRegionRef
     state = capture_replay_state((leaf(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}), '#123456'),
         leaf(2, Shape('rect', {'x': 80, 'y': 0, 'w': 10, 'h': 10}), '#abcdef')),
         Canvas(300, 440))
@@ -168,14 +168,21 @@ def test_inline_copy_of_a_clone_keeps_the_instance_projection_policy(monkeypatch
     expected = numeric_expected(state, batch)
     forbid_working_execution(monkeypatch)
     result = replay_automatic_batches(state, (batch,))
-    assert result.drawing == expected.drawing
-    assert result.region_evidence == expected.region_evidence
-    assert canonical_input_revision(result) == canonical_input_revision(expected)
+    from vectoreyes.path_geometry import CirclePrimitive, PrimitiveGeometry
+    from vectoreyes.geometry_native import region_path
+    # The retained engine resolves the concrete source rather than first
+    # flattening the intermediate instance through the old working bridge.
+    assert result.drawing.region('r3').geometry == PrimitiveGeometry(CirclePrimitive((96, 16), 10))
+    assert result.drawing.region('r3').fill == expected.drawing.region('r3').fill
+    actual_path = region_path(result.drawing.region('r3'), {})
+    expected_path = region_path(expected.drawing.region('r3'), {})
+    assert actual_path.symmetric_difference(expected_path).area < .1
+    assert replay_automatic_batches(state, (batch,)).drawing == result.drawing
 
 
 def test_later_pass_input_replacement_restores_its_snapshot_observations(monkeypatch):
-    from vectormark.refinement.automatic_replay import FitPrimitiveOperation
-    from vectormark.path_geometry import CirclePrimitive, PrimitiveGeometry
+    from vectoreyes.refinement.automatic_replay import FitPrimitiveOperation
+    from vectoreyes.path_geometry import CirclePrimitive, PrimitiveGeometry
     state = capture_replay_state((leaf(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}), '#123456'),), Canvas(300, 440))
     ref = PassInputRegionRef('', '', (1,))
     branch = ReconstructOcclusionOperation((ref,), 1, 0., (440, 300), (

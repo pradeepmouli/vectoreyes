@@ -1,15 +1,15 @@
-# vectormark — deterministic logo idealizer (design)
+# vectoreyes — deterministic logo idealizer (design)
 
 **Date:** 2026-06-04
 **Status:** Approved for planning
-**Working name:** `vectormark` (alts: `logovector`, `brandvector` — placeholder until repo creation)
+**Working name:** `vectoreyes` (alts: `logovector`, `brandvector` — placeholder until repo creation)
 
 ## 1. Summary
 
 A **deterministic** tool that converts a *rendered* (raster) logo into a clean,
 editable, exactly-symmetric SVG. Where conventional tracers (`vtracer`,
 `potrace`, `autotrace`) chase pixel edges and emit anonymous `<path>` soup,
-`vectormark` **recognizes structure**: it collapses anti-aliasing to a true
+`vectoreyes` **recognizes structure**: it collapses anti-aliasing to a true
 palette, detects symmetry, and fits *ideal primitives* (`<ellipse>`, `<rect>`,
 regular polygons) to regions — falling back to fitted Bézier paths only where no
 primitive matches. The output SVG doubles as a human-editable parametric model.
@@ -157,7 +157,7 @@ data → output data, no shared mutable state.
 
 ## 8. Interface
 
-- **CLI:** `vectormark in.png [-o out.svg] [--flatten] [--epsilon N]
+- **CLI:** `vectoreyes in.png [-o out.svg] [--flatten] [--epsilon N]
   [--colors N] [--no-symmetry]`.
 - **Library:** `idealize(image, opts) -> svg_string` plus the staged functions
   for advanced use.
@@ -177,13 +177,13 @@ data → output data, no shared mutable state.
 
 ## 10. Open items (resolve at plan time)
 
-- **Repository:** standalone repo at `active/py/vectormark` (**resolved**).
+- **Repository:** standalone repo at `active/py/vectoreyes` (**resolved**).
 - **Primitive vocabulary v1:** circle, ellipse, rect, rounded-rect, regular
   polygon (**resolved**); teardrop/tip stays Bézier path-fallback; capsule/
   stadium deferred.
 - **n-fold symmetry:** v1 ships **bilateral only**; n-fold detection/wedge-
   replication deferred to **v1.1** (**resolved**). Pipeline stays n-fold-ready.
-- **Packaging:** PyPI distribution name (verify `vectormark` availability);
+- **Packaging:** PyPI distribution name (verify `vectoreyes` availability);
   license MIT.
 - **Default ε values** for symmetry gate, primitive recognition, RDP — tune on
   the corpus (Daikonic mark first).

@@ -1,6 +1,6 @@
 from dataclasses import replace
 
-from vectormark.path_geometry import CornerAnchor, parse_svg_paths
+from vectoreyes.path_geometry import CornerAnchor, parse_svg_paths
 
 
 D = ("M247 417.5 Q241.23 417.72 237.5 413 L237.5 405 L242 400.5 "
@@ -8,7 +8,7 @@ D = ("M247 417.5 Q241.23 417.72 237.5 413 L237.5 405 L242 400.5 "
 
 
 def test_simplification_accepts_canonical_paths_without_working_shapes():
-    from vectormark.drawing_simplification import simplify_paths
+    from vectoreyes.drawing_simplification import simplify_paths
 
     paths = parse_svg_paths(D, region_id="r1")
     changed = simplify_paths(paths, epsilon=1, max_error=1, samples=16,
@@ -22,7 +22,7 @@ def test_simplification_accepts_canonical_paths_without_working_shapes():
 
 
 def test_simplification_cannot_erase_an_explicit_point_corner():
-    from vectormark.drawing_simplification import simplify_paths
+    from vectoreyes.drawing_simplification import simplify_paths
 
     (path,) = parse_svg_paths(D, region_id="r1")
     corner = CornerAnchor("point", "r1.p0.c1", "r1.p0.c1", radius=0)
@@ -37,7 +37,7 @@ def test_simplification_cannot_erase_an_explicit_point_corner():
 
 
 def test_simplification_reuses_retained_endpoint_ids_for_surviving_corner():
-    from vectormark.drawing_simplification import simplify_paths
+    from vectoreyes.drawing_simplification import simplify_paths
 
     (path,) = parse_svg_paths(D, region_id="r1")
     corner = CornerAnchor("point", "r1.p0.c3", "r1.p0.c3", radius=0)
@@ -51,10 +51,10 @@ def test_simplification_reuses_retained_endpoint_ids_for_surviving_corner():
 
 
 def test_refinement_publication_keeps_selected_ids_without_an_input_cache():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.passes.simplify import simplify_pass
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.passes.simplify import simplify_pass
+    from vectoreyes.refinement.region_sample import RegionSample
 
     target = RegionSample(1, Shape('path', {'d': D}), FlatFill('#123456'))
     (proposal,) = simplify_pass([target], {}, epsilon=1, max_error=1, linelet_only=True,

@@ -6,19 +6,19 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from vectormark.drawing_actions import ActionSettings, DrawingPlan
-from vectormark.drawing_engine import RasterImage
+from vectoreyes.drawing_actions import ActionSettings, DrawingPlan
+from vectoreyes.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.refinement.assembly_binding import working_regions_from_evidence
-from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
-from vectormark.drawing_refine import resolved_action_settings
-from vectormark.drawing_render import render_drawing
-from vectormark.drawing_trace import TraceOptions, TraceResult
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-import vectormark.drawing_replay as replay_module
-from vectormark.drawing_state import DrawingStore, VersionCandidate
+from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
+from vectoreyes.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
+from vectoreyes.drawing_refine import resolved_action_settings
+from vectoreyes.drawing_render import render_drawing
+from vectoreyes.drawing_trace import TraceOptions, TraceResult
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+import vectoreyes.drawing_replay as replay_module
+from vectoreyes.drawing_state import DrawingStore, VersionCandidate
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -35,8 +35,8 @@ def fixture():
 
 
 def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
-    from vectormark.drawing_adapter import drawing_from_region_samples
-    from vectormark.refinement.topology_binding import normalize_working_topology
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.refinement.topology_binding import normalize_working_topology
     d = ('M0 0 L4 0 L4 4 L0 4 Z '
          'M1 1 L2 1 L2 2 L1 2 Z '
          'M5 5 L7 5 L7 7 L5 7 Z')
@@ -50,8 +50,8 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
     after = normalize_working_topology((root, clone))
     selected = drawing_from_region_samples('drw_test', width=8, height=8, regions=after).region('r1')
     assert [leaf.id for leaf in selected.leaves()] == ['r1-1', 'r1-3']
-    from vectormark.drawing_recipe import RecipeOperation
-    from vectormark.drawing_actions import FitPathDrawingAction
+    from vectoreyes.drawing_recipe import RecipeOperation
+    from vectoreyes.drawing_actions import FitPathDrawingAction
     evidence, paint, upstream = fixture()
     operation = RecipeOperation('test.fit', 'agent', FitPathDrawingAction(op='fit_path', target='r1'), upstream.settings, ())
     from tests._working_evidence import retain_working_operation_outcome
@@ -66,7 +66,7 @@ def test_selected_components_preserve_retired_path_slots_and_clone_ownership():
 @pytest.mark.parametrize('with_cutout', [False, True])
 @pytest.mark.parametrize('with_clone', [False, True])
 def test_selected_path_fit_retains_split_components_without_refitting(monkeypatch, with_cutout, with_clone):
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     evidence, paint, _ = fixture()
     raster = np.zeros((8, 8), dtype=bool)
     raster[0:4, 0:4] = True
@@ -83,7 +83,7 @@ def test_selected_path_fit_retains_split_components_without_refitting(monkeypatc
         geometry_source=evidence.geometry_source, trace_roots=roots)
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
         ActionSettings(epsilon=0.1, max_error=0.1, fit_strategy='quadratic'))
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1', drawing_id='drw_test',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1', drawing_id='drw_test',
         base_version='v0', ops=[dict(op='fit_path', target='r1')]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
@@ -94,11 +94,11 @@ def test_selected_path_fit_retains_split_components_without_refitting(monkeypatc
     assert first.drawing.region('r1').is_branch
     assert len(first.drawing.region('r1').leaves()) == 2
     if with_cutout:
-        from vectormark.path_geometry import PathGeometryWithCutouts
+        from vectoreyes.path_geometry import PathGeometryWithCutouts
         assert any(isinstance(leaf.geometry, PathGeometryWithCutouts)
                    for leaf in first.drawing.region('r1').leaves())
     if with_clone:
-        from vectormark.path_geometry import CloneGeometry
+        from vectoreyes.path_geometry import CloneGeometry
         assert len(first.drawing.region('r2').leaves()) == 2
         assert all(isinstance(leaf.geometry, CloneGeometry)
                    for leaf in first.drawing.region('r2').leaves())
@@ -106,7 +106,7 @@ def test_selected_path_fit_retains_split_components_without_refitting(monkeypatc
         evidence=evidence, paint=paint, recipe=recipe)
     assert render_drawing(first.drawing).svg == render_drawing(second.drawing).svg
     target = first.drawing.region('r1').leaves()[0].id
-    child_plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1', drawing_id='drw_test',
+    child_plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1', drawing_id='drw_test',
         base_version='v1', ops=[dict(op='set_fill', target=target,
             fill=dict(type='flat', color='#ff0000'))]))
     child_recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
@@ -117,8 +117,8 @@ def test_selected_path_fit_retains_split_components_without_refitting(monkeypatc
 
 
 def test_order_plan_delegates_to_canonical_drawing_action(monkeypatch):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing import Drawing
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing import Drawing
     evidence, paint, base = fixture()
     calls = []
     execute = actions.set_drawing_z_order
@@ -126,7 +126,7 @@ def test_order_plan_delegates_to_canonical_drawing_action(monkeypatch):
         calls.append(drawing)
         return execute(drawing, action)
     monkeypatch.setattr(actions, 'set_drawing_z_order', record)
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0', ops=[dict(op='set_z_order', targets=['r1'])]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
@@ -136,7 +136,7 @@ def test_order_plan_delegates_to_canonical_drawing_action(monkeypatch):
 
 def test_radial_fill_plan_preserves_noncentral_focal_point_through_replay():
     evidence, paint, base = fixture()
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0', ops=[dict(op='set_fill', target='r1',
             fill=dict(type='radial_gradient', center=[4, 4], radius=4, focal_point=[2, 3],
                 stops=[dict(offset=0, color='#FFFFFF'), dict(offset=1, color='#000000')]))]))
@@ -150,8 +150,8 @@ def test_radial_fill_plan_preserves_noncentral_focal_point_through_replay():
 
 
 def test_working_radial_fill_renderer_preserves_focal_point():
-    from vectormark.candidate import RadialGradientFill
-    from vectormark.emit import resolve_fill
+    from vectoreyes.candidate import RadialGradientFill
+    from vectoreyes.emit import resolve_fill
     definitions = []
     resolve_fill(RadialGradientFill({'cx': 4, 'cy': 4, 'r': 4, 'fx': 2, 'fy': 3},
         [(0., '#FFFFFF'), (1., '#000000')]), definitions)
@@ -159,8 +159,8 @@ def test_working_radial_fill_renderer_preserves_focal_point():
 
 
 def test_fill_plan_executes_canonical_region_action_without_geometry_solver(monkeypatch):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing import DrawingRegion
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing import DrawingRegion
     evidence, paint, base = fixture()
     calls = []
     execute = actions.set_region_fill
@@ -170,7 +170,7 @@ def test_fill_plan_executes_canonical_region_action_without_geometry_solver(monk
     monkeypatch.setattr(actions, 'set_region_fill', record)
     monkeypatch.setattr(actions, 'fit_primitive_geometry',
         lambda *args, **kwargs: pytest.fail('paint assignment invoked geometry fitter'))
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0',
         ops=[dict(op='set_fill', target='r1', fill=dict(type='flat', color='#AA2200'))]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
@@ -182,7 +182,7 @@ def test_fill_plan_executes_canonical_region_action_without_geometry_solver(monk
 
 
 def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
-    import vectormark.path_fitting as fitting
+    import vectoreyes.path_fitting as fitting
     evidence, paint, base = fixture()
     calls = []
     execute = fitting.fit_raster_paths
@@ -190,7 +190,7 @@ def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
         calls.append((raster.copy(), kwargs))
         return execute(raster, **kwargs)
     monkeypatch.setattr(fitting, 'fit_raster_paths', record)
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0',
         ops=[dict(op='fit_path', target='r1', settings=dict(max_error=2.0,
             fit_strategy='progressive'))]))
@@ -206,8 +206,8 @@ def test_path_plan_delegates_to_typed_raster_kernel_once(monkeypatch):
 
 
 def test_whole_region_fit_retains_matching_prefit_corner_ingress():
-    from vectormark.path_fitting import fit_raster_paths
-    from vectormark.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.path_fitting import fit_raster_paths
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
     evidence, paint, base = fixture()
     fitted = fit_raster_paths(working_regions_from_evidence(evidence)[0].raster, region_id='r1', settings=base.settings)[0]
     d = fitted.to_svg_d()
@@ -219,7 +219,7 @@ def test_whole_region_fit_retains_matching_prefit_corner_ingress():
     evidence = capture_working_geometry_evidence(kind='source', trace=evidence.trace,
         geometry_source=evidence.geometry_source, trace_roots=(source,))
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision, base.settings)
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0', ops=[dict(op='fit_path', target='r1')]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
@@ -229,8 +229,8 @@ def test_whole_region_fit_retains_matching_prefit_corner_ingress():
 
 
 def test_path_plan_executes_canonical_region_action(monkeypatch):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing import DrawingRegion
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing import DrawingRegion
     evidence, paint, base = fixture()
     calls = []
     execute = actions.fit_region_path
@@ -238,7 +238,7 @@ def test_path_plan_executes_canonical_region_action(monkeypatch):
         calls.append((region, kwargs['settings']))
         return execute(region, action, **kwargs)
     monkeypatch.setattr(actions, 'fit_region_path', record)
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0',
         ops=[dict(op='fit_path', target='r1', settings=dict(epsilon=0.25))]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
@@ -251,8 +251,8 @@ def test_path_plan_executes_canonical_region_action(monkeypatch):
 
 
 def test_primitive_plan_executes_the_canonical_region_action(monkeypatch):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing import DrawingRegion
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing import DrawingRegion
     evidence, paint, base = fixture()
     calls = []
     execute = actions.fit_region_primitive
@@ -260,7 +260,7 @@ def test_primitive_plan_executes_the_canonical_region_action(monkeypatch):
         calls.append((region, kwargs['settings']))
         return execute(region, action, **kwargs)
     monkeypatch.setattr(actions, 'fit_region_primitive', record)
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0',
         ops=[dict(op='fit_primitive', target='r1', type='rect',
             settings=dict(epsilon=0.25))]))
@@ -274,29 +274,31 @@ def test_primitive_plan_executes_the_canonical_region_action(monkeypatch):
 
 
 @pytest.mark.parametrize('kind', ['rect', 'rounded_rect', 'ellipse', 'circle', 'polygon'])
-def test_primitive_action_fits_retained_raster_not_current_outline(kind):
+def test_primitive_action_fits_current_outline_not_retained_raster(kind):
     evidence, paint, base = fixture()
-    # The retained raster is 8x8, while the displayed rectangle is only 4x4.
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    # The retained raster is 8x8, but primitive fitting uses the current 4x4 outline.
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0',
         ops=[dict(op='fit_primitive', target='r1', type=kind)]))
     selected = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
     result = replay_module.propose_effective_recipe(drawing_id='drw_test',
         evidence=evidence, paint=paint, recipe=selected)
-    from vectormark.path_geometry import (
-        CirclePrimitive, EllipsePrimitive, PolygonPrimitive,
+    from vectoreyes.path_geometry import (
+        PolygonPrimitive,
         RectanglePrimitive, RoundedRectanglePrimitive,
     )
     primitive = result.drawing.regions[0].geometry.primitive
     if kind == 'circle':
-        assert primitive == CirclePrimitive((4., 4.), 4.)
+        assert primitive.center == pytest.approx((3., 3.))
+        assert primitive.radius == pytest.approx(np.sqrt(8))
     elif kind == 'ellipse':
-        assert primitive == EllipsePrimitive((4., 4.), 4., 4.)
+        assert primitive.center == pytest.approx((3., 3.))
+        assert (primitive.radius_x, primitive.radius_y) == pytest.approx((np.sqrt(8), np.sqrt(8)))
     elif kind == 'rounded_rect':
-        assert primitive == RoundedRectanglePrimitive((0., 0.), 8., 8., 0., 0.)
+        assert primitive == RoundedRectanglePrimitive((1., 1.), 4., 4., 0., 0.)
     elif kind == 'rect':
-        assert primitive == RectanglePrimitive((0., 0.), 8., 8.)
+        assert primitive == RectanglePrimitive((1., 1.), 4., 4.)
     else:
         assert isinstance(primitive, PolygonPrimitive)
         assert len(primitive.vertices) == 4
@@ -305,7 +307,7 @@ def test_primitive_action_fits_retained_raster_not_current_outline(kind):
 
 def test_purpose_and_execution_are_independent_and_resolved():
     evidence, _, _ = fixture()
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0',
         settings=dict(purpose='design_fidelity', execution='exploratory'),
         ops=[dict(op='fit_primitive', target='r1', type='circle', settings=dict(purpose='both'))]))
     settings = resolved_action_settings(evidence.trace, plan, plan.ops[0])
@@ -323,7 +325,7 @@ def test_proposals_can_vary_but_reproduction_does_not_generate(monkeypatch):
     recipe = replace(recipe, settings=recipe.settings.model_copy(update={'purpose': 'design_fidelity', 'execution': 'exploratory'}))
     assert hasattr(replay_module, 'propose_effective_recipe'), 'proposal execution must be explicit'
     assert hasattr(replay_module, 'reproduce_effective_recipe'), 'reproduction must not execute the recipe'
-    from vectormark.refinement.replay_binding import capture_replay_state
+    from vectoreyes.refinement.replay_binding import capture_replay_state
     execute = replay_module._replay_drawing_with_producers
     calls = []
     def varying(*args, **kwargs):
@@ -402,7 +404,7 @@ def test_public_refinement_retains_resolved_semantics(monkeypatch):
     import sys
     sys.path.insert(0, 'tests')
     import test_drawing_recipe_actions as helpers
-    from vectormark import mcp_server
+    from vectoreyes import mcp_server
     monkeypatch.setattr(mcp_server, '_DRAWINGS', DrawingStore())
     ctx, traced = helpers._trace(helpers._single_region_uri())
     refined = helpers._refine(ctx, traced, [dict(op='fit_primitive', target='r1', type='rect',
@@ -426,7 +428,7 @@ def test_agent_batch_semantics_are_retained(action, monkeypatch):
     import sys
     sys.path.insert(0, 'tests')
     import test_drawing_recipe_actions as helpers
-    from vectormark import mcp_server
+    from vectoreyes import mcp_server
     monkeypatch.setattr(mcp_server, '_DRAWINGS', DrawingStore())
     ctx, traced = helpers._trace(helpers._single_region_uri())
     refined = helpers._refine(ctx, traced, [{**action,
@@ -451,9 +453,9 @@ def test_corner_edits_retain_resolved_settings_and_receipt():
     import sys
     sys.path.insert(0, 'tests')
     import test_drawing_corner_store_replay as helpers
-    from vectormark.corner_recipe import AddCorner
-    from vectormark.path_geometry import CornerAnchor
-    from vectormark.drawing_recipe import ApplyCornerRecipeOperation
+    from vectoreyes.corner_recipe import AddCorner
+    from vectoreyes.path_geometry import CornerAnchor
+    from vectoreyes.drawing_recipe import ApplyCornerRecipeOperation
     store, base, paint, evidence = helpers._source_store()
     source_command = evidence.root_paths[0].fit.source.path.commands[10].id
     settings = base.resolved_settings.model_copy(update={
@@ -477,11 +479,11 @@ def test_public_corner_action_resolves_plan_and_action_settings():
     import sys
     sys.path.insert(0, 'tests')
     import test_drawing_corner_store_replay as helpers
-    from vectormark.drawing_recipe import ApplyCornerRecipeOperation
+    from vectoreyes.drawing_recipe import ApplyCornerRecipeOperation
     store, base, paint, evidence = helpers._source_store()
     geometry = base.drawing.regions[0].geometry
     command_id = geometry.path.commands[0].id
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id=base.drawing.drawing_id, base_version=base.id,
         settings=dict(purpose='design_fidelity', execution='exploratory', max_error=2.),
         ops=[dict(op='add_corner', target='r1', path_id=geometry.path.id,
@@ -496,16 +498,16 @@ def test_public_corner_action_resolves_plan_and_action_settings():
 
 
 def test_selected_fit_is_reused_when_extending_recipe_without_calling_fitter(monkeypatch):
-    import vectormark.drawing_region_actions as refine_module
+    import vectoreyes.drawing_region_actions as refine_module
     evidence, paint, base = fixture()
     calls = []
     def varying_fit(*args, **kwargs):
         calls.append(len(calls) + 1)
-        from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+        from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
         return PrimitiveGeometry(RectanglePrimitive((1., 1.), float(2 + calls[-1]), 4.))
     monkeypatch.setattr(refine_module, 'fit_primitive_geometry', varying_fit)
     def plan(ops):
-        return DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+        return DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
             drawing_id='drw_test', base_version='v0', ops=ops))
     fit = dict(op='fit_primitive', target='r1', type='rect',
         settings=dict(purpose='design_fidelity', execution='exploratory'))
@@ -530,9 +532,9 @@ def test_selected_fit_is_reused_when_extending_recipe_without_calling_fitter(mon
 
 
 def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkeypatch):
-    import vectormark.drawing_region_actions as refine_module
+    import vectoreyes.drawing_region_actions as refine_module
     evidence, paint, base = fixture()
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0',
         ops=[dict(op='fit_primitive', target='r1', type='rect')]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
@@ -558,13 +560,13 @@ def test_selected_fit_rejects_changed_settings_or_paint_without_refitting(monkey
 @pytest.mark.parametrize('method', ['fit_path', 'update_geometry'])
 def test_selected_path_geometry_replays_without_running_path_fitter(method, monkeypatch):
     import test_drawing_corner_store_replay as helpers
-    import vectormark.path_operations as operations
+    import vectoreyes.path_operations as operations
     store, base, paint, evidence = helpers._source_store()
     commands = base.drawing.regions[0].geometry.path.commands
     action = dict(op=method, target='r1')
     if method == 'update_geometry':
         action['ops'] = [dict(op='fit', between=[commands[0].id, commands[1].id], type='quadratic')]
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id=base.drawing.drawing_id, base_version=base.id, ops=[action]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base.effective_recipe, plan=plan).recipe
@@ -573,7 +575,7 @@ def test_selected_path_geometry_replays_without_running_path_fitter(method, monk
         evidence=evidence, paint=paint, recipe=recipe)
     def fail(*args, **kwargs):
         pytest.fail('selected path was refitted')
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     monkeypatch.setattr(actions, 'fit_region_path', fail)
     monkeypatch.setattr(operations, 'apply_region_path_operations', fail)
     actual = replay_module.propose_effective_recipe(drawing_id=base.drawing.drawing_id,
@@ -584,8 +586,8 @@ def test_selected_path_geometry_replays_without_running_path_fitter(method, monk
 
 def test_direct_path_plan_executes_canonical_operation_once(monkeypatch):
     import test_drawing_corner_store_replay as helpers
-    import vectormark.path_operations as operations
-    from vectormark.drawing import Drawing
+    import vectoreyes.path_operations as operations
+    from vectoreyes.drawing import Drawing
     store, base, paint, evidence = helpers._source_store()
     calls = []
     execute = operations.apply_region_path_operations
@@ -594,7 +596,7 @@ def test_direct_path_plan_executes_canonical_operation_once(monkeypatch):
         return execute(drawing, action, **kwargs)
     monkeypatch.setattr(operations, 'apply_region_path_operations', record)
     command = base.drawing.region('r1').geometry.path.drawable_commands[0].id
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id=base.drawing.drawing_id, base_version=base.id,
         ops=[dict(op='update_geometry', target='r1',
             ops=[dict(op='fit', target=command, type='keep')])]))
@@ -608,7 +610,7 @@ def test_direct_path_plan_executes_canonical_operation_once(monkeypatch):
 
 def test_selected_fit_preserves_canonical_corner_diagnostics():
     evidence, paint, base = fixture()
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0', ops=[dict(op='fit_path', target='r1')]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe
@@ -632,7 +634,7 @@ def test_selected_fit_preserves_unrelated_symmetry_materialization():
         shape=Shape('rect', dict(x=42., y=2., w=4., h=4.)), fill=FlatFill('#112233'),
         z=2, raster=np.ones((24, 48), dtype=bool), drawing_id='r3', source_regions=('r3',))
     evidence, paint, base = helpers._direct_recipe_fixture((*forest, target), width=48, height=24)
-    plan = DrawingPlan.model_validate(dict(version='vectormark.plan.v1',
+    plan = DrawingPlan.model_validate(dict(version='vectoreyes.plan.v1',
         drawing_id='drw_test', base_version='v0', ops=[dict(op='fit_primitive', target='r3', type='rect')]))
     recipe = replay_module.extend_recipe_with_plan(evidence=evidence, paint=paint,
         base_recipe=base, plan=plan).recipe

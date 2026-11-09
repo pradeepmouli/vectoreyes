@@ -29,7 +29,7 @@ surface to "which known-good candidate wins," which the acceptance-suite parity 
 
 ## Architecture
 
-New module `src/vectormark/selector.py`. `_fit_region` is **deleted**; its fitter calls relocate into
+New module `src/vectoreyes/selector.py`. `_fit_region` is **deleted**; its fitter calls relocate into
 the generator (no dead code, no duplication — the orchestration changes from first-non-None-wins to
 collect-all-then-score).
 

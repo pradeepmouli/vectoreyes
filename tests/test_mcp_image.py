@@ -4,7 +4,7 @@ import socket
 import numpy as np
 import pytest
 from PIL import Image
-from vectormark.mcp_image import resolve_image, ImageError, MAX_INPUT_BYTES
+from vectoreyes.mcp_image import resolve_image, ImageError, MAX_INPUT_BYTES
 
 
 def _png_bytes(size=(32, 32), color=(20, 120, 200)):
@@ -38,7 +38,7 @@ def test_resolve_local_path_requires_local_trust(tmp_path):
 
 
 def test_resolve_download_url_via_injected_fetch(monkeypatch):
-    import vectormark.mcp_image as mcp_mod
+    import vectoreyes.mcp_image as mcp_mod
     raw = _png_bytes()
     # download_url now goes through the SSRF guard; monkeypatch DNS to a public IP.
     monkeypatch.setattr(mcp_mod.socket, "getaddrinfo", lambda *a, **kw: _public_addrinfo())
@@ -49,7 +49,7 @@ def test_resolve_download_url_via_injected_fetch(monkeypatch):
 
 def test_resolve_download_url_ssrf_blocked(monkeypatch):
     """download_url whose host resolves to a private IP must be rejected (HIGH-2)."""
-    import vectormark.mcp_image as mcp_mod
+    import vectoreyes.mcp_image as mcp_mod
     monkeypatch.setattr(
         mcp_mod.socket, "getaddrinfo",
         lambda *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))],
@@ -70,7 +70,7 @@ def test_resolve_url_ssrf_blocks_non_https():
 
 def test_resolve_url_ssrf_blocks_private_ip_via_dns(monkeypatch):
     """IP guard: an https URL whose host DNS-resolves to a private IP is rejected."""
-    import vectormark.mcp_image as mcp_mod
+    import vectoreyes.mcp_image as mcp_mod
     monkeypatch.setattr(
         mcp_mod.socket, "getaddrinfo",
         lambda *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))],
@@ -84,7 +84,7 @@ def test_resolve_url_ssrf_blocks_private_ip_via_dns(monkeypatch):
 def test_default_fetch_pins_dns_and_sets_sni(monkeypatch):
     """_default_fetch must connect to the pinned IP with Host + sni_hostname set (HIGH-3)."""
     import httpx
-    import vectormark.mcp_image as mcp_mod
+    import vectoreyes.mcp_image as mcp_mod
 
     captured: list = []
     raw = _png_bytes()
@@ -110,7 +110,7 @@ def test_default_fetch_pins_dns_and_sets_sni(monkeypatch):
 
     monkeypatch.setattr(httpx, "Client", _MockClient)
 
-    from vectormark.mcp_image import _default_fetch
+    from vectoreyes.mcp_image import _default_fetch
     _default_fetch("https://example.com/img.png")
 
     assert len(captured) == 1
@@ -152,7 +152,7 @@ def _rgba(size, color, alpha):
 
 
 def test_preprocess_crops_transparent_margin_and_keeps_size():
-    from vectormark.mcp_image import preprocess_image
+    from vectoreyes.mcp_image import preprocess_image
     im = Image.new("RGBA", (100, 100), (0, 0, 0, 0))           # all transparent
     im.paste((200, 30, 30, 255), (30, 30, 70, 70))            # a 40x40 opaque block
     buf = io.BytesIO(); im.save(buf, format="PNG")
@@ -163,7 +163,7 @@ def test_preprocess_crops_transparent_margin_and_keeps_size():
 
 
 def test_preprocess_with_alpha_keeps_aligned_source_coverage():
-    from vectormark.mcp_image import preprocess_image_with_alpha
+    from vectoreyes.mcp_image import preprocess_image_with_alpha
     im = Image.new("RGBA", (12, 12), (0, 0, 0, 0))
     im.paste((200, 30, 30, 255), (3, 4, 9, 10))
     buf = io.BytesIO(); im.save(buf, format="PNG")
@@ -176,7 +176,7 @@ def test_preprocess_with_alpha_keeps_aligned_source_coverage():
 
 
 def test_preprocess_with_alpha_recognizes_palette_png_transparency():
-    from vectormark.mcp_image import preprocess_image_with_alpha
+    from vectoreyes.mcp_image import preprocess_image_with_alpha
     rgba = Image.new("RGBA", (12, 12), (0, 0, 0, 0))
     rgba.paste((0, 126, 229, 255), (3, 3, 9, 9))
     indexed = rgba.convert("P", palette=Image.Palette.ADAPTIVE)
@@ -191,7 +191,7 @@ def test_preprocess_with_alpha_recognizes_palette_png_transparency():
 
 
 def test_preprocess_downscales_only_when_larger():
-    from vectormark.mcp_image import preprocess_image
+    from vectoreyes.mcp_image import preprocess_image
     big = io.BytesIO(); Image.new("RGB", (2000, 1000), (10, 20, 30)).save(big, format="PNG")
     arr, meta = preprocess_image(big.getvalue(), crop_to_content=False, max_size_px=1024)
     assert meta.resized is True and max(meta.width, meta.height) == 1024
@@ -201,7 +201,7 @@ def test_preprocess_downscales_only_when_larger():
 
 
 def test_svg_output_facts():
-    from vectormark.mcp_image import svg_output_facts
+    from vectoreyes.mcp_image import svg_output_facts
     svg = '<svg><defs><linearGradient/></defs><rect/><path/><use href="#s0"/></svg>'
     f = svg_output_facts(svg)
     assert f["has_defs"] and f["has_paths"] and f["has_primitives"] and f["has_symmetry"]

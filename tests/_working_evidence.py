@@ -1,10 +1,10 @@
 """Canonical evidence fixtures for tests of still-working refinement consumers."""
 
-from vectormark.drawing_adapter import (
+from vectoreyes.drawing_adapter import (
     drawing_from_region_samples, working_region_evidence, working_shape_metadata,
 )
-from vectormark.drawing_recipe import build_geometry_evidence
-from vectormark.refinement.topology_binding import normalize_working_topology
+from vectoreyes.drawing_recipe import build_geometry_evidence
+from vectoreyes.refinement.topology_binding import normalize_working_topology
 
 
 def capture_working_geometry_evidence(*, trace_roots, trace, **options):
@@ -18,8 +18,8 @@ def capture_working_geometry_evidence(*, trace_roots, trace, **options):
 
 def retain_working_operation_outcome(operation, before, after, *, evidence, paint, upstream):
     """Capture old working fixtures through the canonical selected-result API."""
-    from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
-    from vectormark.selected_outcomes import retain_selected_outcome
+    from vectoreyes.refinement.replay_binding import capture_replay_state, working_regions_from_state
+    from vectoreyes.selected_outcomes import retain_selected_outcome
     operation, state = retain_selected_outcome(operation,
         capture_replay_state(before, paint.canvas), capture_replay_state(after, paint.canvas),
         evidence=evidence, paint=paint, upstream=upstream)

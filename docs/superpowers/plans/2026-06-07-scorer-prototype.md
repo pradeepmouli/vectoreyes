@@ -4,7 +4,7 @@
 
 **Goal:** A standalone candidate scorer that ranks how an element could be rendered — structural-prior hard gates → render-ΔE fidelity gate → structured description-length parsimony → ΔE tiebreak — evaluated against a labelled synthetic corpus (false-accept target 0), not wired into `idealize`.
 
-**Architecture:** New `src/vectormark/score.py` (pure scoring + a resvg-backed fidelity measure). A test-side candidate-variant generator (`tests/_candidates.py`) and a labelled synthetic eval (`tests/test_score_eval.py`) exercise it; a dev script runs it over the untracked real-logo corpus. Reuses `Candidate`/`Fill` (slice 2), the gradient guards, and the existing fitters.
+**Architecture:** New `src/vectoreyes/score.py` (pure scoring + a resvg-backed fidelity measure). A test-side candidate-variant generator (`tests/_candidates.py`) and a labelled synthetic eval (`tests/test_score_eval.py`) exercise it; a dev script runs it over the untracked real-logo corpus. Reuses `Candidate`/`Fill` (slice 2), the gradient guards, and the existing fitters.
 
 **Tech Stack:** Python, numpy, resvg-py (promoted to runtime dep), OKLab `mean_delta_e`, pytest.
 
@@ -32,7 +32,7 @@ Run tests with `.venv/bin/pytest`. `score.py` must NOT be imported by `pipeline.
 ## Task 1: `parsimony_cost` (structured description-length)
 
 **Files:**
-- Create: `src/vectormark/score.py`
+- Create: `src/vectoreyes/score.py`
 - Test: `tests/test_score.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -40,11 +40,11 @@ Run tests with `.venv/bin/pytest`. `score.py` must NOT be imported by `pipeline.
 Create `tests/test_score.py`:
 
 ```python
-from vectormark.candidate import (
+from vectoreyes.candidate import (
     Candidate, FlatFill, LinearGradientFill, RadialGradientFill,
 )
-from vectormark.fit import Shape
-from vectormark.score import parsimony_cost
+from vectoreyes.fit import Shape
+from vectoreyes.score import parsimony_cost
 
 
 def _flat(shape):
@@ -74,9 +74,9 @@ def test_parsimony_polygon_scales_with_vertices():
 - [ ] **Step 2: Run it, verify FAIL**
 
 Run: `.venv/bin/pytest tests/test_score.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'vectormark.score'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'vectoreyes.score'`.
 
-- [ ] **Step 3: Create `src/vectormark/score.py` with the parsimony layer**
+- [ ] **Step 3: Create `src/vectoreyes/score.py` with the parsimony layer**
 
 ```python
 """Candidate scorer (prototype): structural-prior gates -> render-ΔE fidelity
@@ -141,7 +141,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/score.py tests/test_score.py
+git add src/vectoreyes/score.py tests/test_score.py
 git commit -m "feat(score): structured description-length parsimony_cost
 
 Geometry params + fill params per candidate; lower = simpler. Primitive <
@@ -156,7 +156,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 2: `render_delta_e` (resvg fidelity) + runtime dep
 
 **Files:**
-- Modify: `src/vectormark/score.py` (add render layer)
+- Modify: `src/vectoreyes/score.py` (add render layer)
 - Modify: `pyproject.toml` (move `resvg-py` dev → runtime)
 - Test: `tests/test_score.py` (append)
 
@@ -166,8 +166,8 @@ Append to `tests/test_score.py`:
 
 ```python
 import numpy as np
-from vectormark.types import Region
-from vectormark.score import render_delta_e
+from vectoreyes.types import Region
+from vectoreyes.score import render_delta_e
 
 
 def _disk_region(cx, cy, r, h, w, color_hex):
@@ -203,7 +203,7 @@ Expected: FAIL — `render_delta_e` not defined.
 
 - [ ] **Step 3: Add the render layer to `score.py`**
 
-Append to `src/vectormark/score.py`:
+Append to `src/vectoreyes/score.py`:
 
 ```python
 # --- fidelity (render-ΔE via resvg) ---------------------------------------------
@@ -262,7 +262,7 @@ Expected: all pass (5 total now).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/score.py tests/test_score.py pyproject.toml
+git add src/vectoreyes/score.py tests/test_score.py pyproject.toml
 git commit -m "feat(score): render-ΔE fidelity via resvg
 
 render_delta_e rasterizes a candidate over the source canvas and compares
@@ -278,7 +278,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 3: `structural_priors` (hard gates from the proven guards)
 
 **Files:**
-- Modify: `src/vectormark/score.py`
+- Modify: `src/vectoreyes/score.py`
 - Test: `tests/test_score.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -286,7 +286,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 Append to `tests/test_score.py`:
 
 ```python
-from vectormark.score import structural_priors
+from vectoreyes.score import structural_priors
 
 
 def _square_region(h, w, color_hex):
@@ -320,7 +320,7 @@ Expected: FAIL — `structural_priors` not defined.
 
 - [ ] **Step 3: Add `structural_priors` to `score.py`**
 
-Append to `src/vectormark/score.py`:
+Append to `src/vectoreyes/score.py`:
 
 ```python
 # --- structural priors (hard gates) ---------------------------------------------
@@ -344,7 +344,7 @@ Expected: all pass (7 total).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/score.py tests/test_score.py
+git add src/vectoreyes/score.py tests/test_score.py
 git commit -m "feat(score): structural-prior hard gates
 
 Generalise the proven gradient guards (min stop-span, single-dominant-blob)
@@ -359,7 +359,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 4: `ScoreBreakdown` + `rank_candidates` (lexicographic)
 
 **Files:**
-- Modify: `src/vectormark/score.py`
+- Modify: `src/vectoreyes/score.py`
 - Test: `tests/test_score.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -367,7 +367,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 Append to `tests/test_score.py`:
 
 ```python
-from vectormark.score import ScoreBreakdown, rank_candidates
+from vectoreyes.score import ScoreBreakdown, rank_candidates
 
 
 def test_rank_prefers_parsimony_among_fidelity_qualifiers():
@@ -408,7 +408,7 @@ Expected: FAIL — `rank_candidates`/`ScoreBreakdown` not defined.
 
 - [ ] **Step 3: Add `ScoreBreakdown` + `rank_candidates` to `score.py`**
 
-Append to `src/vectormark/score.py`:
+Append to `src/vectoreyes/score.py`:
 
 ```python
 # --- the scorer ------------------------------------------------------------------
@@ -452,7 +452,7 @@ Expected: all pass (9 total).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/score.py tests/test_score.py
+git add src/vectoreyes/score.py tests/test_score.py
 git commit -m "feat(score): rank_candidates (lexicographic fidelity-gate)
 
 ScoreBreakdown + rank_candidates: structural priors -> ΔE fidelity gate ->
@@ -477,7 +477,7 @@ Create `tests/test_candidates_gen.py`:
 ```python
 import numpy as np
 
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
 from tests._candidates import generate_candidates
 
 
@@ -487,7 +487,7 @@ def _disk(cx, cy, r, h, w):
 
 
 def test_generate_includes_primitive_and_path_for_a_disk():
-    from vectormark.types import Region
+    from vectoreyes.types import Region
     h = w = 80
     src = np.full((h, w, 3), 255, np.uint8)
     mask = _disk(40, 40, 25, h, w)
@@ -516,13 +516,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from vectormark.candidate import (
+from vectoreyes.candidate import (
     Candidate, FlatFill, LinearGradientFill, RadialGradientFill,
 )
-from vectormark.contour import region_contours
-from vectormark.fit import fit_path, recognize_primitive
-from vectormark.gradient import fit_gradient
-from vectormark.types import Region
+from vectoreyes.contour import region_contours
+from vectoreyes.fit import fit_path, recognize_primitive
+from vectoreyes.gradient import fit_gradient
+from vectoreyes.types import Region
 
 
 def generate_candidates(
@@ -589,9 +589,9 @@ flat-square-stays-flat over-accept regression."""
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
-from vectormark.types import Region
-from vectormark.score import rank_candidates
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.types import Region
+from vectoreyes.score import rank_candidates
 from tests._candidates import generate_candidates
 
 
@@ -715,8 +715,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from vectormark.pipeline import _segment_image, Options
-from vectormark.score import rank_candidates
+from vectoreyes.pipeline import _segment_image, Options
+from vectoreyes.score import rank_candidates
 from tests._candidates import generate_candidates
 
 CORPUS = Path(__file__).resolve().parent.parent / "scratch" / "real-logos"

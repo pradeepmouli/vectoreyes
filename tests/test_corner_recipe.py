@@ -4,29 +4,29 @@ from hashlib import sha256
 
 import pytest
 
-import vectormark.fit as fit
-from vectormark.corner_ownership import directed_corner_ownership
-from vectormark.corner_recipe import (
+import vectoreyes.fit as fit
+from vectoreyes.corner_ownership import directed_corner_ownership
+from vectoreyes.corner_recipe import (
     AddCorner,
     CornerRecipeExecutor,
     RemoveCorner,
     ReplaceCorner,
 )
-from vectormark.drawing_engine import FitPathResult, PathFitOptions
-from vectormark.path_fit_evidence import (
+from vectoreyes.drawing_engine import FitPathResult, PathFitOptions
+from vectoreyes.path_fit_evidence import (
     AutomaticFitEvidence,
     FeatureBindingDiagnostic,
     FitPathCorrespondence,
     FitSpanCorrespondence,
 )
-from vectormark.path_geometry import (
+from vectoreyes.path_geometry import (
     ClosedPath,
     CornerAnchor,
     LineCommand,
     MoveCommand,
     PathGeometry,
 )
-from vectormark.python_path_fitter import PythonPathFitter
+from vectoreyes.python_path_fitter import PythonPathFitter
 
 
 def _source(points, anchors=(), *, path_id="evidence.source.p0"):

@@ -1,15 +1,15 @@
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 @pytest.mark.parametrize("with_rgb", [False, True])
 def test_engine_root_assembly_retains_actual_fit_evidence_and_stage_order(with_rgb):
-    from vectormark.refinement.assembly_binding import assemble_working_roots
+    from vectoreyes.refinement.assembly_binding import assemble_working_roots
 
     yy, xx = np.mgrid[:40, :40]
     mask = (xx - 20) ** 2 + (yy - 20) ** 2 < 14**2
@@ -42,7 +42,7 @@ def test_engine_root_assembly_retains_actual_fit_evidence_and_stage_order(with_r
 
 
 def test_shared_address_publication_keeps_existing_child_slots_and_source_geometry():
-    from vectormark.drawing_adapter import normalize_drawing_addresses
+    from vectoreyes.drawing_adapter import normalize_drawing_addresses
 
     shape = Shape("rect", dict(x=0, y=0, w=4, h=4))
     first = RegionSample(1001, shape, FlatFill("#123456"))
@@ -57,7 +57,7 @@ def test_shared_address_publication_keeps_existing_child_slots_and_source_geomet
 
 
 def test_shared_address_publication_rejects_missing_root_address():
-    from vectormark.drawing_adapter import normalize_drawing_addresses
+    from vectoreyes.drawing_adapter import normalize_drawing_addresses
 
     root = RegionSample(1, Shape("rect", dict(x=0, y=0, w=4, h=4)), FlatFill("#123456"))
     with pytest.raises(ValueError, match="missing a stable drawing_id"):

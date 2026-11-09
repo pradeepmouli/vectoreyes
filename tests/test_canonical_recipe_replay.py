@@ -2,16 +2,16 @@ from dataclasses import replace
 
 import numpy as np
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_engine import RasterImage
-from vectormark.drawing_fill import FlatFill
-from vectormark.drawing_recipe import (
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_engine import RasterImage
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe, ResolveOriginalPaintOperation,
     build_geometry_evidence, build_paint_evidence,
 )
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
-from vectormark.path_geometry import geometry_from_svg_d
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions
+from vectoreyes.path_geometry import geometry_from_svg_d
 
 
 def inputs():
@@ -31,7 +31,7 @@ def inputs():
 
 
 def test_retain_only_replay_needs_no_working_geometry_or_raster_codec():
-    from vectormark.drawing_replay import replay_drawing
+    from vectoreyes.drawing_replay import replay_drawing
 
     evidence, paint, recipe = inputs()
     result = replay_drawing(evidence, paint, recipe)
@@ -42,7 +42,7 @@ def test_retain_only_replay_needs_no_working_geometry_or_raster_codec():
 
 
 def test_replay_execution_retains_canonical_output_without_disposable_regions():
-    from vectormark.drawing_replay import propose_effective_recipe
+    from vectoreyes.drawing_replay import propose_effective_recipe
 
     evidence, paint, recipe = inputs()
     result = propose_effective_recipe(drawing_id='result', evidence=evidence, paint=paint, recipe=recipe)
@@ -53,11 +53,11 @@ def test_replay_execution_retains_canonical_output_without_disposable_regions():
 
 
 def test_replay_input_identity_ignores_svg_spelling_but_not_geometry_or_paint():
-    from vectormark.candidate import FlatFill as WorkingFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.replay_binding import capture_replay_state
-    from vectormark.replay_identity import canonical_input_revision
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill as WorkingFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.replay_binding import capture_replay_state
+    from vectoreyes.replay_identity import canonical_input_revision
+    from vectoreyes.refinement.region_sample import RegionSample
 
     mask = np.ones((8, 8), dtype=bool)
     first = RegionSample.from_shape(id=1, shape=Shape('path', {'d': 'M1 1 L6 1 L6 6 L1 6 Z'}),
@@ -72,10 +72,10 @@ def test_replay_input_identity_ignores_svg_spelling_but_not_geometry_or_paint():
 
 
 def test_replay_capture_detaches_cached_command_objects_from_working_inputs():
-    from vectormark.candidate import FlatFill as WorkingFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.replay_binding import capture_replay_state
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill as WorkingFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.replay_binding import capture_replay_state
+    from vectoreyes.refinement.region_sample import RegionSample
 
     geometry = geometry_from_svg_d('M1 1 L6 1 L6 6 L1 6 Z', region_id='r1')
     region = RegionSample.from_shape(id=1, shape=Shape('path', {
@@ -88,8 +88,8 @@ def test_replay_capture_detaches_cached_command_objects_from_working_inputs():
 
 
 def test_terminal_palette_projection_uses_canonical_geometry_without_working_observations():
-    from vectormark.drawing_replay import replay_drawing
-    from vectormark.output_settings import DrawingOutputSettings
+    from vectoreyes.drawing_replay import replay_drawing
+    from vectoreyes.output_settings import DrawingOutputSettings
 
     evidence, paint, recipe = inputs()
     paint = build_paint_evidence(paint.source, output_settings=DrawingOutputSettings(
@@ -103,7 +103,7 @@ def test_terminal_palette_projection_uses_canonical_geometry_without_working_obs
 
 
 def test_all_source_paint_replay_needs_only_canonical_geometry_and_pixels():
-    from vectormark.drawing_replay import replay_drawing
+    from vectoreyes.drawing_replay import replay_drawing
 
     evidence, paint, recipe = inputs()
     recipe = replace(recipe, steps=(ResolveOriginalPaintOperation(

@@ -3,20 +3,20 @@ import math
 import pytest
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import (
     ApplySeamConstraintsOperation,
     AxisSeamConstraint,
     PassInputRegionRef,
 )
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.skia_geometry import SkPath
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.skia_geometry import SkPath
 
 
 def test_engine_applies_recorded_self_symmetry_without_selecting_another_fit():
-    from vectormark.drawing_symmetry import Axis2D
-    from vectormark.refinement.automatic_replay import apply_self_symmetry_choice
+    from vectoreyes.drawing_symmetry import Axis2D
+    from vectoreyes.refinement.automatic_replay import apply_self_symmetry_choice
 
     angles = np.linspace(0, 2 * math.pi, 32, endpoint=False)
     footprint = SkPath(
@@ -37,12 +37,7 @@ def test_engine_applies_recorded_self_symmetry_without_selecting_another_fit():
         (),
         axis=Axis2D(math.pi / 2, 48, 48),
         residual=0,
-        fit_kind="symmetric_half",
-        side="left",
-        corner_radius=0,
-        epsilon=1,
-        max_error=1,
-        cubic=True,
+        side="positive",
     )
     assert len(result) == 1 and result[0].id == 1
     assert result[0].fill is target.fill and result[0].original is target.original
@@ -53,31 +48,26 @@ def test_engine_applies_recorded_self_symmetry_without_selecting_another_fit():
 
 
 def test_engine_rejects_unknown_recorded_symmetry_fitter_without_mutation():
-    from vectormark.drawing_symmetry import Axis2D
-    from vectormark.refinement.automatic_replay import apply_self_symmetry_choice
+    from vectoreyes.drawing_symmetry import Axis2D
+    from vectoreyes.refinement.automatic_replay import apply_self_symmetry_choice
 
     target = RegionSample(
         1, Shape("path", {"d": "M0 0 L10 0 L10 10 L0 10 Z"}), FlatFill("#123456")
     )
-    with pytest.raises(ValueError, match="unsupported recorded symmetry fit kind"):
+    with pytest.raises(ValueError, match="symmetry side"):
         apply_self_symmetry_choice(
             [target],
             target,
             (),
             axis=Axis2D(math.pi / 2, 5, 5),
             residual=0,
-            fit_kind="not-a-fitter",
-            side="left",
-            corner_radius=0,
-            epsilon=0.1,
-            max_error=0.1,
-            cubic=False,
+            side="not-a-side",
         )
     assert target.diagnostics == {}
 
 
 def test_engine_applies_recorded_axis_seam_to_both_regions_and_preserves_paint():
-    from vectormark.refinement.automatic_replay import apply_seam_constraints
+    from vectoreyes.refinement.automatic_replay import apply_seam_constraints
 
     first = RegionSample(
         1, Shape("rect", {"x": 0, "y": 0, "w": 10, "h": 10}), FlatFill("#123456")

@@ -14,12 +14,12 @@
 
 Read `docs/superpowers/specs/2026-06-06-polygon-occlusion-design.md` for the design. Key facts about the existing code you will build on:
 
-- **`label_boundary(region, others, *, reach=2, contour_index=0) -> (contour, seam)`** (`src/vectormark/occlusion.py`). `contour` is an `(N, 2)` array of `(x, y)` points tracing the region's outer boundary as a **closed cyclic loop**; `seam` is a length-`N` bool array — `True` where another region's mask is within `reach` px (the occluded part), `False` on the region's own (truly visible) boundary.
-- **`rdp(points, epsilon) -> np.ndarray`** (`src/vectormark/contour.py`): Ramer–Douglas–Peucker polyline simplification. Returns a subsequence of the input points (originals preserved, in order); guarantees every dropped point lies within `epsilon` of the simplified polyline.
-- **`Region`** (`src/vectormark/types.py`): dataclass with `.label: int`, `.mask: np.ndarray` (bool `(H, W)`), `.color_hex: str`.
+- **`label_boundary(region, others, *, reach=2, contour_index=0) -> (contour, seam)`** (`src/vectoreyes/occlusion.py`). `contour` is an `(N, 2)` array of `(x, y)` points tracing the region's outer boundary as a **closed cyclic loop**; `seam` is a length-`N` bool array — `True` where another region's mask is within `reach` px (the occluded part), `False` on the region's own (truly visible) boundary.
+- **`rdp(points, epsilon) -> np.ndarray`** (`src/vectoreyes/contour.py`): Ramer–Douglas–Peucker polyline simplification. Returns a subsequence of the input points (originals preserved, in order); guarantees every dropped point lies within `epsilon` of the simplified polyline.
+- **`Region`** (`src/vectoreyes/types.py`): dataclass with `.label: int`, `.mask: np.ndarray` (bool `(H, W)`), `.color_hex: str`.
 - **`primitive_mask(prim, h, w) -> np.ndarray`** (`occlusion.py`): boolean mask of a completed primitive. Already handles `"circle"`, `"annulus"`, `"ellipse"`. This is the single chokepoint `_pair_constraint`, `_topo_order`, and `stack_agreement` reason through — once it handles `"polygon"`, the whole orchestration does.
 - **`_complete_member(region, others) -> dict | None`** (`occlusion.py`): dispatches a group member to `complete_annulus` (if it has a hole) then `complete_primitive` (circle/ellipse). We append a polygon arm.
-- **Emit is already done:** `shape_to_svg` emits `<polygon points="…"/>` and `shape_to_path_d` emits `M…L…L…Z` for `kind == "polygon"` with `params = {"points": [(x, y), …]}`. The pipeline's `ScenePrimitive` render path (`src/vectormark/pipeline.py:226-235`) is generic: a polygon primitive renders via `shape_to_svg` (non-flatten) or `shape_to_path_d` (flatten, `rule=None`) with **no change required**.
+- **Emit is already done:** `shape_to_svg` emits `<polygon points="…"/>` and `shape_to_path_d` emits `M…L…L…Z` for `kind == "polygon"` with `params = {"points": [(x, y), …]}`. The pipeline's `ScenePrimitive` render path (`src/vectoreyes/pipeline.py:226-235`) is generic: a polygon primitive renders via `shape_to_svg` (non-flatten) or `shape_to_path_d` (flatten, `rule=None`) with **no change required**.
 - **Module-level constants** already in `occlusion.py`: `_MAX_RESIDUAL = 1.6`, `_GATE_AGREEMENT = 0.96`, etc. We add `_MAX_VERTICES = 8`.
 
 **Representation contract:** a completed polygon is `{"kind": "polygon", "params": {"points": [(x, y), …]}}` where `points` is a list of `(float, float)` tuples ordered around the ring — exactly what `recognize_polygon` and the emit layer already use.
@@ -30,7 +30,7 @@ Read `docs/superpowers/specs/2026-06-06-polygon-occlusion-design.md` for the des
 
 ## File Structure
 
-- **Modify** `src/vectormark/occlusion.py` — add `_fit_line`, `_line_intersect`, `_is_convex`, `_own_runs`, `complete_polygon`; extend `primitive_mask` with a `"polygon"` case; add the polygon arm to `_complete_member`; add `_MAX_VERTICES`; add `from skimage.draw import polygon2mask`.
+- **Modify** `src/vectoreyes/occlusion.py` — add `_fit_line`, `_line_intersect`, `_is_convex`, `_own_runs`, `complete_polygon`; extend `primitive_mask` with a `"polygon"` case; add the polygon arm to `_complete_member`; add `_MAX_VERTICES`; add `from skimage.draw import polygon2mask`.
 - **Modify** `tests/test_occlusion.py` — append unit tests for the new helpers and `complete_polygon`, the `primitive_mask` polygon case, and a reconstruct-scene decline test.
 - **Create** `tests/test_acceptance_polygon.py` — end-to-end acceptance fixtures (two overlapping diamonds; diamond × disk) through `idealize`.
 
@@ -41,7 +41,7 @@ No changes to `pipeline.py`, `emit.py`, or `fit.py`.
 ### Task 1: Geometry helpers — line fit, intersection, convexity
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (add three module-level helper functions, after `_own_arc_span_deg` near line 79)
+- Modify: `src/vectoreyes/occlusion.py` (add three module-level helper functions, after `_own_arc_span_deg` near line 79)
 - Test: `tests/test_occlusion.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -50,7 +50,7 @@ Append to `tests/test_occlusion.py`:
 
 ```python
 def test_fit_line_recovers_horizontal_line():
-    from vectormark.occlusion import _fit_line
+    from vectoreyes.occlusion import _fit_line
     pts = np.array([[0.0, 5.0], [2.0, 5.0], [4.0, 5.0], [6.0, 5.0]])
     a, b, c, resid = _fit_line(pts)
     # line is y == 5  ->  normal is (0, 1), offset c == 5
@@ -60,14 +60,14 @@ def test_fit_line_recovers_horizontal_line():
 
 
 def test_fit_line_reports_residual_for_noisy_points():
-    from vectormark.occlusion import _fit_line
+    from vectoreyes.occlusion import _fit_line
     pts = np.array([[0.0, 0.0], [2.0, 0.0], [4.0, 3.0], [6.0, 0.0]])  # one 3px outlier
     _, _, _, resid = _fit_line(pts)
     assert resid > 1.0
 
 
 def test_line_intersect_crossing_lines():
-    from vectormark.occlusion import _fit_line, _line_intersect
+    from vectoreyes.occlusion import _fit_line, _line_intersect
     horiz = _fit_line(np.array([[0.0, 4.0], [8.0, 4.0]]))
     vert = _fit_line(np.array([[5.0, 0.0], [5.0, 9.0]]))
     p = _line_intersect(horiz, vert)
@@ -76,14 +76,14 @@ def test_line_intersect_crossing_lines():
 
 
 def test_line_intersect_parallel_returns_none():
-    from vectormark.occlusion import _fit_line, _line_intersect
+    from vectoreyes.occlusion import _fit_line, _line_intersect
     l1 = _fit_line(np.array([[0.0, 0.0], [8.0, 0.0]]))
     l2 = _fit_line(np.array([[0.0, 3.0], [8.0, 3.0]]))
     assert _line_intersect(l1, l2) is None
 
 
 def test_is_convex_accepts_square_rejects_arrow():
-    from vectormark.occlusion import _is_convex
+    from vectoreyes.occlusion import _is_convex
     square = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]
     assert _is_convex(square)
     concave = [(0.0, 0.0), (4.0, 0.0), (2.0, 2.0), (4.0, 4.0), (0.0, 4.0)]  # arrowhead notch
@@ -97,7 +97,7 @@ Expected: FAIL with `ImportError: cannot import name '_fit_line'` (etc.).
 
 - [ ] **Step 3: Implement the helpers**
 
-In `src/vectormark/occlusion.py`, add after `_own_arc_span_deg` (≈ line 79):
+In `src/vectoreyes/occlusion.py`, add after `_own_arc_span_deg` (≈ line 79):
 
 ```python
 def _fit_line(pts: np.ndarray) -> tuple[float, float, float, float] | None:
@@ -156,7 +156,7 @@ Expected: PASS (5 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): line-fit, intersection, convexity helpers for polygon completion"
 ```
 
@@ -165,7 +165,7 @@ git commit -m "feat(occlusion): line-fit, intersection, convexity helpers for po
 ### Task 2: Own-boundary run extraction
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (add `_own_runs` after the Task 1 helpers)
+- Modify: `src/vectoreyes/occlusion.py` (add `_own_runs` after the Task 1 helpers)
 - Test: `tests/test_occlusion.py` (append)
 
 The own (non-seam) boundary of an occluded region forms one or more contiguous arcs along the cyclic contour. `_own_runs` returns each maximal contiguous run as an open polyline, handling the wrap across index 0.
@@ -176,7 +176,7 @@ Append to `tests/test_occlusion.py`:
 
 ```python
 def test_own_runs_single_contiguous_arc():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(10)])
     seam = np.array([False, False, False, True, True, True, False, False, False, False])
     runs = _own_runs(contour, seam)
@@ -185,7 +185,7 @@ def test_own_runs_single_contiguous_arc():
 
 
 def test_own_runs_no_seam_returns_whole_contour():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(5)])
     seam = np.zeros(5, bool)
     runs = _own_runs(contour, seam)
@@ -193,7 +193,7 @@ def test_own_runs_no_seam_returns_whole_contour():
 
 
 def test_own_runs_all_seam_returns_empty():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(5)])
     runs = _own_runs(contour, np.ones(5, bool))
     assert runs == []
@@ -206,7 +206,7 @@ Expected: FAIL with `ImportError: cannot import name '_own_runs'`.
 
 - [ ] **Step 3: Implement `_own_runs`**
 
-Add after the Task 1 helpers in `src/vectormark/occlusion.py`:
+Add after the Task 1 helpers in `src/vectoreyes/occlusion.py`:
 
 ```python
 def _own_runs(contour: np.ndarray, seam: np.ndarray) -> list[np.ndarray]:
@@ -239,7 +239,7 @@ Expected: PASS (3 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): extract contiguous own-boundary runs from a cyclic contour"
 ```
 
@@ -248,12 +248,12 @@ git commit -m "feat(occlusion): extract contiguous own-boundary runs from a cycl
 ### Task 3: `complete_polygon`
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (add `complete_polygon` after `complete_annulus`; add `_MAX_VERTICES` constant near `_MAX_RESIDUAL`)
+- Modify: `src/vectoreyes/occlusion.py` (add `complete_polygon` after `complete_annulus`; add `_MAX_VERTICES` constant near `_MAX_RESIDUAL`)
 - Test: `tests/test_occlusion.py` (append; uses a new diamond fixture helper)
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_occlusion.py` (the file already imports `numpy as np` and constructs `Region` objects — reuse that style; if a `Region` import is not present at the top, add `from vectormark.types import Region`):
+Append to `tests/test_occlusion.py` (the file already imports `numpy as np` and constructs `Region` objects — reuse that style; if a `Region` import is not present at the top, add `from vectoreyes.types import Region`):
 
 ```python
 def _diamond_mask(cx, cy, r, h, w):
@@ -267,7 +267,7 @@ def _disk_mask(cx, cy, r, h, w):
 
 
 def test_complete_polygon_recovers_occluded_diamond():
-    from vectormark.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
+    from vectoreyes.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
     h, w = 160, 220
     cx, cy, r = 80, 80, 46
     diamond = _diamond_mask(cx, cy, r, h, w) & ~_disk_mask(126, 80, 30, h, w)  # right corner bitten
@@ -285,7 +285,7 @@ def test_complete_polygon_recovers_occluded_diamond():
 
 
 def test_complete_polygon_rejects_curved_disk_fragment():
-    from vectormark.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
+    from vectoreyes.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
     h, w = 160, 200
     disk = _disk_mask(90, 80, 50, h, w) & ~_disk_mask(150, 80, 28, h, w)   # big disk, small bite
     occluder = _disk_mask(150, 80, 28, h, w)
@@ -302,7 +302,7 @@ Expected: FAIL with `ImportError: cannot import name 'complete_polygon'`.
 
 - [ ] **Step 3: Implement `complete_polygon` and add the constant**
 
-In `src/vectormark/occlusion.py`, add `_MAX_VERTICES = 8` immediately after the `_MAX_RESIDUAL = 1.6` line (in the constants block). Add the function after `complete_annulus`:
+In `src/vectoreyes/occlusion.py`, add `_MAX_VERTICES = 8` immediately after the `_MAX_RESIDUAL = 1.6` line (in the constants block). Add the function after `complete_annulus`:
 
 ```python
 def complete_polygon(
@@ -370,7 +370,7 @@ If `test_complete_polygon_rejects_curved_disk_fragment` does NOT yield `None` (t
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): complete_polygon recovers a convex polygon from an occluded fragment"
 ```
 
@@ -379,7 +379,7 @@ git commit -m "feat(occlusion): complete_polygon recovers a convex polygon from 
 ### Task 4: `primitive_mask` polygon case
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (`primitive_mask` ≈ lines 211-220; add the `skimage.draw` import)
+- Modify: `src/vectoreyes/occlusion.py` (`primitive_mask` ≈ lines 211-220; add the `skimage.draw` import)
 - Test: `tests/test_occlusion.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -388,7 +388,7 @@ Append to `tests/test_occlusion.py`:
 
 ```python
 def test_primitive_mask_polygon_membership():
-    from vectormark.occlusion import primitive_mask
+    from vectoreyes.occlusion import primitive_mask
     # a 10x10 axis-aligned square from (2,2) to (7,7)
     prim = {"kind": "polygon", "params": {"points": [(2.0, 2.0), (7.0, 2.0), (7.0, 7.0), (2.0, 7.0)]}}
     mask = primitive_mask(prim, 12, 12)
@@ -404,7 +404,7 @@ Expected: FAIL — `primitive_mask` falls through to the ellipse branch and rais
 
 - [ ] **Step 3: Implement the polygon case**
 
-Add the import near the other skimage imports at the top of `src/vectormark/occlusion.py`:
+Add the import near the other skimage imports at the top of `src/vectoreyes/occlusion.py`:
 
 ```python
 from skimage.draw import polygon2mask
@@ -427,7 +427,7 @@ Expected: PASS (1 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): primitive_mask rasterizes a polygon primitive"
 ```
 
@@ -436,7 +436,7 @@ git commit -m "feat(occlusion): primitive_mask rasterizes a polygon primitive"
 ### Task 5: Wire polygon into `_complete_member`
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (`_complete_member` ≈ lines 174-181)
+- Modify: `src/vectoreyes/occlusion.py` (`_complete_member` ≈ lines 174-181)
 - Test: `tests/test_occlusion.py` (append)
 
 Polygon becomes the **last** dispatch arm — after the curved (circle/ellipse) fitters, which reject straight edges. A disk/ring is still caught by the earlier arms; only genuinely straight-edged fragments reach `complete_polygon`.
@@ -447,7 +447,7 @@ Append to `tests/test_occlusion.py` (reuses `_diamond_mask`/`_disk_mask` from Ta
 
 ```python
 def test_complete_member_dispatches_diamond_to_polygon():
-    from vectormark.occlusion import _complete_member
+    from vectoreyes.occlusion import _complete_member
     h, w = 160, 220
     diamond = _diamond_mask(80, 80, 46, h, w) & ~_disk_mask(126, 80, 30, h, w)
     occluder = _disk_mask(126, 80, 30, h, w)
@@ -464,7 +464,7 @@ Expected: FAIL — `_complete_member` returns `None` (the diamond matches neithe
 
 - [ ] **Step 3: Add the polygon arm**
 
-Replace the body of `_complete_member` in `src/vectormark/occlusion.py` with:
+Replace the body of `_complete_member` in `src/vectoreyes/occlusion.py` with:
 
 ```python
 def _complete_member(region: Region, others: list[Region]) -> dict | None:
@@ -490,7 +490,7 @@ Expected: PASS (1 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): dispatch polygonal fragments to complete_polygon"
 ```
 
@@ -519,7 +519,7 @@ import re
 
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import render_svg, ssim
 
 
@@ -624,7 +624,7 @@ Append to `tests/test_occlusion.py` (reuses `_diamond_mask`/`_disk_mask`):
 
 ```python
 def test_reconstruct_scene_declines_polygon_with_whole_edge_hidden():
-    from vectormark.occlusion import reconstruct_scene
+    from vectoreyes.occlusion import reconstruct_scene
     h, w = 170, 200
     # a rectangle occluder covers the diamond's entire lower-right edge (corner (126,80)
     # to corner (80,126)) plus both its endpoints -> a whole edge is unrecoverable.

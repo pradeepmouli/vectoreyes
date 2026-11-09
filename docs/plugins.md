@@ -1,4 +1,4 @@
-# VectorMark agent plugin
+# vectorEyes agent plugin
 
 One generated bundle supports the portable Agent Plugins format, Codex's
 compatibility manifest, and Claude Code's manifest. All hosts receive the same
@@ -11,7 +11,7 @@ under `integrations/plugin/`.
 From this repository:
 
 ```sh
-python scripts/build_agent_plugin.py --archive dist/vectormark-plugin.zip
+python scripts/build_agent_plugin.py --archive dist/vectoreyes-plugin.zip
 python scripts/build_agent_plugin.py --check
 claude plugin validate integrations/plugin
 claude --plugin-dir ./integrations/plugin
@@ -23,9 +23,9 @@ supported. Installing/enabling is an explicit host action; building the ZIP
 does not register or publish a plugin. The bundle includes both host manifests;
 runtime compatibility still needs a smoke test in each supported host version.
 
-The default bundle launches `vectormark-mcp` over stdio. Install a compatible
-VectorMark wheel with server/scoring extras into a dedicated environment and
-make that environment's `vectormark-mcp` available on the host's PATH before
+The default bundle launches `vectoreyes-mcp` over stdio. Install a compatible
+vectorEyes wheel with server/scoring extras into a dedicated environment and
+make that environment's `vectoreyes-mcp` available on the host's PATH before
 enabling. The plugin never silently downloads a runtime or changes Python
 environments. It contains no platform-specific native binaries. Use the built
 wheel matching the user's Python/OS/architecture; development-source installs
@@ -34,9 +34,9 @@ are a separate explicit choice.
 To connect to an already running service instead:
 
 ```sh
-python scripts/build_agent_plugin.py --output build/vectormark-http-plugin \
+python scripts/build_agent_plugin.py --output build/vectoreyes-http-plugin \
   --endpoint http://127.0.0.1:8000/mcp \
-  --archive dist/vectormark-http-plugin.zip
+  --archive dist/vectoreyes-http-plugin.zip
 ```
 
 Remote endpoints require HTTPS; loopback HTTP is allowed for local development.

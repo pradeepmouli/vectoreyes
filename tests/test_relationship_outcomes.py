@@ -3,18 +3,18 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_plan import DrawingPlan
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_plan import DrawingPlan
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.refinement.assembly_binding import working_regions_from_evidence
-from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
-from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
-from vectormark.drawing_render import render_drawing
-from vectormark.drawing_trace import TraceOptions, TraceResult
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.drawing_engine import RasterImage
+from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
+from vectoreyes.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
+from vectoreyes.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
+from vectoreyes.drawing_render import render_drawing
+from vectoreyes.drawing_trace import TraceOptions, TraceResult
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.drawing_engine import RasterImage
 
 
 def evidence_fixture():
@@ -44,19 +44,19 @@ def test_source_edit_refreshes_clone_footprint_before_later_partition_and_replay
     paint = build_paint_evidence(source)
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
         ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
-    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0', ops=[
+    plan = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0', ops=[
         {'op': 'assign_clone', 'source': source_id, 'target': 'r2', 'transforms': transforms},
         {'op': 'align', 'target': source_id, 'reference': 'r3', 'axes': ['y']},
     ])
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     replay = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
-    from vectormark.geometry_native import region_path
+    from vectoreyes.geometry_native import region_path
     indexed = {region.id: region for region in replay.drawing.regions}
     for root in replay.drawing.regions:
         indexed.update({leaf.id: leaf for leaf in root.leaves()})
     assert region_path(replay.drawing.region('r2'), indexed).bounds == (left, 9, 13, 13)
     assert region_path(replay.drawing.region('r1'), indexed).bounds == (1, 9, 5, 13)
-    split = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v1', ops=[
+    split = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v1', ops=[
         {'op': 'split', 'target': 'r2', 'divider': {'type': 'line', 'points': [(0, 11), (16, 11)]}},
     ])
     revised = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=recipe, plan=split).recipe
@@ -65,7 +65,7 @@ def test_source_edit_refreshes_clone_footprint_before_later_partition_and_replay
 
 
 def test_clone_geometry_is_refreshed_before_paint_invalidation():
-    from vectormark.drawing_refine import refine
+    from vectoreyes.drawing_refine import refine
 
     roots = tuple(RegionSample.from_shape(id=index,
         shape=Shape('rect', dict(x=x, y=y, w=4., h=4.)), fill=FlatFill('#112233'),
@@ -74,7 +74,7 @@ def test_clone_geometry_is_refreshed_before_paint_invalidation():
     image = np.zeros((16, 16, 3), dtype=np.uint8)
     image[:8, :, 0] = 255
     image[8:, :, 1] = 255
-    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0', ops=[
+    plan = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0', ops=[
         {'op': 'assign_clone', 'source': 'r1', 'target': 'r2', 'transforms': [{'tx': 8}]},
         {'op': 'align', 'target': 'r1', 'reference': 'r3', 'axes': ['y']},
     ])
@@ -92,16 +92,16 @@ def test_clone_geometry_is_refreshed_before_paint_invalidation():
     {'op': 'split', 'target': 'r1', 'divider': {'type': 'line', 'points': [[3, 0], [3, 8]]}},
 ])
 def test_nonfit_selected_outcomes_replay_without_executing_actions(operation, monkeypatch):
-    from vectormark import drawing_refine
+    from vectoreyes import drawing_refine
     evidence, paint, base = evidence_fixture()
-    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0', ops=[operation])
+    plan = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0', ops=[operation])
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     assert recipe.operations[0].selected_outcome is not None
     original = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
     def forbidden(*args, **kwargs):
         raise AssertionError('selected action executed again')
     monkeypatch.setattr(drawing_refine, 'refine', forbidden)
-    import vectormark.drawing_replay as replay
+    import vectoreyes.drawing_replay as replay
     monkeypatch.setattr(replay, '_propose_public_operation', forbidden)
     repeated = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
     assert render_drawing(repeated.drawing).svg == render_drawing(original.drawing).svg
@@ -114,25 +114,25 @@ def test_nonfit_selected_outcomes_replay_without_executing_actions(operation, mo
     ('set_region_symmetry', {'op': 'set_symmetry', 'target': 'r1', 'axis': {'point': [3, 3], 'angle_degrees': 90}}),
 ])
 def test_relationship_plans_delegate_to_canonical_actions_once(name, operation, monkeypatch):
-    from vectormark import drawing_relationships
+    from vectoreyes import drawing_relationships
     evidence, paint, base = evidence_fixture()
     original = getattr(drawing_relationships, name)
     calls = []
-    def record(drawing, action):
+    def record(drawing, action, **kwargs):
         calls.append(action.op)
-        return original(drawing, action)
+        return original(drawing, action, **kwargs)
     monkeypatch.setattr(drawing_relationships, name, record)
-    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0', ops=[operation])
+    plan = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0', ops=[operation])
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
     assert calls == [operation['op']]
 
 
 def test_selected_outcome_preserves_new_component_coverage():
-    from vectormark.drawing_recipe import RecipeOperation
-    from vectormark.drawing_actions import FitPathDrawingAction
+    from vectoreyes.drawing_recipe import RecipeOperation
+    from vectoreyes.drawing_actions import FitPathDrawingAction
     from tests._working_evidence import retain_working_operation_outcome
-    from vectormark.types import CoverageField
+    from vectoreyes.types import CoverageField
     evidence, paint, upstream = evidence_fixture()
     roots = working_regions_from_evidence(evidence)
     root = roots[0]
@@ -150,7 +150,7 @@ def test_selected_outcome_preserves_new_component_coverage():
 
 
 def test_selected_outcome_borrows_unchanged_rasters_from_bound_input():
-    from vectormark.drawing_adapter import working_region_evidence
+    from vectoreyes.drawing_adapter import working_region_evidence
     evidence, _, _ = evidence_fixture()
     roots = working_regions_from_evidence(evidence)
     records = working_region_evidence(roots, baseline=roots)
@@ -159,9 +159,9 @@ def test_selected_outcome_borrows_unchanged_rasters_from_bound_input():
 
 
 def test_nonfit_outcome_rejects_changed_settings_with_operation_error():
-    from vectormark.drawing_recipe import RecipeOperation
+    from vectoreyes.drawing_recipe import RecipeOperation
     evidence, paint, base = evidence_fixture()
-    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0',
+    plan = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0',
         ops=[{'op': 'align', 'target': 'r2', 'reference': 'r1', 'axes': ['y']}])
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     stale = replace(recipe, steps=tuple(replace(step, settings=step.settings.model_copy(update={'max_error': 3}))
@@ -172,7 +172,7 @@ def test_nonfit_outcome_rejects_changed_settings_with_operation_error():
 
 @pytest.mark.parametrize('duplicate', [True, False])
 def test_outcome_rejects_ambiguous_or_empty_root_ownership(duplicate):
-    from vectormark.drawing_recipe import SelectedOperationOutcome
+    from vectoreyes.drawing_recipe import SelectedOperationOutcome
     evidence, _, _ = evidence_fixture()
     root = evidence.drawing.regions[0]
     with pytest.raises(ValueError, match='unique retained output addresses'):
@@ -180,8 +180,8 @@ def test_outcome_rejects_ambiguous_or_empty_root_ownership(duplicate):
 
 
 def test_deliberate_relationship_proposals_can_vary_but_selected_replay_does_not(monkeypatch):
-    from vectormark import drawing_relationships
-    from vectormark.path_geometry import CloneGeometry, AffineTransform
+    from vectoreyes import drawing_relationships
+    from vectoreyes.path_geometry import CloneGeometry, AffineTransform
     evidence, paint, base = evidence_fixture()
     execute = drawing_relationships.assign_clone
     calls = []
@@ -190,7 +190,7 @@ def test_deliberate_relationship_proposals_can_vary_but_selected_replay_does_not
         target = execute(drawing, action)
         return replace(target, geometry=CloneGeometry('r1', (AffineTransform(tx=len(calls) * 4),)))
     monkeypatch.setattr(drawing_relationships, 'assign_clone', varying)
-    plan = DrawingPlan(version='vectormark.plan.v1', drawing_id='drw_test', base_version='v0',
+    plan = DrawingPlan(version='vectoreyes.plan.v1', drawing_id='drw_test', base_version='v0',
         ops=[{'op': 'assign_clone', 'source': 'r1', 'target': 'r2', 'transforms': [{'tx': 8}]}])
     recipes = [extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe for _ in range(2)]
     children = [propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test') for recipe in recipes]

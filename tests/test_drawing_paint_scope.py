@@ -1,10 +1,10 @@
 import numpy as np
 
-from vectormark.refinement import paint_binding as paint
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.refinement import paint_binding as paint
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
 
 def forest(*, fills=(None, None)):
@@ -80,8 +80,8 @@ def test_self_symmetry_shared_paint_uses_its_own_scoped_visible_surface():
 
 
 def test_terminal_output_limits_do_not_change_geometry_or_source_evidence():
-    from vectormark.candidate import LinearGradientFill
-    from vectormark.output_settings import DrawingOutputSettings
+    from vectoreyes.candidate import LinearGradientFill
+    from vectoreyes.output_settings import DrawingOutputSettings
 
     gradient = LinearGradientFill(
         dict(x1=0, y1=0, x2=20, y2=0), [(0.0, "#FF0000"), (1.0, "#0000FF")]

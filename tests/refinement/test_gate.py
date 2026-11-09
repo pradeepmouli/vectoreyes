@@ -1,7 +1,7 @@
 import numpy as np
 
-from vectormark.skia_geometry import SkPath
-from vectormark.refinement.gate import BUDGET, coverage_residual, gate_ok, rasterize
+from vectoreyes.skia_geometry import SkPath
+from vectoreyes.refinement.gate import BUDGET, coverage_residual, gate_ok, rasterize
 
 
 def _disk_mask(h, w, cy, cx, r):

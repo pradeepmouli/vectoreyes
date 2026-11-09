@@ -2,12 +2,12 @@ import copy
 
 import pytest
 
-from vectormark.corner_diagnostics import (
+from vectoreyes.corner_diagnostics import (
     normalize_corners_path_d,
     path_corner_diagnostics,
     rebind_prefit_corner_diagnostics,
 )
-from vectormark.path_sampling import _parse_subpaths
+from vectoreyes.path_sampling import _parse_subpaths
 
 
 @pytest.mark.parametrize("side", ["Q5 -3 10 0", "C3 -2 7 -2 10 0"])
@@ -131,10 +131,10 @@ def test_point_at_serialization_start_cannot_be_consumed_by_wrapped_corner():
 
 
 def test_refinement_pass_preserves_provenance_across_repeated_calls():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.passes.corners import corner_normalize_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.passes.corners import corner_normalize_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 L10 0 Q12 0 13 1 Q14 2 14 4 L0 12 Z"
     diagnostics = path_corner_diagnostics(d, declared_corner_spans=(((10, 0), (14, 4)),))
@@ -157,10 +157,10 @@ def test_no_provenance_skip_survives_repeated_noop():
 
 
 def test_rebind_without_declarations_preserves_cleanup_diagnostics():
-    from vectormark.candidate import FlatFill
-    from vectormark.drawing_adapter import rebind_working_corner_provenance
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.drawing_adapter import rebind_working_corner_provenance
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 Q5 0 10 10 L0 10 Z"
     shape = Shape("path", {"d": d})
@@ -174,10 +174,10 @@ def test_rebind_without_declarations_preserves_cleanup_diagnostics():
 
 @pytest.mark.parametrize("nested", [False, True])
 def test_rebind_keeps_repeated_leaf_ids_scoped_to_their_ancestry(nested):
-    from vectormark.candidate import FlatFill
-    from vectormark.drawing_adapter import rebind_working_corner_provenance
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.drawing_adapter import rebind_working_corner_provenance
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 L10 0 L10 10 L0 10 Z"
     shape = Shape("path", {"d": d})

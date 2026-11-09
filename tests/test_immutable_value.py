@@ -3,7 +3,7 @@ from types import MappingProxyType
 import numpy as np
 import pytest
 
-from vectormark.immutable_value import freeze_value
+from vectoreyes.immutable_value import freeze_value
 
 
 class SnapshotValue:

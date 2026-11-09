@@ -4,7 +4,7 @@ import json
 import numpy as np
 import pytest
 
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions, svg_path_commands
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions, svg_path_commands
 
 
 def _annulus_image() -> np.ndarray:

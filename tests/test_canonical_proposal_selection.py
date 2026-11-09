@@ -2,14 +2,14 @@ from dataclasses import replace
 
 from tests.test_canonical_multi_replay import forbid_working_execution
 from tests.test_canonical_structural_replay import leaf
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.fit import Shape
-from vectormark.path_geometry import PathGeometry, PrimitiveGeometry, RectanglePrimitive
-from vectormark.quality import GeometryPolicy
-from vectormark.refinement.automatic_replay import primitive_intent
-from vectormark.refinement.replay_binding import capture_replay_state
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.fit import Shape
+from vectoreyes.path_geometry import PathGeometry, PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.quality import GeometryPolicy
+from vectoreyes.refinement.automatic_replay import primitive_intent
+from vectoreyes.refinement.replay_binding import capture_replay_state
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def fixture():
@@ -17,12 +17,12 @@ def fixture():
 
 
 def test_primitive_discovery_selection_and_replay_need_no_sampling_scene(monkeypatch):
-    from vectormark.drawing_proposals import discover_primitive_proposals, select_canonical_pass
+    from vectoreyes.drawing_proposals import discover_primitive_proposals, select_canonical_pass
     state = fixture()
     forbid_working_execution(monkeypatch)
     def forbidden(*args, **kwargs):
         raise AssertionError('canonical proposal discovery must not construct a RegionSample')
-    monkeypatch.setattr('vectormark.refinement.region_sample.RegionSample.__init__', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.region_sample.RegionSample.__init__', forbidden)
     proposals = discover_primitive_proposals(state, epsilon=.1)
     result = select_canonical_pass(state, proposals, pass_name='primitives_pass')
     assert result.state.drawing.region('r1').geometry.primitive.width == 10
@@ -33,7 +33,7 @@ def test_primitive_discovery_selection_and_replay_need_no_sampling_scene(monkeyp
 
 
 def test_rejected_candidate_does_not_consume_the_input_or_change_the_next_choice():
-    from vectormark.drawing_proposals import CanonicalProposal, select_canonical_pass
+    from vectoreyes.drawing_proposals import CanonicalProposal, select_canonical_pass
     state = fixture()
     bad = primitive_intent(1, PrimitiveGeometry(RectanglePrimitive((0, 0), 100, 10)), epsilon=.1)
     good = primitive_intent(1, PrimitiveGeometry(RectanglePrimitive((0, 0), 10, 10)), epsilon=.1)
@@ -47,7 +47,7 @@ def test_rejected_candidate_does_not_consume_the_input_or_change_the_next_choice
 
 
 def test_proposal_overlap_and_stale_binding_are_explicit_rejections():
-    from vectormark.drawing_proposals import discover_primitive_proposals, select_canonical_pass
+    from vectoreyes.drawing_proposals import discover_primitive_proposals, select_canonical_pass
     state = fixture()
     proposal, = discover_primitive_proposals(state, epsilon=.1)
     result = select_canonical_pass(state, (proposal, proposal), pass_name='candidate_test')
@@ -67,17 +67,17 @@ def test_public_primitive_detection_uses_canonical_discovery(monkeypatch):
     ctx, traced = _trace(_disk_region_uri())
     def forbidden(*args, **kwargs):
         raise AssertionError('primitive plan discovery projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
-    monkeypatch.setattr('vectormark.drawing_refine.run_detection_with_intent', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.replay_binding.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectoreyes.drawing_refine.run_detection_with_intent', forbidden)
     result = _refine(ctx, traced, [{'op': 'detect_primitives', 'target': 'r1'}])
     assert result['version'] != traced['version']
 
 
 def test_optional_fit_without_candidate_is_rejected_without_consuming_input(monkeypatch):
-    from vectormark.drawing_proposals import CanonicalProposal, discover_primitive_proposals, select_canonical_pass
-    from vectormark.refinement.automatic_replay import PassInputRegionRef, SmoothPathOperation, operation_intent
+    from vectoreyes.drawing_proposals import CanonicalProposal, discover_primitive_proposals, select_canonical_pass
+    from vectoreyes.refinement.automatic_replay import PassInputRegionRef, SmoothPathOperation, operation_intent
     state = fixture()
-    monkeypatch.setattr('vectormark.drawing_automatic.select_automatic_paths', lambda *args, **kwargs: None)
+    monkeypatch.setattr('vectoreyes.drawing_automatic.select_automatic_paths', lambda *args, **kwargs: None)
     action = SmoothPathOperation(PassInputRegionRef('', '', (1,)), 1.)
     skipped = CanonicalProposal((1,), operation_intent(action, (action.target,), (1,)))
     good, = discover_primitive_proposals(state, epsilon=.1)
@@ -88,8 +88,8 @@ def test_optional_fit_without_candidate_is_rejected_without_consuming_input(monk
 
 
 def test_scoped_detection_keeps_repeated_child_ids_separate():
-    from vectormark.drawing_proposals import detect_primitive_regions
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.drawing_proposals import detect_primitive_regions
+    from vectoreyes.refinement.region_sample import RegionSample
     shape = Shape('path', {'d': 'M0 0 L10 0 L10 10 L0 10 Z'})
     first = RegionSample.branch(id=10, drawing_id='parentA', children=(leaf(1, shape, '#123456'),))
     child = replace(leaf(1, shape, '#abcdef'), drawing_id='other')
@@ -106,9 +106,9 @@ def test_scoped_detection_keeps_repeated_child_ids_separate():
 
 
 def test_invalid_prepared_geometry_returns_a_failed_assessment(monkeypatch):
-    from vectormark.drawing_automatic import AutomaticBatchApplication
-    from vectormark.drawing_proposals import discover_primitive_proposals, select_canonical_pass
-    from vectormark.path_geometry import AffineTransform, CloneGeometry
+    from vectoreyes.drawing_automatic import AutomaticBatchApplication
+    from vectoreyes.drawing_proposals import discover_primitive_proposals, select_canonical_pass
+    from vectoreyes.path_geometry import AffineTransform, CloneGeometry
     state = fixture()
     proposals = discover_primitive_proposals(state, epsilon=.1)
     original_prepare = AutomaticBatchApplication.prepare

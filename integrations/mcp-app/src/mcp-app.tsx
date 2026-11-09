@@ -4,6 +4,11 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StrictMode, useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
+import { ArtworkHandoff, GeneratingIndicator } from "./ArtworkHandoff";
+import type { Revision } from "./ArtworkHandoff";
+import { readArtifact } from './artifactDelivery';
+import vectorEyesIcon from "../../../src/vectoreyes/assets/vectoreyes-icon.svg?inline";
+import vectorEyesLockup from "../../../src/vectoreyes/assets/vectoreyes-lockup.svg?inline";
 
 // ─── Data shapes ──────────────────────────────────────────────────────────────
 
@@ -25,7 +30,7 @@ interface DiagnosticsProcessed {
   quantized?: boolean;
 }
 
-interface DiagnosticsVectormark {
+interface DiagnosticsVectorEyes {
   colors?: number;
   flatten?: boolean;
   no_symmetry?: boolean;
@@ -45,7 +50,7 @@ interface DiagnosticsOutput {
 interface Diagnostics {
   input?: DiagnosticsInput;
   processed?: DiagnosticsProcessed;
-  vectormark?: DiagnosticsVectormark;
+  vectoreyes?: DiagnosticsVectorEyes;
   output?: DiagnosticsOutput;
   warnings?: string[];
 }
@@ -73,6 +78,7 @@ interface ImageRef {
 }
 
 interface TraceOptionsInput {
+  preset?: string | null;
   refinement_passes: Record<string, boolean>;
   initial_stitch: boolean;
   background_color: string | null;
@@ -114,6 +120,7 @@ interface TraceToolInput {
 }
 
 interface TraceOptionSchema {
+  "x-vectoreyes-presets"?: Record<string, { label: string; options: Partial<TraceOptionsInput> }>;
   enum?: string[];
   default?: unknown;
   description?: string;
@@ -121,6 +128,7 @@ interface TraceOptionSchema {
 }
 
 interface DrawingArtifacts {
+  report: string;
   svg: string;
   preview: string;
   review_panel: string;
@@ -237,37 +245,6 @@ const SOURCE_KIND_LABELS: Record<string, string> = {
   base64: "Base64",
 };
 
-// ─── Daikonic brand mark (trusted static SVG, rendered via JSX) ───────────────
-
-function DaikonicMark({ size = 28 }: { size?: number }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 1254 1254"
-      width={size}
-      height={size}
-      aria-hidden="true"
-      style={{ flexShrink: 0, display: "block" }}
-    >
-      <path
-        fill="#031D31"
-        d="M622.5 360.5 L625.1 360.2 C625.87 360.09 626.47 359.37 626.43 358.59 Q625.75 343.98 627.5 329 Q628.45 250.49 670.5 189 Q679.51 178 688.5 167 Q740.36 114.5 809 102.5 Q821.75 101.39 835 101.5 Q858.06 103.11 872.5 122 Q876 129.79 878.5 138 Q882.17 172.19 870.5 202 Q860.07 226.77 843.5 249 Q791.62 308.08 721 325.5 Q701.08 332.4 680 336.5 Q678 337.5 676 338.5 Q655.27 341.77 639.5 357 Q638.61 358.84 638.58 359.35 C638.54 360.26 639.24 361.02 640.15 361.03 Q666.64 361.59 693 366.5 Q798.97 379.91 876.5 462 Q885.86 474.06 895.5 486 Q913.75 513.15 924.8 541.23 C925.19 542.21 925.23 543.81 924.9 544.8 L924.6 545.7 C924.27 546.69 923.15 547.5 922.1 547.5 L622.5 547.5 L322.9 547.5 C321.85 547.5 320.73 546.69 320.4 545.7 L320.1 544.8 C319.77 543.81 319.81 542.21 320.2 541.23 Q331.25 513.15 349.5 486 Q359.14 474.06 368.5 462 Q446.03 379.91 552 366.5 Q578.36 361.59 604.85 361.03 C605.76 361.02 606.46 360.26 606.42 359.35 Q606.39 358.84 605.5 357 Q589.73 341.77 569 338.5 Q567 337.5 565 336.5 Q543.92 332.4 524 325.5 Q453.38 308.08 401.5 249 Q384.93 226.77 374.5 202 Q362.83 172.19 366.5 138 Q369 129.79 372.5 122 Q386.94 103.11 410 101.5 Q423.25 101.39 436 102.5 Q504.64 114.5 556.5 167 Q565.49 178 574.5 189 Q616.55 250.49 617.5 329 Q619.25 343.98 618.57 358.59 C618.53 359.37 619.13 360.09 619.9 360.2 L622.5 360.5 Z"
-      />
-      <path
-        fill="#1FAB9F"
-        d="M622.5 578.5 L928.8 578.5 C931.12 578.5 934.2 579.95 935.69 581.73 Q936.51 582.73 937.5 588 Q939.82 606.08 942.5 624 Q943.77 667.77 936.5 708 Q935.31 710.31 934.76 710.6 C933.79 711.1 932.11 711.5 931.02 711.5 L622.5 711.5 L313.98 711.5 C312.89 711.5 311.21 711.1 310.24 710.6 Q309.69 710.31 308.5 708 Q301.23 667.77 302.5 624 Q305.18 606.08 307.5 588 Q308.49 582.73 309.31 581.73 C310.8 579.95 313.88 578.5 316.2 578.5 L622.5 578.5 Z"
-      />
-      <path
-        fill="#FE830E"
-        d="M622.5 743.5 L920.9 744.96 C925.1 744.98 927.74 748.32 926.8 752.41 Q913.08 812.26 879.5 872 Q877.75 873.75 877.4 874.1 C876.63 874.87 875.11 875.5 874.02 875.5 L622.5 875.5 L370.98 875.5 C369.89 875.5 368.37 874.87 367.6 874.1 Q367.25 873.75 365.5 872 Q331.92 812.26 318.2 752.41 C317.26 748.32 319.9 744.98 324.1 744.96 L622.5 743.5 Z"
-      />
-      <path
-        fill="#ED3125"
-        d="M622.5 907.5 L848.9 907.98 C853.1 907.99 854.51 910.76 852.05 914.16 Q846.69 921.58 836.5 935 Q786 991.62 723 1021.5 Q707.96 1030.4 693 1039.5 Q675.27 1052.08 660.5 1069 Q638.41 1098.85 631.5 1135 Q629.99 1137.85 629.37 1138.68 C628.61 1139.68 627.02 1140.77 625.8 1141.1 L622.5 1142 L619.2 1141.1 C617.98 1140.77 616.39 1139.68 615.63 1138.68 Q615.01 1137.85 613.5 1135 Q606.59 1098.85 584.5 1069 Q569.73 1052.08 552 1039.5 Q537.04 1030.4 522 1021.5 Q459 991.62 408.5 935 Q398.31 921.58 392.95 914.16 C390.49 910.76 391.9 907.99 396.1 907.98 L622.5 907.5 Z"
-      />
-    </svg>
-  );
-}
 
 // ─── Trace form and drawing artifact viewer ───────────────────────────────────
 
@@ -303,7 +280,7 @@ const FALLBACK_ENUMS: Record<string, string[]> = {
   remove_background: ["auto", "off", "on"],
 };
 
-type ArtifactKind = "svg" | "preview" | "review_panel" | "labeled_svg" | "path_map" | "command_map" | "raw_trace" | "plan" | "versions";
+type ArtifactKind = "svg" | "preview" | "review_panel" | "labeled_svg" | "path_map" | "command_map" | "raw_trace" | "plan" | "versions" | "report";
 
 const ARTIFACTS: Array<{ kind: ArtifactKind; label: string }> = [
   { kind: "svg", label: "SVG" },
@@ -313,6 +290,7 @@ const ARTIFACTS: Array<{ kind: ArtifactKind; label: string }> = [
   { kind: "path_map", label: "Path segment map SVG" },
   { kind: "command_map", label: "Command map SVG" },
   { kind: "raw_trace", label: "Raw trace JSON" },
+  { kind: "report", label: "Geometry report JSON" },
   { kind: "plan", label: "Plan JSON" },
   { kind: "versions", label: "Version manifest" },
 ];
@@ -340,7 +318,7 @@ function imageRefFromToolInput(value: unknown): ImageRef | undefined {
 
 function sourceImageMessage(options: TraceOptionsInput): string {
   return [
-    "Please rerun `trace_drawing` using the original attached image and these settings from the VectorMark widget.",
+    "Please rerun `vectoreyes_trace_drawing` using the original attached image and these settings from the vectorEyes widget.",
     "The widget received only a host-local display path, so it cannot safely resubmit the image itself.",
     "```json",
     JSON.stringify({ options }, null, 2),
@@ -355,41 +333,24 @@ function artifactSvg(result: CallToolResult | null): string | null {
   return text?.startsWith("<svg") ? text : null;
 }
 
-function artifactJson(result: CallToolResult | null): string | null {
-  const structured = result?.structuredContent as { trace?: unknown; plan?: unknown; versions?: unknown } | undefined;
-  const value = structured?.trace ?? structured?.plan ?? structured?.versions;
-  if (value) return JSON.stringify(value, null, 2);
-  const text = result ? firstText(result) : undefined;
-  if (!text) return null;
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return text;
-  }
-}
-
-function versionLineage(drawing: DrawingResult): string {
-  const fields = [
-    `Requested base ${drawing.requested_base_version ?? "none"}`,
-    `Actual parent ${drawing.parent_version ?? "none"}`,
-    `Baseline ${drawing.baseline_version}`,
-    `Current ${drawing.version}`,
-  ];
-  return fields.join(" · ");
-}
-
 function TraceControls({
   app,
   initialInput,
   result,
   onResult,
   onError,
+  recordedOptions,
+  contextVersion,
+  onRunning,
 }: {
   app: App;
   initialInput: TraceToolInput;
   result: WidgetResult | null;
   onResult: (result: CallToolResult) => void;
   onError: (message: string | null) => void;
+  recordedOptions?: Partial<TraceOptionsInput>;
+  contextVersion: string;
+  onRunning: (running: boolean) => void;
 }) {
   const [form, setForm] = useState<TraceOptionsInput>(DEFAULT_TRACE_OPTIONS);
   const [sourceImage, setSourceImage] = useState<ImageRef | undefined>();
@@ -406,12 +367,13 @@ function TraceControls({
     setHandoffSent(false);
   }, [initialInput]);
 
-  const lastTraceOptions = result && isDrawingResult(result) ? result.trace_options : undefined;
+  const lastTraceOptions = recordedOptions;
   useEffect(() => {
-    setForm(lastTraceOptions ?? {
+    setForm({
       ...DEFAULT_TRACE_OPTIONS,
       ...initialInput.options,
-        preprocess: { ...DEFAULT_TRACE_OPTIONS.preprocess, ...initialInput.options?.preprocess },
+      ...lastTraceOptions,
+      preprocess: { ...DEFAULT_TRACE_OPTIONS.preprocess, ...initialInput.options?.preprocess, ...lastTraceOptions?.preprocess },
     });
   }, [initialInput, lastTraceOptions]);
 
@@ -425,18 +387,20 @@ function TraceControls({
       return;
     }
     setIsRunning(true);
+    onRunning(true);
     onError(null);
     try {
       onResult(await app.callServerTool({
-        name: "trace_drawing",
+        name: "vectoreyes_trace_drawing",
         arguments: { ...(sourceImage.download_url ? { image: sourceImage } : { image_data: sourceImage }), options: form },
       }));
     } catch (runError) {
       onError(runError instanceof Error ? runError.message : String(runError));
     } finally {
       setIsRunning(false);
+      onRunning(false);
     }
-  }, [app, form, onError, onResult, sourceImage]);
+  }, [app, form, onError, onResult, sourceImage, onRunning]);
 
   const requestHostRerun = useCallback(async () => {
     setIsRunning(true);
@@ -466,23 +430,32 @@ function TraceControls({
 
   return (
     <section className="control-panel" aria-label="trace settings">
-      <div className="brand-strip">
-        <div className="brand-id">
-          <DaikonicMark size={32} />
-          <div><p className="eyebrow">vectormark</p><h1>Trace & refine</h1></div>
-        </div>
-        <span className="status-dot" aria-label={isRunning ? "Tracing" : "Ready"} />
-      </div>
+        <div className="settings-heading"><h3>Rerun from the source</h3><span role="status">{isRunning ? "Tracing…" : `Draft for ${contextVersion}`}</span></div>
+      <p className="control-note">These are proposed settings for a new conversion, not edits to the selected revision. Recorded values seed the form; settings not recorded use defaults. Exact retained evidence is listed separately above.</p>
 
       <p className="control-note">
         {sourceImage
           ? "Reruns use the original attached image."
           : sourceUnavailable
             ? "ChatGPT supplied a display-only attachment path. Ask the agent to rerun it with these settings."
-            : "Run trace_drawing on an attached image to enable reruns."}
+              : "Your agent passes the generated or attached image into vectorEyes. These controls are for optional reruns."}
       </p>
 
-      <div className="select-grid">
+        <label className="field">Starting preset
+          <select value={form.preset ?? ""} onChange={(event) => {
+            const preset = event.target.value;
+            const selected = schema?.preset?.["x-vectoreyes-presets"]?.[preset];
+            if (!preset) { setOption("preset", null); return; }
+            if (selected) setForm((current) => ({ ...DEFAULT_TRACE_OPTIONS, ...selected.options,
+              preset, preprocess: current.preprocess }));
+          }}>
+            <option value="">Custom settings</option>
+            {Object.entries(schema?.preset?.["x-vectoreyes-presets"] ?? {}).map(([name, preset]) =>
+              <option key={name} value={name}>{preset.label}</option>)}
+          </select>
+        </label>
+        <p className="control-note">Selecting a preset resets trace controls to that starting point. You can override every setting below.</p>
+        <div className="select-grid">
         {enumSelect("trace_level", "Boundary")}
         {enumSelect("fit_strategy", "Path fitting")}
         {enumSelect("remove_background", "Background")}
@@ -577,12 +550,8 @@ function TraceControls({
             </fieldset>
 
         {lastTraceOptions && <details className="trace-advanced">
-          <summary>Last trace parameters</summary>
+          <summary>Settings used to seed this draft</summary>
           <pre className="artifact-json">{JSON.stringify(lastTraceOptions, null, 2)}</pre>
-          {result && isDrawingResult(result) && <>
-            <p className="control-note">Resolved trace diagnostics (including selected palette size):</p>
-            <pre className="artifact-json">{JSON.stringify(result.trace?.options, null, 2)}</pre>
-          </>}
         </details>}
 
       {sourceImage ? (
@@ -600,74 +569,157 @@ function TraceControls({
   );
 }
 
-function ArtifactViewer({ app, drawing, initialPanel, onError }: { app: App; drawing: DrawingResult; initialPanel: string | null; onError: (message: string | null) => void }) {
-  const [selected, setSelected] = useState<ArtifactKind>("review_panel");
-  const [loaded, setLoaded] = useState<CallToolResult | null>(null);
+interface RevisionRecipeArtifact {
+  parent_version?: string | null;
+  effective_recipe?: { fields?: { settings?: { max_error?: number; epsilon?: number; fit_strategy?: TraceOptionsInput["fit_strategy"] } } };
+}
+
+function RevisionReview({ app, drawing, version, initialInput, read, onResult, onError, onRunning }: {
+  app: App; drawing: DrawingResult; version: string; initialInput: TraceToolInput;
+  read: (kind: ArtifactKind, version: string) => Promise<CallToolResult>;
+  onResult: (result: CallToolResult) => void; onError: (message: string | null) => void; onRunning: (running: boolean) => void;
+}) {
+  const [evidence, setEvidence] = useState<{ report: unknown; trace: { options?: Partial<TraceOptionsInput> }; plan: RevisionRecipeArtifact } | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let current = true;
+    setFailed(false);
+    Promise.all([read("report", version), read("raw_trace", version), read("plan", version)]).then(([report, trace, plan]) => {
+      if (current) setEvidence({ report: report.structuredContent?.report, trace: trace.structuredContent?.trace as { options?: Partial<TraceOptionsInput> }, plan: plan.structuredContent?.plan as RevisionRecipeArtifact });
+    }).catch(() => { if (current) setFailed(true); });
+    return () => { current = false; };
+  }, [read, version, retry]);
+  const options = useMemo(() => {
+    if (!evidence) return undefined;
+    const settings = evidence.plan?.effective_recipe?.fields?.settings;
+    return { ...(evidence.trace?.options as Partial<TraceOptionsInput>),
+      ...(version === drawing.version ? drawing.trace_options : {}),
+      ...(settings?.max_error !== undefined ? { curve_tolerance: settings.max_error } : {}),
+      ...(settings?.epsilon !== undefined ? { simplify_tolerance: settings.epsilon } : {}),
+      ...(settings?.fit_strategy ? { fit_strategy: settings.fit_strategy } : {}) };
+  }, [evidence, drawing.trace_options, drawing.version, version]);
+  return <>
+    <details className="artifact-details"><summary>Diagnostics · {version}</summary>
+      <code className="artifact-uri">{drawing.drawing_id} · {version} · Parent {evidence ? evidence.plan?.parent_version ?? "none" : "loading…"}</code>
+      <p className="control-note">Geometry evidence for the selected revision. Shape and fill should be reviewed independently.</p>
+      {evidence ? <pre className="artifact-json">{JSON.stringify(evidence.report, null, 2) ?? "No geometry report was returned."}</pre> : <p role="status">{failed ? "Review evidence could not be loaded." : `Loading evidence for ${version}…`}</p>}
+    </details>
+    <details className="artifact-details"><summary>Settings used · {version}</summary>
+      <p className="control-note">Read-only evidence, not a proposed rerun. Source trace settings and this revision’s recipe settings are kept separate.</p>
+      {evidence && <><h3>Source trace settings</h3><pre className="artifact-json">{JSON.stringify(evidence.trace?.options, null, 2) ?? "Not recorded."}</pre><h3>Revision recipe settings</h3><pre className="artifact-json">{JSON.stringify(evidence.plan?.effective_recipe?.fields?.settings, null, 2) ?? "Not recorded."}</pre></>}
+    </details>
+    {failed && <button className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Retry review evidence</button>}
+    {evidence && <details className="artifact-details"><summary>Rerun settings &amp; passes</summary><TraceControls app={app} initialInput={initialInput} result={drawing} recordedOptions={options} contextVersion={version} onResult={onResult} onError={onError} onRunning={onRunning} /></details>}
+  </>;
+}
+
+function ArtifactViewer({ app, drawing, initialInput, generating, onResult, onError, onRunning }: { app: App; drawing: DrawingResult; initialInput: TraceToolInput; generating: boolean; onResult: (result: CallToolResult) => void; onError: (message: string | null) => void; onRunning: (running: boolean) => void }) {
+  const [selected, setSelected] = useState<ArtifactKind>("svg");
+  const [viewVersion, setViewVersion] = useState(drawing.version);
+  const [loaded, setLoaded] = useState<{ key: string; result: CallToolResult } | null>(null);
   const [loading, setLoading] = useState(false);
-  const [exported, setExported] = useState<{ url: string; filename: string } | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const [exported, setExported] = useState<{ url: string; filename: string; version: string } | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const editRequest = drafts[viewVersion] ?? "";
+  const [sending, setSending] = useState(false);
+  const [sentVersions, setSentVersions] = useState<Record<string, boolean>>({});
+  const sent = sentVersions[viewVersion] ?? false;
+  const [exporting, setExporting] = useState(false);
+  const [revisions, setRevisions] = useState<Revision[]>([]);
+  const [manifestFailed, setManifestFailed] = useState(false);
+  const cache = useMemo(() => new Map<string, Promise<CallToolResult>>(), [app, drawing.drawing_id]);
+  const read = useCallback((kind: ArtifactKind, version: string) => {
+    const key = `${version}:${kind}`;
+    let pending = cache.get(key);
+    if (!pending) {
+      pending = readArtifact(args => app.callServerTool({ name: "vectoreyes_get_drawing_artifact", arguments: args }),
+        { drawing_id: drawing.drawing_id, version, artifact: kind }).then((result) => {
+          if (result.isError) throw new Error(firstText(result) ?? "The artifact could not be loaded.");
+          return result;
+        }).catch((error) => { cache.delete(key); throw error; });
+      cache.set(key, pending);
+    }
+    return pending;
+  }, [app, drawing.drawing_id, cache]);
+  const loadPreview = useCallback(async (version: string) => {
+    const result = await read(selected, version);
+    const svg = artifactSvg(result);
+    const src = svg ? dataUriForSvg(svg) : firstImageDataUri(result);
+    if (!src) { cache.delete(`${version}:${selected}`); throw new Error("Revision preview unavailable."); }
+    return src;
+  }, [read, cache, selected]);
+  useEffect(() => { setViewVersion(drawing.version); }, [drawing.version]);
+  useEffect(() => {
+    let current = true;
+    setManifestFailed(false);
+    // The manifest can grow, unlike immutable revision artifacts.
+    readArtifact(args => app.callServerTool({ name: "vectoreyes_get_drawing_artifact", arguments: args }),
+      { drawing_id: drawing.drawing_id, version: drawing.version, artifact: "versions" }).then((result) => {
+        const items = result.structuredContent?.versions;
+        if (result.isError || !Array.isArray(items) || !items.length || !items.every((item) => typeof item.version === "string" && (item.parent_version === null || typeof item.parent_version === "string"))) throw new Error("Invalid revision manifest.");
+        if (current) setRevisions(items as Revision[]);
+      }).catch(() => { if (current) setManifestFailed(true); });
+    return () => { current = false; };
+  }, [app, drawing.drawing_id, drawing.version, retry]);
 
-  useEffect(() => { setSelected("review_panel"); setLoaded(null); setExported(null); }, [drawing.drawing_id, drawing.version]);
+  const fetchArtifact = useCallback((kind: ArtifactKind) => read(kind, viewVersion), [read, viewVersion]);
+  const artifactKey = `${viewVersion}:${selected}`;
 
-  const fetchArtifact = useCallback((kind: ArtifactKind) => app.callServerTool({
-    name: "get_drawing_artifact",
-    arguments: { drawing_id: drawing.drawing_id, version: drawing.version, artifact: kind },
-  }), [app, drawing.drawing_id, drawing.version]);
-
-  const load = useCallback(async (kind: ArtifactKind) => {
-    setSelected(kind);
+  useEffect(() => {
+    let current = true;
     setExported(null);
     setLoaded(null);
     setLoading(true);
+    setLoadFailed(false);
     onError(null);
-    try {
-      setLoaded(await fetchArtifact(kind));
-    } catch (loadError) {
-      onError(loadError instanceof Error ? loadError.message : String(loadError));
-    } finally {
-      setLoading(false);
-    }
-  }, [fetchArtifact, onError]);
+    fetchArtifact(selected).then((result) => {
+      if (!result.isError) { if (current) setLoaded({ key: artifactKey, result }); }
+      else throw new Error(firstText(result) ?? "The artifact could not be loaded.");
+    }).catch((loadError: unknown) => {
+      if (current) { setLoadFailed(true); onError(loadError instanceof Error ? loadError.message : String(loadError)); }
+    }).finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [fetchArtifact, onError, selected, retry, artifactKey]);
 
-  const svg = artifactSvg(loaded);
-  const image = firstImageDataUri(loaded) ?? (selected === "review_panel" ? initialPanel : null);
-  const json = ["raw_trace", "plan", "versions"].includes(selected) ? artifactJson(loaded) : null;
-  const uri = drawing.artifacts[selected];
+  const currentArtifact = loaded?.key === artifactKey ? loaded.result : null;
+  const svg = artifactSvg(currentArtifact);
+  // SVG wins over incidental preview PNGs returned alongside a command map.
+  const image = svg ? null : firstImageDataUri(currentArtifact);
+  const versions = revisions.length ? revisions : drawing.outputs?.length ? drawing.outputs : [{ version: drawing.version, parent_version: drawing.parent_version }];
 
   const exportFile = async () => {
-    setLoading(true);
+    const kind = "svg";
+    setExporting(true);
     setExported(null);
     onError(null);
     try {
-      const result = await fetchArtifact(selected);
-      setLoaded(result);
+      const result = await fetchArtifact(kind);
+      if (result.isError) throw new Error(firstText(result) ?? "The artifact could not be exported.");
       const svgContent = artifactSvg(result);
-      const imageContent = firstImageDataUri(result);
-      const jsonContent = ["raw_trace", "plan", "versions"].includes(selected) ? artifactJson(result) : null;
-      const extension = svgContent ? "svg" : imageContent ? "png" : jsonContent ? "json" : null;
-      if (!extension) throw new Error("This response did not contain a downloadable artifact.");
-      const href = svgContent ? dataUriForSvg(svgContent) : imageContent ?? `data:application/json;charset=utf-8,${encodeURIComponent(jsonContent!)}`;
-      const filename = `${drawing.drawing_id}-${drawing.version}-${selected}.${extension}`;
+      if (!svgContent) throw new Error("This response did not contain a downloadable SVG.");
+      const href = dataUriForSvg(svgContent);
+      const filename = `${drawing.drawing_id}-${viewVersion}-svg.svg`;
       const host = (window as Window & { openai?: {
         uploadFile?: (file: File) => Promise<{ fileId: string }>;
         getFileDownloadUrl?: (input: { fileId: string }) => Promise<{ downloadUrl: string }>;
       } }).openai;
       if (host) {
         if (!host.uploadFile || !host.getFileDownloadUrl) {
-          throw new Error("This ChatGPT host does not expose file export APIs. SVG text is still available through get_drawing_artifact; no downloadable file was created.");
+          throw new Error("This ChatGPT host does not expose file export APIs. SVG text is still available through vectoreyes_get_drawing_artifact; no downloadable file was created.");
         }
-        const blob = svgContent
-          ? new Blob([svgContent], { type: "image/svg+xml" })
-          : imageContent
-            ? new Blob([Uint8Array.from(atob(imageContent.split(",")[1]), (char) => char.charCodeAt(0))], { type: "image/png" })
-            : new Blob([jsonContent!], { type: "application/json" });
+        const blob = new Blob([svgContent], { type: "image/svg+xml" });
         const { fileId } = await host.uploadFile(new File([blob], filename, { type: blob.type }));
         if (!fileId) throw new Error("ChatGPT did not return an exported file ID.");
         const { downloadUrl } = await host.getFileDownloadUrl({ fileId });
         if (!downloadUrl || new URL(downloadUrl).protocol !== "https:") {
           throw new Error("ChatGPT did not return a valid file download URL.");
         }
-        setExported({ url: downloadUrl, filename });
-        await app.updateModelContext({ content: [{ type: "text", text: `VectorMark exported ${filename} as ChatGPT file ${fileId}. Download: ${downloadUrl}` }] });
+        setExported({ url: downloadUrl, filename, version: viewVersion });
+        await app.updateModelContext({ content: [{ type: "text", text: `vectorEyes exported ${filename} as ChatGPT file ${fileId}. Download: ${downloadUrl}` }] });
         return;
       }
       const link = document.createElement("a");
@@ -679,22 +731,38 @@ function ArtifactViewer({ app, drawing, initialPanel, onError }: { app: App; dra
     } catch (exportError) {
       onError(exportError instanceof Error ? exportError.message : String(exportError));
     } finally {
-      setLoading(false);
+      setExporting(false);
     }
   };
 
+  const requestEdit = async () => {
+    if (!editRequest.trim() || sending || sent) return;
+    setSending(true); onError(null);
+    try {
+      const response = await app.sendMessage({ role: "user", content: [{ type: "text", text:
+        `Revise vectorEyes drawing ${drawing.drawing_id}, starting from ${viewVersion}. Inspect its existing source, region and segment/feature artifacts, apply a versioned plan, and evaluate the result. Requested change: ${editRequest.trim()}` }] });
+      if (response.isError) throw new Error("The host could not send the edit request. Please try again.");
+      setSentVersions((current) => ({ ...current, [viewVersion]: true }));
+    } catch (error) { onError(error instanceof Error ? error.message : String(error)); }
+    finally { setSending(false); }
+  };
+
   return <>
-    <div className="artifact-header"><div><p className="eyebrow">Drawing {drawing.version}</p><h2>Response files</h2></div><code>{drawing.drawing_id}</code></div>
-    <code className="artifact-uri" aria-label="version lineage">{versionLineage(drawing)}</code>
-    <div className="artifact-list" role="group" aria-label="Response files">
-        {ARTIFACTS.map(({ kind, label }) => <button key={kind} disabled={loading} className={`artifact-button${selected === kind ? " active" : ""}`} onClick={() => load(kind)}>{label}</button>)}
-        <button className="artifact-button" disabled={loading} onClick={exportFile}>Export selected file</button>
-    </div>
-    {exported && <p><a href={exported.url} target="_blank" rel="noopener noreferrer" download={exported.filename}>Download {exported.filename}</a> (temporary link)</p>}
-    <code className="artifact-uri">{uri}</code>
-    <div className="preview-stage">
-      {loading ? <p>Loading {selected}…</p> : image ? <img src={image} alt={`${selected} response artifact`} /> : svg ? <img src={dataUriForSvg(svg)} alt={`${selected} response artifact`} /> : json ? <pre className="artifact-json">{json}</pre> : <p>Select a response file to load it through VectorMark.</p>}
-    </div>
+    <ArtworkHandoff version={viewVersion} revisions={versions} loadPreview={loadPreview} selected={selected} loading={loading || (!currentArtifact && !loadFailed)} unavailable={loadFailed} exporting={exporting} generating={generating}
+      reviewOpen={reviewOpen} editRequest={editRequest} sending={sending} sent={sent}
+      views={[{ kind: "svg", label: "Artwork" }, { kind: "review_panel", label: "Source & difference" }]}
+      maps={[{ kind: "labeled_svg", label: "Regions" }, { kind: "path_map", label: "Segments & features" }, { kind: "command_map", label: "Commands" }]}
+      onSelect={(kind) => setSelected(kind as ArtifactKind)}
+      onVersionChange={setViewVersion} onDownloadSvg={() => void exportFile()}
+      onToggleReview={() => { setReviewOpen(!reviewOpen); if (reviewOpen) setSelected("svg"); }}
+      onEditRequestChange={(value) => { setDrafts((current) => ({ ...current, [viewVersion]: value })); setSentVersions((current) => ({ ...current, [viewVersion]: false })); }} onRequestEdit={() => void requestEdit()}
+      reviewContent={<RevisionReview key={viewVersion} app={app} drawing={drawing} version={viewVersion} initialInput={initialInput} read={read} onResult={onResult} onError={onError} onRunning={onRunning} />}>
+      {loading || (!currentArtifact && !loadFailed) ? <GeneratingIndicator label={`Loading ${ARTIFACTS.find((item) => item.kind === selected)?.label ?? selected}…`} />
+        : image ? <img src={image} alt={`${selected} for ${viewVersion}`} /> : svg ? <img src={dataUriForSvg(svg)} alt={selected === "svg" ? `Vector artwork for ${viewVersion}` : `${selected} for ${viewVersion}`} />
+          : <div className="loading-artifact"><p>No artifact was returned. Choose another view or retry.</p><button className="secondary-button" onClick={() => { cache.delete(artifactKey); setRetry((value) => value + 1); }}>Retry artifact</button></div>}
+    </ArtworkHandoff>
+    {exported?.version === viewVersion && <p role="status"><a href={exported.url} target="_blank" rel="noopener noreferrer" download={exported.filename}>Download {exported.filename}</a> (temporary link)</p>}
+    {manifestFailed && <p className="control-note">Full revision history is unavailable. <button className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Retry history</button></p>}
   </>;
 }
 
@@ -707,38 +775,39 @@ function AppRoot() {
   const [toolResult, setToolResult] = useState<CallToolResult | null>(null);
   const [hostContext, setHostContext] = useState<McpUiHostContext | undefined>();
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
 
   const { app, isConnected, error } = useApp({
-    appInfo: { name: "vectormark", version: "0.2.1" }, capabilities: {},
+    appInfo: { name: "vectoreyes", version: "0.2.1" }, capabilities: {},
     onAppCreated: (createdApp) => {
       createdApp.ontoolinput = (params) => {
         const input = (params.arguments ?? {}) as TraceToolInput;
         if (input.image !== undefined || input.image_data !== undefined || input.options !== undefined) setToolInput(input);
+        if (Object.keys(input).length && !("artifact" in input)) setGenerating(true);
       };
-      createdApp.ontoolresult = (result) => { setErrorText(null); setToolResult(result); };
-      createdApp.ontoolcancelled = (params) => setErrorText(params.reason || "Tool call was cancelled.");
-      createdApp.onerror = (appError) => setErrorText(appError instanceof Error ? appError.message : String(appError));
+      createdApp.ontoolresult = (result) => { setGenerating(false); setErrorText(null); setToolResult(result); };
+      createdApp.ontoolcancelled = (params) => { setGenerating(false); setErrorText(params.reason || "Tool call was cancelled."); };
+      createdApp.onerror = (appError) => { setGenerating(false); setErrorText(appError instanceof Error ? appError.message : String(appError)); };
       createdApp.onhostcontextchanged = (params) => setHostContext((current) => ({ ...current, ...params }));
       createdApp.onteardown = async () => ({});
     },
   });
   useEffect(() => { if (app) setHostContext(app.getHostContext()); }, [app]);
   const result = useMemo(() => parseStructuredResult(toolResult), [toolResult]);
-  const panel = useMemo(() => firstImageDataUri(toolResult), [toolResult]);
 
   if (error) return <StatusPanel title="Connection failed" detail={error.message} />;
   if (!isConnected || !app) return <StatusPanel title="Connecting" detail="Waiting for the MCP Apps host." />;
 
   return <main className="app-shell" style={{ paddingTop: hostContext?.safeAreaInsets?.top, paddingRight: hostContext?.safeAreaInsets?.right, paddingBottom: hostContext?.safeAreaInsets?.bottom, paddingLeft: hostContext?.safeAreaInsets?.left }}>
-    <TraceControls app={app} initialInput={toolInput} result={result} onResult={setToolResult} onError={setErrorText} />
+    <header className="app-topbar"><img className="brand-id" src={vectorEyesLockup} width={142} height={21} alt="vectorEyes" /><span className="app-purpose">From image to editable artwork</span></header>
     <section className="preview-panel" aria-label="drawing response">
-      {errorText && <div className="error-banner">{errorText}</div>}
-      {result ? isDrawingResult(result) ? <ArtifactViewer app={app} drawing={result} initialPanel={panel} onError={setErrorText} /> : <LegacyPreview result={result} /> : <EmptyPreview />}
+      {errorText && <div className="error-banner" role="alert">{errorText}</div>}
+      {result ? isDrawingResult(result) ? <ArtifactViewer key={result.drawing_id} app={app} drawing={result} initialInput={toolInput} generating={generating} onResult={setToolResult} onError={setErrorText} onRunning={setGenerating} /> : <LegacyPreview result={result} /> : generating ? <div className="initial-generation"><h1>Creating your vector artwork</h1><GeneratingIndicator /></div> : <EmptyPreview />}
     </section>
   </main>;
 }
 
-function EmptyPreview() { return <div className="empty-preview"><div className="empty-glyph" /><p>Trace an image to inspect its review panel and response files.</p></div>; }
+function EmptyPreview() { return <div className="empty-preview"><img className="brand-icon" src={vectorEyesIcon} width={56} height={56} alt="" /><h1>Your next image, in vector.</h1><p>Your agent can pass a generated or attached image directly into vectorEyes. The artwork and SVG download will appear here.</p></div>; }
 function StatusPanel({ title, detail }: { title: string; detail: string }) { return <main className="status-panel"><h1>{title}</h1><p>{detail}</p></main>; }
 
 createRoot(document.getElementById("root")!).render(<StrictMode><AppRoot /></StrictMode>);

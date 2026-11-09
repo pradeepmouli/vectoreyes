@@ -14,7 +14,7 @@
 - Every new source file starts with `# SPDX-License-Identifier: MIT` (the `packages`/lib code is MIT).
 - Run tests with `uv run pytest`. NEVER pipe pytest through `tail`/`head` before a `&&` commit — the pipe masks the failing exit code. Run `uv run pytest -q` as its own statement and read the result, or use `uv run pytest ... && git commit`.
 - Commit with `SKIP_SIMPLE_GIT_HOOKS=1 git commit`. End commit messages with the `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` trailer.
-- Existing types: `Region(label:int, mask:bool[H,W], color_hex:str)` with `.area`; `Axis(x:float)` with `.reflect_x(x)`. Both in `src/vectormark/types.py`.
+- Existing types: `Region(label:int, mask:bool[H,W], color_hex:str)` with `.area`; `Axis(x:float)` with `.reflect_x(x)`. Both in `src/vectoreyes/types.py`.
 - `region_contours(mask) -> list[np.ndarray]` (each (N,2) as (x,y), outer first) in `contour.py`.
 - `Shape(kind:str, params:dict)` in `fit.py`; `shape_to_svg(shape, fill, elem_id)` and `path_svg(d, fill, fill_rule=None)` in `emit.py`.
 
@@ -31,8 +31,8 @@
 
 ## File Structure
 
-- **Create `src/vectormark/occlusion.py`** — the whole subsystem: `ScenePrimitive`, adjacency, bite detection, boundary labelling, the circle/ellipse completer, the lens builder, `reconstruct_scene`, and the analytic consistency gate. One cohesive module (shares small helpers); split later if it grows past ~250 lines.
-- **Modify `src/vectormark/pipeline.py`** — call `reconstruct_scene` in `idealize`; emit returned `ScenePrimitive`s and lens `Shape`s in the draw loop (they already carry geometry); pass un-reconstructed regions through the existing path.
+- **Create `src/vectoreyes/occlusion.py`** — the whole subsystem: `ScenePrimitive`, adjacency, bite detection, boundary labelling, the circle/ellipse completer, the lens builder, `reconstruct_scene`, and the analytic consistency gate. One cohesive module (shares small helpers); split later if it grows past ~250 lines.
+- **Modify `src/vectoreyes/pipeline.py`** — call `reconstruct_scene` in `idealize`; emit returned `ScenePrimitive`s and lens `Shape`s in the draw loop (they already carry geometry); pass un-reconstructed regions through the existing path.
 - **Create `tests/test_occlusion.py`** — unit tests for every component.
 - **Create `tests/test_acceptance_occlusion.py`** — the synthetic-Mastercard gating test + the Daikonic-unchanged negative test.
 
@@ -41,7 +41,7 @@
 ## Task 1: ScenePrimitive type + region adjacency
 
 **Files:**
-- Create: `src/vectormark/occlusion.py`
+- Create: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -49,8 +49,8 @@
 ```python
 # tests/test_occlusion.py
 import numpy as np
-from vectormark.types import Region
-from vectormark.occlusion import ScenePrimitive, region_adjacency
+from vectoreyes.types import Region
+from vectoreyes.occlusion import ScenePrimitive, region_adjacency
 
 
 def _region(label, mask, color="#000000"):
@@ -73,12 +73,12 @@ def test_region_adjacency_touching_vs_separate():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run pytest tests/test_occlusion.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'vectormark.occlusion'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'vectoreyes.occlusion'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
 ```python
-# src/vectormark/occlusion.py
+# src/vectoreyes/occlusion.py
 # SPDX-License-Identifier: MIT
 """Occlusion reconstruction: explain overlapping regions as a z-ordered stack of
 completed primitives (see docs/superpowers/specs/2026-06-04-occlusion-reconstruction-design.md)."""
@@ -122,7 +122,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): ScenePrimitive type + region adjacency
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -133,7 +133,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 2: Bite (concavity) detection
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py`
+- Modify: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 A crescent (a disk with another disk subtracted) has low *solidity* (region area / convex-hull area); a disk, trapezoid, or dome is convex (solidity ≈ 1). Solidity is the cheap trigger; the completer + gate do the real validation.
@@ -142,7 +142,7 @@ A crescent (a disk with another disk subtracted) has low *solidity* (region area
 
 ```python
 # add to tests/test_occlusion.py
-from vectormark.occlusion import has_bite
+from vectoreyes.occlusion import has_bite
 
 
 def test_has_bite_crescent_vs_convex():
@@ -187,7 +187,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): bite (concavity) detection via solidity
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -198,7 +198,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 3: Own-vs-seam boundary labelling
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py`
+- Modify: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 For a region's outer contour, a point is a **seam** if some *other* region's mask is within ~2px of it (the contour borders another region there), else it's **own** (borders background).
@@ -207,7 +207,7 @@ For a region's outer contour, a point is a **seam** if some *other* region's mas
 
 ```python
 # add to tests/test_occlusion.py
-from vectormark.occlusion import label_boundary
+from vectoreyes.occlusion import label_boundary
 
 
 def test_label_boundary_marks_the_bite_as_seam():
@@ -267,7 +267,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): own-vs-seam boundary labelling
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -278,7 +278,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 4: Circle/ellipse completer
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py`
+- Modify: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 Fit a circle (then an ellipse) to the **own-boundary points only**. Accept iff the residual is tight, the own arc spans enough angle to constrain the fit, and the seam points lie inside the completed shape (consistent with being occluded).
@@ -287,7 +287,7 @@ Fit a circle (then an ellipse) to the **own-boundary points only**. Accept iff t
 
 ```python
 # add to tests/test_occlusion.py
-from vectormark.occlusion import complete_primitive
+from vectoreyes.occlusion import complete_primitive
 
 
 def test_complete_primitive_recovers_full_disk_from_crescent():
@@ -372,7 +372,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): circle/ellipse completer from own-boundary arc
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -383,7 +383,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 5: Two-circle intersection lens path
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py`
+- Modify: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 The overlap of two completed circles is a lens bounded by two arcs. Emit it as an SVG path of two elliptical-arc (`A`) commands between the circle–circle intersection points.
@@ -393,7 +393,7 @@ The overlap of two completed circles is a lens bounded by two arcs. Emit it as a
 ```python
 # add to tests/test_occlusion.py
 import re
-from vectormark.occlusion import intersection_lens_d
+from vectoreyes.occlusion import intersection_lens_d
 
 
 def test_intersection_lens_path_two_arcs_between_crossing_points():
@@ -465,7 +465,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): two-circle intersection lens path (A arcs)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -476,7 +476,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 6: Analytic consistency gate
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py`
+- Modify: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 Render a candidate stack of primitives to a label image (analytic disk/ellipse masks, painted in z-order) and measure per-pixel agreement against the regions' own color assignment over their union.
@@ -485,7 +485,7 @@ Render a candidate stack of primitives to a label image (analytic disk/ellipse m
 
 ```python
 # add to tests/test_occlusion.py
-from vectormark.occlusion import primitive_mask, stack_agreement
+from vectoreyes.occlusion import primitive_mask, stack_agreement
 
 
 def test_primitive_mask_circle():
@@ -562,7 +562,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): analytic consistency gate (paint + compare)
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -573,7 +573,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 7: reconstruct_scene orchestration
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py`
+- Modify: `src/vectoreyes/occlusion.py`
 - Test: `tests/test_occlusion.py`
 
 Tie it together: find bite-triggered adjacent groups, complete each region's primitive, snap a mirror pair to exact symmetry about the axis, derive the lens, gate the whole group, and return `(reconstructed, remaining)`. `reconstructed` is a list of `ScenePrimitive` plus optional lens `Shape`s; `remaining` is the regions to fit the old way.
@@ -582,9 +582,9 @@ Tie it together: find bite-triggered adjacent groups, complete each region's pri
 
 ```python
 # add to tests/test_occlusion.py
-from vectormark.types import Axis
-from vectormark.fit import Shape
-from vectormark.occlusion import reconstruct_scene
+from vectoreyes.types import Axis
+from vectoreyes.fit import Shape
+from vectoreyes.occlusion import reconstruct_scene
 
 
 def _two_disk_mark(H=140, W=200, gap=24, r=44):
@@ -736,7 +736,7 @@ Expected: PASS (2 tests).
 Run: `uv run pytest tests/test_occlusion.py -q` → expect all PASS.
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(occlusion): reconstruct_scene orchestration + consistency gate
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -747,7 +747,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ## Task 8: Pipeline integration + acceptance
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py`
+- Modify: `src/vectoreyes/pipeline.py`
 - Create: `tests/test_acceptance_occlusion.py`
 
 Wire `reconstruct_scene` into `idealize`: reconstruct first, emit reconstructed primitives/lenses, then run the existing straddler/pair/fit path on the *remaining* regions only.
@@ -758,7 +758,7 @@ Wire `reconstruct_scene` into `idealize`: reconstruct first, emit reconstructed 
 # tests/test_acceptance_occlusion.py
 import io
 import numpy as np
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 from tests._render import render_svg, ssim
 
 
@@ -810,7 +810,7 @@ Expected: FAIL — `test_synthetic_mastercard...` fails (currently 0 `<circle>`,
 
 - [ ] **Step 3: Implement the integration**
 
-In `src/vectormark/pipeline.py`, add the import:
+In `src/vectoreyes/pipeline.py`, add the import:
 
 ```python
 from .occlusion import ScenePrimitive, reconstruct_scene
@@ -883,7 +883,7 @@ uv run python -c "
 import numpy as np, resvg_py, io
 from PIL import Image
 from tests.test_acceptance_occlusion import _synthetic_mastercard
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 img,_=_synthetic_mastercard(); H,W=img.shape[:2]
 svg=idealize(img,options=Options())
 png=resvg_py.svg_to_bytes(svg_string=svg,width=W,height=H)
@@ -897,7 +897,7 @@ If the orange lens bulges the wrong way, flip the two sweep flags in `intersecti
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_acceptance_occlusion.py
+git add src/vectoreyes/pipeline.py tests/test_acceptance_occlusion.py
 SKIP_SIMPLE_GIT_HOOKS=1 git commit -m "feat(pipeline): integrate occlusion reconstruction into idealize
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"

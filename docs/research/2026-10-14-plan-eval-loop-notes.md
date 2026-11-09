@@ -6,7 +6,7 @@ Updated: 2026-10-14.
 ## Intended outcome
 
 An image-capable agent produces a faithful editable vector using declarative
-VectorMark operations. The loop must evaluate actual published versions, not
+vectorEyes operations. The loop must evaluate actual published versions, not
 equate successful execution, fewer commands, or passing tests with visual quality.
 The original source polylines remain authoritative for refitting.
 

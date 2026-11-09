@@ -1,6 +1,6 @@
 import re
 import numpy as np
-from vectormark.pipeline import idealize, Options, IdealizeReport
+from vectoreyes.pipeline import idealize, Options, IdealizeReport
 
 
 def _wing_with_dot():

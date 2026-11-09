@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from vectormark import drawing_simplification as simplify_module
+from vectoreyes import drawing_simplification as simplify_module
 
 
 def _path(d):

@@ -1,10 +1,10 @@
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_adapter import bind_path_input
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import parse_svg_paths
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_adapter import bind_path_input
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import parse_svg_paths
 
 
 def test_path_projection_rejects_stale_numeric_geometry_despite_format_normalization():

@@ -1,14 +1,14 @@
 from dataclasses import replace
 
-from vectormark.path_geometry import CornerAnchor, InflectionAnchor, PathGeometryWithCutouts, parse_svg_paths
+from vectoreyes.path_geometry import CornerAnchor, InflectionAnchor, PathGeometryWithCutouts, parse_svg_paths
 
 
 D = "M0 0 L10 0 Q12 0 13 1 Q14 2 14 4 L0 12 Z"
 
 
 def test_declared_corner_normalization_retains_actual_command_identity():
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.corner_normalization import normalize_declared_paths
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.corner_normalization import normalize_declared_paths
 
     (path,) = parse_svg_paths(D, region_id="r1")
     commands = tuple(replace(command, id=f"r1.p0.c{index * 3}")
@@ -28,8 +28,8 @@ def test_declared_corner_normalization_retains_actual_command_identity():
 
 
 def test_authoritative_empty_corner_declaration_keeps_other_features():
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.corner_normalization import normalize_declared_paths
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.corner_normalization import normalize_declared_paths
 
     (path,) = parse_svg_paths(D, region_id="r1")
     other = InflectionAnchor("other", ("r1.p0.c4",))
@@ -46,14 +46,14 @@ def test_authoritative_empty_corner_declaration_keeps_other_features():
 
 
 def test_corner_publication_keeps_hole_first_source_order_distinct_from_filled_roles():
-    from vectormark.candidate import FlatFill
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.drawing_adapter import bind_path_input
-    from vectormark.fit import Shape
-    from vectormark.refinement.automatic_replay import (
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.drawing_adapter import bind_path_input
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.automatic_replay import (
         NormalizeCornersOperation, PassInputRegionRef, apply_corner_normalization_choice,
     )
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.refinement.region_sample import RegionSample
 
     d = 'M3 3 L4 3 L4 4 L3 4 Z ' + D
     hole, outer = parse_svg_paths(d, region_id='r1')

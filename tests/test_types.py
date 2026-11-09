@@ -1,5 +1,5 @@
 import numpy as np
-from vectormark.types import Region, Axis
+from vectoreyes.types import Region, Axis
 
 
 def test_region_holds_mask_and_color():

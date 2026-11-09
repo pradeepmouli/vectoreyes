@@ -1,7 +1,7 @@
 import numpy as np
-from vectormark.contour import outer_contour
-from vectormark._fitcurve import cubic_inflects
-from vectormark.fit import Shape, minimum_line_length, recognize_primitive
+from vectoreyes.contour import outer_contour
+from vectoreyes._fitcurve import cubic_inflects
+from vectoreyes.fit import Shape, minimum_line_length, recognize_primitive
 
 
 def _disk(cx, cy, r, size=60):
@@ -47,7 +47,7 @@ def test_rejects_half_ellipse_region():
     assert recognize_primitive(c, epsilon=1.0) is None
 
 
-from vectormark.fit import recognize_polygon
+from vectoreyes.fit import recognize_polygon
 
 
 def _trapezoid(size=60):
@@ -75,8 +75,8 @@ def _disk_local(size=60):
     return ((xx - 30) ** 2 + (yy - 30) ** 2) <= 18 * 18
 
 
-from vectormark.fit import fit_path
-from vectormark.path_sampling import _parse_subpaths
+from vectoreyes.fit import fit_path
+from vectoreyes.path_sampling import _parse_subpaths
 
 
 def _command_count(d: str) -> int:
@@ -246,7 +246,7 @@ def test_fit_path_cubic_option_emits_inflection_guarded_cubics_for_smooth_runs()
 
 
 def test_fit_path_does_not_introduce_medium_line_facets_on_smooth_leaf():
-    from vectormark.refinement.region_sample import flatten_points
+    from vectoreyes.refinement.region_sample import flatten_points
 
     source = Shape(
         "path",
@@ -273,7 +273,7 @@ def test_fit_path_does_not_introduce_medium_line_facets_on_smooth_leaf():
 
 
 def test_fit_path_smooths_quadratic_joins_on_smooth_leaf():
-    from vectormark.refinement.region_sample import flatten_points
+    from vectoreyes.refinement.region_sample import flatten_points
 
     source = Shape(
         "path",
@@ -305,7 +305,7 @@ def test_fit_path_smooths_quadratic_joins_on_smooth_leaf():
 
 
 def test_quadratic_to_line_smoothing_only_adjusts_quadratic_control():
-    from vectormark.fit import _smooth_quadratic_path_d
+    from vectoreyes.fit import _smooth_quadratic_path_d
 
     d = "M0 0 Q10 10 20 0 L30 0 L40 0 Z"
     smoothed = _smooth_quadratic_path_d(d)

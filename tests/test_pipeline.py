@@ -1,9 +1,9 @@
 import numpy as np
 from PIL import Image
-from vectormark.candidate import FlatFill, LinearGradientFill
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.pipeline import Options, _render_refinement_body, _segment_image, idealize
+from vectoreyes.candidate import FlatFill, LinearGradientFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.pipeline import Options, _render_refinement_body, _segment_image, idealize
 from tests._render import render_svg, ssim
 
 
@@ -311,7 +311,7 @@ def test_selection_none_is_byte_identical_to_default():
 
 
 def test_force_symmetric_on_s0_emits_path_not_circle():
-    from vectormark.selection import SelectionPolicy, ElementSelection
+    from vectoreyes.selection import SelectionPolicy, ElementSelection
     h = w = 100
     img = np.full((h, w, 3), 255, np.uint8)
     yy, xx = np.ogrid[:h, :w]
@@ -327,7 +327,7 @@ def test_force_symmetric_on_s0_emits_path_not_circle():
 
 
 def test_default_policy_restricts_all_elements():
-    from vectormark.selection import SelectionPolicy, ElementSelection
+    from vectoreyes.selection import SelectionPolicy, ElementSelection
     h = w = 100
     img = np.full((h, w, 3), 255, np.uint8)
     yy, xx = np.ogrid[:h, :w]
@@ -377,7 +377,7 @@ def test_per_component_vertical_symmetry_emits_mirror_use():
     # no vertical mirror, so the pre-slice-5 mark-wide axis is None and the left pair is
     # NOT deduped (no <use>). Per component, the left component's local axis (col 30)
     # makes the two squares a mirror pair -> one element + a <use> mirror.
-    from vectormark.symmetry import detect_axis
+    from vectoreyes.symmetry import detect_axis
     h, w = 70, 170
     img = np.full((h, w, 3), 255, np.uint8)
     img[20:50, 10:25] = (20, 40, 80)       # left-of-pair
@@ -394,7 +394,7 @@ def test_multicomponent_selection_addresses_global_sn():
     # GLOBAL id "s1" must reach the SECOND component. With the per-component-local eid
     # bug, for_id was queried with "s0","s0" and this policy was silently ignored.
     import pytest
-    from vectormark.selection import SelectionPolicy, ElementSelection
+    from vectoreyes.selection import SelectionPolicy, ElementSelection
     h, w = 60, 160
     img = np.full((h, w, 3), 255, np.uint8)
     img[15:45, 10:50] = (10, 30, 90)        # left square  -> s0

@@ -3,14 +3,14 @@ from dataclasses import replace
 import pytest
 
 from tests.test_canonical_structural_replay import leaf
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.fit import Shape
-from vectormark.geometry_native import region_path
-from vectormark.path_geometry import CloneGeometry
-from vectormark.refinement.replay_binding import capture_replay_state
-from vectormark.replay_identity import canonical_input_revision
-from vectormark.skia_geometry import SkPath
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.fit import Shape
+from vectoreyes.geometry_native import region_path
+from vectoreyes.path_geometry import CloneGeometry
+from vectoreyes.refinement.replay_binding import capture_replay_state
+from vectoreyes.replay_identity import canonical_input_revision
+from vectoreyes.skia_geometry import SkPath
 
 
 def polygon():
@@ -27,7 +27,7 @@ def family():
 
 
 def test_geometry_matcher_finds_translation_without_a_region_model():
-    from vectormark.clone_detection import CloneDetectionInput, find_clone_matches
+    from vectoreyes.clone_detection import CloneDetectionInput, find_clone_matches
     source = polygon()
     matches = find_clone_matches((CloneDetectionInput(1, source),
         CloneDetectionInput(2, source.affine_transform((1, 0, 0, 1, 20, 0)))))
@@ -38,7 +38,7 @@ def test_geometry_matcher_finds_translation_without_a_region_model():
 
 
 def test_geometry_matcher_prefers_one_source_for_a_rotated_family():
-    from vectormark.clone_detection import CloneDetectionInput, find_clone_matches
+    from vectoreyes.clone_detection import CloneDetectionInput, find_clone_matches
     source = polygon()
     targets = {1: source, 2: source.affine_transform((1, 0, 0, 1, 20, 0)),
         3: source.affine_transform((0, 1, -1, 0, 50, 20))}
@@ -49,7 +49,7 @@ def test_geometry_matcher_prefers_one_source_for_a_rotated_family():
 
 
 def test_geometry_matcher_retains_reflection_not_only_rotation():
-    from vectormark.clone_detection import CloneDetectionInput, find_clone_matches
+    from vectoreyes.clone_detection import CloneDetectionInput, find_clone_matches
     source = polygon()
     target = source.affine_transform((-1, 0, 0, 1, 30, 0))
     match, = find_clone_matches((CloneDetectionInput(1, source), CloneDetectionInput(2, target)))
@@ -59,7 +59,7 @@ def test_geometry_matcher_retains_reflection_not_only_rotation():
 
 
 def test_strict_pair_cannot_turn_a_selected_family_source_into_another_clone():
-    from vectormark.clone_detection import CloneDetectionInput, find_clone_matches
+    from vectoreyes.clone_detection import CloneDetectionInput, find_clone_matches
     inputs = tuple(CloneDetectionInput(identity, SkPath(shell=[
         (left, 0), (left+width, 0), (left+width, 10), (left, 10)]))
         for identity, left, width in ((1, 0, 10.), (2, 20, 10.08), (3, 40, 10.6), (4, 60, 10.6)))
@@ -70,12 +70,12 @@ def test_strict_pair_cannot_turn_a_selected_family_source_into_another_clone():
 
 
 def test_canonical_clone_discovery_keeps_paint_and_needs_no_sampling_scene(monkeypatch):
-    from vectormark.drawing_proposals import detect_clone_regions
+    from vectoreyes.drawing_proposals import detect_clone_regions
     state = family()
     def forbidden(*args, **kwargs):
         raise AssertionError('canonical clone discovery projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.region_sample.RegionSample.__init__', forbidden)
-    monkeypatch.setattr('vectormark.drawing_adapter.bind_region_inputs', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.region_sample.RegionSample.__init__', forbidden)
+    monkeypatch.setattr('vectoreyes.drawing_adapter.bind_region_inputs', forbidden)
     result = detect_clone_regions(state)
     assert len(result.batches[0].operations) == 2
     indexed = {region.id: region for region in result.state.drawing.regions}
@@ -93,13 +93,13 @@ def test_canonical_clone_discovery_keeps_paint_and_needs_no_sampling_scene(monke
 
 @pytest.mark.parametrize('target,count', [('r1', 2), ('r2', 1)])
 def test_targeted_clone_discovery_can_address_source_or_instance(target, count):
-    from vectormark.drawing_proposals import detect_clone_regions
+    from vectoreyes.drawing_proposals import detect_clone_regions
     result = detect_clone_regions(family(), target_id=target)
     assert sum(len(batch.operations) for batch in result.batches) == count
 
 
 def test_self_symmetric_regions_are_not_reinterpreted_as_clone_sources():
-    from vectormark.drawing_proposals import detect_clone_regions
+    from vectoreyes.drawing_proposals import detect_clone_regions
     state = family()
     state = replace(state, drawing=replace(state.drawing, regions=tuple(replace(region,
         diagnostics={'symmetry': {'mode': 'self'}}) for region in state.drawing.regions)))
@@ -108,8 +108,8 @@ def test_self_symmetric_regions_are_not_reinterpreted_as_clone_sources():
 
 
 def test_scoped_clone_discovery_does_not_alias_repeated_local_ids():
-    from vectormark.drawing_proposals import detect_clone_regions
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.drawing_proposals import detect_clone_regions
+    from vectoreyes.refinement.region_sample import RegionSample
     source = polygon()
     children = tuple(leaf(index, Shape('path', {'d': source.affine_transform((1, 0, 0, 1, (index-1)*20, 0)).to_svg_d()}), '#112233')
         for index in (1, 2))
@@ -127,17 +127,17 @@ def test_scoped_clone_discovery_does_not_alias_repeated_local_ids():
 
 def test_public_clone_detection_does_not_project_sampling_scene(monkeypatch):
     from tests.test_drawing_recipe_actions import _direct_recipe_fixture
-    from vectormark.drawing_plan import DrawingPlan
-    from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
+    from vectoreyes.drawing_plan import DrawingPlan
+    from vectoreyes.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
     source = polygon()
     regions = tuple(leaf(index, Shape('path', {'d': source.affine_transform((1, 0, 0, 1, (index-1)*20, 0)).to_svg_d()}), '#112233')
         for index in (1, 2))
     evidence, paint, base = _direct_recipe_fixture(regions, width=300, height=440)
-    plan = DrawingPlan.model_validate({'version': 'vectormark.plan.v1', 'drawing_id': 'drw_clones',
+    plan = DrawingPlan.model_validate({'version': 'vectoreyes.plan.v1', 'drawing_id': 'drw_clones',
         'base_version': 'v0', 'ops': [{'op': 'detect_clones', 'target': 'r1'}]})
     def forbidden(*args, **kwargs):
         raise AssertionError('public clone discovery projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.replay_binding.working_regions_from_state', forbidden)
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     assert sum(len(batch.operations) for batch in recipe.automatic_batches) == 1
     result = propose_effective_recipe(drawing_id='drw_clones', evidence=evidence, paint=paint, recipe=recipe)

@@ -14,10 +14,10 @@
 
 Read `docs/superpowers/specs/2026-06-06-gradient-handling-design.md`. Facts about the existing code:
 
-- **`Region`** (`src/vectormark/types.py`): dataclass `.label:int`, `.mask:np.ndarray` bool (H,W), `.color_hex:str`, `.area` property.
-- **`color.srgb_to_oklab(rgb)`** (`src/vectormark/color.py`): takes a float `(N,3)` array in `[0,1]` → OKLab `(N,3)`. (See its use in `tests/_render.py::mean_delta_e`.)
+- **`Region`** (`src/vectoreyes/types.py`): dataclass `.label:int`, `.mask:np.ndarray` bool (H,W), `.color_hex:str`, `.area` property.
+- **`color.srgb_to_oklab(rgb)`** (`src/vectoreyes/color.py`): takes a float `(N,3)` array in `[0,1]` → OKLab `(N,3)`. (See its use in `tests/_render.py::mean_delta_e`.)
 - **`occlusion.region_adjacency(regions) -> dict[int,set[int]]`**: label → set of touching labels. Reuse for grouping.
-- **Pipeline** (`src/vectormark/pipeline.py`): `idealize(image)` builds `arr` (uint8 RGB `(H,W,3)`), calls `_segment_image(arr,opt) -> (w,h,regions)`, then `_render_body(w,h,regions,opt) -> body:list[str]`, then `render_svg_doc(w,h,body)`. `_render_body` runs `reconstruct_scene` (occlusion) then fits/emits regions. There is also `_idealize_rectified` (any-axis symmetry) which runs `_render_body` in a rotated frame — **gradient detection must be OFF there** (see Task 7).
+- **Pipeline** (`src/vectoreyes/pipeline.py`): `idealize(image)` builds `arr` (uint8 RGB `(H,W,3)`), calls `_segment_image(arr,opt) -> (w,h,regions)`, then `_render_body(w,h,regions,opt) -> body:list[str]`, then `render_svg_doc(w,h,body)`. `_render_body` runs `reconstruct_scene` (occlusion) then fits/emits regions. There is also `_idealize_rectified` (any-axis symmetry) which runs `_render_body` in a rotated frame — **gradient detection must be OFF there** (see Task 7).
 - **`emit.render_svg_doc(width,height,body)`** wraps a body list in `<svg>…</svg>`. `emit.path_svg(d, fill, fill_rule=None)` and `emit.shape_to_svg(shape, fill, elem_id)` take the fill string verbatim — so a gradient fill is just `fill="url(#g0)"`.
 
 **Data shapes (consistent across all tasks):**
@@ -30,10 +30,10 @@ Read `docs/superpowers/specs/2026-06-06-gradient-handling-design.md`. Facts abou
 
 ## File Structure
 
-- **Create** `src/vectormark/gradient.py` — all detection/fit/gate logic.
-- **Modify** `src/vectormark/color.py` — add `mean_delta_e` (promoted from the test helper).
-- **Modify** `src/vectormark/emit.py` — `linear_gradient_def`, `radial_gradient_def`, `render_svg_doc(defs=...)`.
-- **Modify** `src/vectormark/pipeline.py` — thread the original RGB + gradient defs through `_render_body`; call `detect_gradients` in the upright path only.
+- **Create** `src/vectoreyes/gradient.py` — all detection/fit/gate logic.
+- **Modify** `src/vectoreyes/color.py` — add `mean_delta_e` (promoted from the test helper).
+- **Modify** `src/vectoreyes/emit.py` — `linear_gradient_def`, `radial_gradient_def`, `render_svg_doc(defs=...)`.
+- **Modify** `src/vectoreyes/pipeline.py` — thread the original RGB + gradient defs through `_render_body`; call `detect_gradients` in the upright path only.
 - **Modify** `tests/_render.py` — re-export `mean_delta_e` from `color` (keep the test import working, DRY).
 - **Create** `tests/test_gradient.py` — unit tests.
 - **Create** `tests/test_acceptance_gradient.py` — end-to-end acceptance.
@@ -43,7 +43,7 @@ Read `docs/superpowers/specs/2026-06-06-gradient-handling-design.md`. Facts abou
 ### Task 1: Promote `mean_delta_e` into the color module
 
 **Files:**
-- Modify: `src/vectormark/color.py`
+- Modify: `src/vectoreyes/color.py`
 - Modify: `tests/_render.py`
 - Test: `tests/test_gradient.py` (create)
 
@@ -57,7 +57,7 @@ import numpy as np
 
 
 def test_mean_delta_e_zero_for_identical_and_positive_for_different():
-    from vectormark.color import mean_delta_e
+    from vectoreyes.color import mean_delta_e
     a = np.full((4, 4, 3), 120, np.uint8)
     assert mean_delta_e(a, a) == 0.0
     b = a.copy(); b[:, :, 0] = 200          # shift red channel
@@ -67,11 +67,11 @@ def test_mean_delta_e_zero_for_identical_and_positive_for_different():
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `uv run pytest tests/test_gradient.py -k mean_delta_e -q`
-Expected: FAIL — `ImportError: cannot import name 'mean_delta_e' from 'vectormark.color'`.
+Expected: FAIL — `ImportError: cannot import name 'mean_delta_e' from 'vectoreyes.color'`.
 
 - [ ] **Step 3: Add `mean_delta_e` to `color.py`**
 
-Append to `src/vectormark/color.py`:
+Append to `src/vectoreyes/color.py`:
 
 ```python
 def mean_delta_e(a: np.ndarray, b: np.ndarray) -> float:
@@ -87,7 +87,7 @@ def mean_delta_e(a: np.ndarray, b: np.ndarray) -> float:
 Replace the body of `mean_delta_e` in `tests/_render.py` with a re-export so there's one implementation:
 
 ```python
-from vectormark.color import mean_delta_e  # re-exported; single source of truth
+from vectoreyes.color import mean_delta_e  # re-exported; single source of truth
 ```
 
 Remove the old local `def mean_delta_e(...)` in `tests/_render.py`.
@@ -100,7 +100,7 @@ Expected: PASS (1 passed). Then `uv run pytest -q` — full suite still green (t
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/color.py tests/_render.py tests/test_gradient.py
+git add src/vectoreyes/color.py tests/_render.py tests/test_gradient.py
 git commit -m "refactor(color): promote mean_delta_e (OKLab dE) into the color module"
 ```
 
@@ -109,7 +109,7 @@ git commit -m "refactor(color): promote mean_delta_e (OKLab dE) into the color m
 ### Task 2: Gradient `<defs>` emit + `render_svg_doc` defs
 
 **Files:**
-- Modify: `src/vectormark/emit.py`
+- Modify: `src/vectoreyes/emit.py`
 - Test: `tests/test_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -118,7 +118,7 @@ Append to `tests/test_gradient.py`:
 
 ```python
 def test_linear_gradient_def_emits_stops_and_coords():
-    from vectormark.emit import linear_gradient_def
+    from vectoreyes.emit import linear_gradient_def
     d = linear_gradient_def("g0", 10, 20, 110, 20, [(0.0, "#ff0000"), (1.0, "#0000ff")])
     assert d.startswith("<linearGradient") and 'id="g0"' in d
     assert 'gradientUnits="userSpaceOnUse"' in d
@@ -129,7 +129,7 @@ def test_linear_gradient_def_emits_stops_and_coords():
 
 
 def test_radial_gradient_def_emits_center_radius():
-    from vectormark.emit import radial_gradient_def
+    from vectoreyes.emit import radial_gradient_def
     d = radial_gradient_def("g1", 50, 60, 40, [(0.0, "#ffffff"), (1.0, "#000000")])
     assert d.startswith("<radialGradient") and 'id="g1"' in d
     assert 'cx="50"' in d and 'cy="60"' in d and 'r="40"' in d
@@ -137,7 +137,7 @@ def test_radial_gradient_def_emits_center_radius():
 
 
 def test_render_svg_doc_wraps_defs():
-    from vectormark.emit import render_svg_doc
+    from vectoreyes.emit import render_svg_doc
     out = render_svg_doc(100, 100, ['<rect/>'], defs=['<linearGradient id="g0"></linearGradient>'])
     assert "<defs>" in out and "</defs>" in out
     assert out.index("<defs>") < out.index("<rect/>")     # defs before body
@@ -152,7 +152,7 @@ Expected: FAIL — `linear_gradient_def`/`radial_gradient_def` not defined; `ren
 
 - [ ] **Step 3: Implement in `emit.py`**
 
-Add to `src/vectormark/emit.py` (near `path_svg`):
+Add to `src/vectoreyes/emit.py` (near `path_svg`):
 
 ```python
 def _gradient_stops(stops: list[tuple[float, str]]) -> str:
@@ -198,7 +198,7 @@ Expected: PASS (3 passed). Then `uv run pytest -q` — full suite green (the `de
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/emit.py tests/test_gradient.py
+git add src/vectoreyes/emit.py tests/test_gradient.py
 git commit -m "feat(emit): linear/radial gradient defs + render_svg_doc defs block"
 ```
 
@@ -207,7 +207,7 @@ git commit -m "feat(emit): linear/radial gradient defs + render_svg_doc defs blo
 ### Task 3: Band grouping (`_ramp_groups`)
 
 **Files:**
-- Create: `src/vectormark/gradient.py`
+- Create: `src/vectoreyes/gradient.py`
 - Test: `tests/test_gradient.py` (append)
 
 A gradient's bands are spatially adjacent AND their flat colors progress along a 1-D path in OKLab. Group connected regions whose colors are ramp-consistent: collinear in OKLab (the colors fit a single line within tolerance) and at least 3 of them.
@@ -219,7 +219,7 @@ Append to `tests/test_gradient.py`:
 ```python
 def _hstrip_regions(colors_hex, h=40, band_w=12):
     """Adjacent vertical bands left→right, one per color (a quantized ramp)."""
-    from vectormark.types import Region
+    from vectoreyes.types import Region
     w = band_w * len(colors_hex)
     regions = []
     for i, c in enumerate(colors_hex):
@@ -230,7 +230,7 @@ def _hstrip_regions(colors_hex, h=40, band_w=12):
 
 
 def test_ramp_groups_groups_a_monotonic_ramp():
-    from vectormark.gradient import _ramp_groups
+    from vectoreyes.gradient import _ramp_groups
     # 4 adjacent bands stepping blue->magenta (a clear OKLab ramp)
     regions = _hstrip_regions(["#2563eb", "#7b3fc4", "#b13a9e", "#db2777"])
     groups = _ramp_groups(regions)
@@ -238,7 +238,7 @@ def test_ramp_groups_groups_a_monotonic_ramp():
 
 
 def test_ramp_groups_rejects_flat_and_too_few():
-    from vectormark.gradient import _ramp_groups
+    from vectoreyes.gradient import _ramp_groups
     flat = _hstrip_regions(["#2563eb", "#2563eb", "#2563eb"])   # no variation
     assert _ramp_groups(flat) == []
     two = _hstrip_regions(["#2563eb", "#db2777"])               # only 2 -> not a gradient
@@ -246,7 +246,7 @@ def test_ramp_groups_rejects_flat_and_too_few():
 
 
 def test_ramp_groups_rejects_nonramp_colors():
-    from vectormark.gradient import _ramp_groups
+    from vectoreyes.gradient import _ramp_groups
     # adjacent but colors are not collinear in OKLab (zig-zag hues)
     regions = _hstrip_regions(["#ff0000", "#00ff00", "#0000ff", "#00ff00"])
     assert _ramp_groups(regions) == []
@@ -259,7 +259,7 @@ Expected: FAIL — `gradient` module / `_ramp_groups` not defined.
 
 - [ ] **Step 3: Implement `gradient.py` (grouping)**
 
-Create `src/vectormark/gradient.py`:
+Create `src/vectoreyes/gradient.py`:
 
 ```python
 # SPDX-License-Identifier: MIT
@@ -338,7 +338,7 @@ If `test_ramp_groups_rejects_nonramp_colors` does not reject (the zig-zag happen
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): ramp-consistent band grouping (_ramp_groups)"
 ```
 
@@ -347,7 +347,7 @@ git commit -m "feat(gradient): ramp-consistent band grouping (_ramp_groups)"
 ### Task 4: Stop fitting + linear model (`_fit_stops`, `_reduce_stops`, `_fit_linear`)
 
 **Files:**
-- Modify: `src/vectormark/gradient.py`
+- Modify: `src/vectoreyes/gradient.py`
 - Test: `tests/test_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -370,7 +370,7 @@ def _linear_gradient_image(h, w, p0, p1, stops_rgb):
 
 
 def test_fit_linear_recovers_axis_and_endpoints():
-    from vectormark.gradient import _fit_linear
+    from vectoreyes.gradient import _fit_linear
     h, w = 80, 120
     p0, p1 = (10, 40), (110, 40)                       # horizontal axis
     img = _linear_gradient_image(h, w, p0, p1, [(0.0, (37, 99, 235)), (1.0, (219, 39, 119))])
@@ -387,7 +387,7 @@ def test_fit_linear_recovers_axis_and_endpoints():
 
 
 def test_reduce_stops_drops_redundant_midpoints():
-    from vectormark.gradient import _reduce_stops
+    from vectoreyes.gradient import _reduce_stops
     # a perfectly linear ramp in sRGB: midpoints are redundant
     stops = [(0.0, "#000000"), (0.25, "#404040"), (0.5, "#808080"),
              (0.75, "#bfbfbf"), (1.0, "#ffffff")]
@@ -399,7 +399,7 @@ Add this helper near the top of `tests/test_gradient.py` (after the imports):
 
 ```python
 def _OKLAB(img_uint8):
-    from vectormark.color import srgb_to_oklab
+    from vectoreyes.color import srgb_to_oklab
     return srgb_to_oklab(img_uint8.reshape(-1, 3) / 255.0)
 ```
 
@@ -410,7 +410,7 @@ Expected: FAIL — `_fit_linear`/`_reduce_stops` not defined.
 
 - [ ] **Step 3: Implement stop fitting + linear fit**
 
-Append to `src/vectormark/gradient.py`:
+Append to `src/vectoreyes/gradient.py`:
 
 ```python
 def _rgb_to_hex(rgb: np.ndarray) -> str:
@@ -491,7 +491,7 @@ Expected: PASS (2 passed). If `_fit_linear`'s endpoint-span assertion is off by 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): stop fitting, greedy stop reduction, linear model fit"
 ```
 
@@ -500,7 +500,7 @@ git commit -m "feat(gradient): stop fitting, greedy stop reduction, linear model
 ### Task 5: Radial model (`_fit_radial`)
 
 **Files:**
-- Modify: `src/vectormark/gradient.py`
+- Modify: `src/vectoreyes/gradient.py`
 - Test: `tests/test_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -519,7 +519,7 @@ def _radial_gradient_image(h, w, c, r, stops_rgb):
 
 
 def test_fit_radial_recovers_center():
-    from vectormark.gradient import _fit_radial
+    from vectoreyes.gradient import _fit_radial
     h, w = 120, 120
     c, r = (60, 60), 50
     img = _radial_gradient_image(h, w, c, r, [(0.0, (125, 211, 252)), (1.0, (29, 78, 216))])
@@ -542,7 +542,7 @@ Expected: FAIL — `_fit_radial` not defined.
 
 - [ ] **Step 3: Implement `_fit_radial`**
 
-Append to `src/vectormark/gradient.py`:
+Append to `src/vectoreyes/gradient.py`:
 
 ```python
 def _radial_spread(pts: np.ndarray, oklab: np.ndarray, c: np.ndarray, nbins: int = 16) -> float:
@@ -602,7 +602,7 @@ Expected: PASS (1 passed). If the recovered centre is outside tolerance, the pri
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): radial model fit with concentricity-scored center"
 ```
 
@@ -611,7 +611,7 @@ git commit -m "feat(gradient): radial model fit with concentricity-scored center
 ### Task 6: Gate + orchestration (`_render_model`, `fit_gradient`, `detect_gradients`)
 
 **Files:**
-- Modify: `src/vectormark/gradient.py`
+- Modify: `src/vectoreyes/gradient.py`
 - Test: `tests/test_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -620,7 +620,7 @@ Append to `tests/test_gradient.py`:
 
 ```python
 def test_fit_gradient_accepts_linear_rejects_flat():
-    from vectormark.gradient import fit_gradient
+    from vectoreyes.gradient import fit_gradient
     h, w = 80, 120
     img = _linear_gradient_image(h, w, (10, 40), (110, 40),
                                  [(0.0, (37, 99, 235)), (1.0, (219, 39, 119))])
@@ -632,8 +632,8 @@ def test_fit_gradient_accepts_linear_rejects_flat():
 
 
 def test_detect_gradients_consumes_ramp_returns_remaining():
-    from vectormark.gradient import detect_gradients
-    from vectormark.types import Region
+    from vectoreyes.gradient import detect_gradients
+    from vectoreyes.types import Region
     h, w = 60, 160
     # left half: a 4-band blue->magenta linear ramp; right: one flat green block
     img = _linear_gradient_image(h, 80, (0, 30), (79, 30),
@@ -662,7 +662,7 @@ Expected: FAIL — `fit_gradient`/`detect_gradients` not defined.
 
 - [ ] **Step 3: Implement the gate + orchestration**
 
-Append to `src/vectormark/gradient.py`:
+Append to `src/vectoreyes/gradient.py`:
 
 ```python
 def _interp_stops_rgb(t: np.ndarray, stops: list[tuple[float, str]]) -> np.ndarray:
@@ -748,7 +748,7 @@ Expected: all green; the full suite is unchanged (gradient.py isn't wired into t
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): consistency gate (mean dE) + fit_gradient + detect_gradients"
 ```
 
@@ -757,14 +757,14 @@ git commit -m "feat(gradient): consistency gate (mean dE) + fit_gradient + detec
 ### Task 7: Pipeline integration
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py`
+- Modify: `src/vectoreyes/pipeline.py`
 - Test: covered by Task 8 acceptance (this task wires; verify via full suite + a smoke check)
 
 Thread the original RGB and gradient `<defs>` through `_render_body`, and call `detect_gradients` only in the upright path (`bake is None`, RGB available).
 
 - [ ] **Step 1: Change `_render_body` to detect gradients and return defs**
 
-In `src/vectormark/pipeline.py`, add the import near the others:
+In `src/vectoreyes/pipeline.py`, add the import near the others:
 
 ```python
 from .gradient import detect_gradients
@@ -843,7 +843,7 @@ In `_idealize_rectified`, both `_render_body` calls return a tuple now, and grad
 Run (own statement):
 
 ```bash
-uv run vectormark scratch/gradient-samples/01_linear_2stop.png -o /tmp/g01.svg && grep -c "linearGradient" /tmp/g01.svg
+uv run vectoreyes scratch/gradient-samples/01_linear_2stop.png -o /tmp/g01.svg && grep -c "linearGradient" /tmp/g01.svg
 ```
 
 Expected: prints `1` (a `<linearGradient>` is now emitted) — vs. the pre-feature baseline of 5 flat bands. (If `scratch/gradient-samples/` is absent, regenerate via `scratch/gradient-samples/_gen.py` or skip this smoke step; Task 8 is the real gate.)
@@ -856,7 +856,7 @@ Expected: all existing tests green — the flat path is unchanged; existing fixt
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py
+git add src/vectoreyes/pipeline.py
 git commit -m "feat(pipeline): detect gradients in the upright path; emit gradient defs"
 ```
 
@@ -880,7 +880,7 @@ bar; flat and non-ramp inputs stay flat (no <defs>)."""
 
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import render_svg, mean_delta_e
 
 

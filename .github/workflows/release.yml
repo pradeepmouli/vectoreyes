@@ -33,27 +33,27 @@ jobs:
       - name: Verify and package shared agent plugin
         run: |
           uv run --no-project python scripts/build_agent_plugin.py --check
-          uv run --no-project python scripts/build_agent_plugin.py --output build/plugin --archive build/vectormark-plugin.zip
+          uv run --no-project python scripts/build_agent_plugin.py --output build/plugin --archive build/vectoreyes-plugin.zip
       - name: Verify installed wheel widget
         run: |
-          uv venv /tmp/vectormark-wheel-check --python 3.13
+          uv venv /tmp/vectoreyes-wheel-check --python 3.13
           for wheel in dist/*.whl; do
-            uv pip install --python /tmp/vectormark-wheel-check/bin/python "${wheel}[server,scoring]" pytest
+            uv pip install --python /tmp/vectoreyes-wheel-check/bin/python "${wheel}[server,scoring]" pytest
           done
           expected=$(sha256sum integrations/mcp-app/dist/mcp-app.html | cut -d ' ' -f 1)
           cd /tmp
-          /tmp/vectormark-wheel-check/bin/python - "$expected" <<'PY'
+          /tmp/vectoreyes-wheel-check/bin/python - "$expected" <<'PY'
           import hashlib
           import importlib.machinery
           import sys
-          import vectormark.fit
-          from vectormark.mcp_server import logo_widget
-          assert any(vectormark.fit.__file__.endswith(suffix)
+          import vectoreyes.fit
+          from vectoreyes.mcp_server import logo_widget
+          assert any(vectoreyes.fit.__file__.endswith(suffix)
                      for suffix in importlib.machinery.EXTENSION_SUFFIXES)
           assert hashlib.sha256(logo_widget().encode("utf-8")).hexdigest() == sys.argv[1]
           PY
       - name: Test installed compiled engine
-        run: /tmp/vectormark-wheel-check/bin/python -m pytest tests --import-mode=importlib -q
+        run: /tmp/vectoreyes-wheel-check/bin/python -m pytest tests --import-mode=importlib -q
       - name: Check metadata
         run: uvx twine check dist/*
       - uses: actions/upload-artifact@v7
@@ -62,8 +62,8 @@ jobs:
           path: dist/
       - uses: actions/upload-artifact@v7
         with:
-          name: vectormark-plugin
-          path: build/vectormark-plugin.zip
+          name: vectoreyes-plugin
+          path: build/vectoreyes-plugin.zip
 
   publish:
     name: Publish to PyPI
@@ -73,7 +73,7 @@ jobs:
     # on PyPI. Create an environment named "pypi" in repo settings.
     environment:
       name: pypi
-      url: https://pypi.org/project/vectormark/
+      url: https://pypi.org/project/vectoreyes/
     permissions:
       id-token: write # required for OIDC trusted publishing
     steps:

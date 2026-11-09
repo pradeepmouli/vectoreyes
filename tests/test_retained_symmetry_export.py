@@ -1,5 +1,5 @@
-from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
-from vectormark.drawing_render import render_drawing as _canonical_render
+from vectoreyes.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectoreyes.drawing_render import render_drawing as _canonical_render
 from types import SimpleNamespace
 from typing import cast
 import xml.etree.ElementTree as ET
@@ -7,11 +7,11 @@ import xml.etree.ElementTree as ET
 import numpy as np
 import pytest
 
-from vectormark import drawing_refine
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import ProposalIntent
-from vectormark.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes import drawing_refine
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import ProposalIntent
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
 
 def _forest():
@@ -35,7 +35,7 @@ def _forest():
 
 
 def test_materialization_retains_full_union_hole_identity_and_clone():
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
     before = _forest()
     result = materialize_self_symmetry(before)
     joined, clone = result
@@ -58,27 +58,27 @@ def test_materialization_retains_full_union_hole_identity_and_clone():
     assert before[0].is_branch and before[1].current.params["href_obj_id"] == 11
     repeated = materialize_self_symmetry(result)
     assert all(a is b for a, b in zip(result, repeated))
-    from vectormark.drawing_trace import TraceOptions, TraceResult
-    from vectormark.drawing_plan import parse_plan, PlanValidationError
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
+    from vectoreyes.drawing_trace import TraceOptions, TraceResult
+    from vectoreyes.drawing_plan import parse_plan, PlanValidationError
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
                        "ops": [{"op": "set_fill", "target": "r1-2", "fill": {"type": "flat", "color": "#ffffff"}}]})
     with pytest.raises(PlanValidationError):
         drawing_refine.refine(TraceResult(48, 24, TraceOptions(), (), ""), result, plan)
 
 
 def test_render_is_geometry_and_raster_free_and_reports_every_painted_target(monkeypatch):
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
     regions = materialize_self_symmetry(_forest())
     def forbidden(*args, **kwargs):
         raise AssertionError("renderer reconstructed geometry")
-    import vectormark.fit as fit_module
-    import vectormark.path_fitting as fitting
+    import vectoreyes.fit as fit_module
+    import vectoreyes.path_fitting as fitting
     monkeypatch.setattr(fit_module, "atomic_flatten_path_d", forbidden)
     monkeypatch.setattr(fitting, "fit_raster_paths", forbidden)
-    import vectormark.drawing_assembly as assembly
+    import vectoreyes.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "unary_union", forbidden)
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
-    import vectormark.refinement.gate as gate
+    import vectoreyes.refinement.gate as gate
     monkeypatch.setattr(gate, "rasterize", forbidden)
     trace = SimpleNamespace(width=48, height=24)
     first = _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions)))
@@ -102,7 +102,7 @@ def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
         Shape("path", {"d": "M20 2 L22 2 L22 18 L20 18 Z"}), diagnostics={"symmetry": {}}))
     def forbidden(*args, **kwargs):
         raise AssertionError("renderer fitted an undisclosed surface")
-    import vectormark.drawing_assembly as assembly
+    import vectoreyes.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "_fit_contours_with_corners", forbidden)
     rendered = _canonical_render(_export_drawing("export", width=(SimpleNamespace(width=48, height=24)).width, height=(SimpleNamespace(width=48, height=24)).height, regions=_export_addresses(regions)))
     assert "surface-" not in rendered.svg
@@ -111,9 +111,9 @@ def test_shared_materials_have_no_hidden_surface_underlays(monkeypatch):
 
 @pytest.mark.parametrize("stale_clone", [False, True])
 def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, monkeypatch):
-    from vectormark.refinement import framework
-    from vectormark.drawing_adapter import transform_working_shape
-    from vectormark.refinement.symmetry_materialize import union_self_symmetry
+    from vectoreyes.refinement import framework
+    from vectoreyes.drawing_adapter import transform_working_shape
+    from vectoreyes.refinement.symmetry_materialize import union_self_symmetry
     branch, old_clone = _forest()
     source = RegionSample(11, Shape("path", {"d": branch.footprint.to_svg_d(), "fill_rule": "evenodd", "tag": "before"}),
                           branch.fill or branch.children[0].fill, footprint=branch.footprint,
@@ -149,7 +149,7 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
         assert result[1].footprint.symmetric_difference(clone_footprint).area < 1e-8
         rendered = _canonical_render(_export_drawing("export", width=(SimpleNamespace(width=48, height=24)).width, height=(SimpleNamespace(width=48, height=24)).height, regions=_export_addresses(result)))
         assert 'href="#geometry-r1-1"' in rendered.svg
-        from vectormark.pipeline import _render_refinement_body
+        from vectoreyes.pipeline import _render_refinement_body
         # The legacy pipeline uses the same retained identity across subtrees.
         body, defs = _render_refinement_body(result)
         assert 'id="s1-11-geometry"' in "".join(defs)
@@ -158,8 +158,8 @@ def test_cross_subtree_clone_refresh_is_an_assessed_transaction(stale_clone, mon
 
 
 def test_automatic_callback_and_later_polish_share_retained_materialization():
-    from vectormark.refinement_settings import RefinementPasses
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.refinement_settings import RefinementPasses
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
     branch, _ = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     original = joined.with_current(Shape("path", {**joined.current.params, "tag": "before"}),
@@ -173,7 +173,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization():
         (regions, _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(regions))))))
     assert len(callbacks) == 2  # Disabled corner normalization is not executed.
     assert all(regions[0].is_leaf and regions[0].footprint.area == pytest.approx(192)
-        and regions[0].diagnostics['symmetry']['mode'] == 'intrinsic'
+        and regions[0].diagnostics['symmetry']['mode'] == 'self'
         and regions[0].diagnostics['materialization']['operation'] == 'self_symmetry_union'
         for regions, _ in callbacks)
     assert all(len(render.report["targets"]) == 1 for _, render in callbacks)
@@ -181,7 +181,7 @@ def test_automatic_callback_and_later_polish_share_retained_materialization():
 
 
 def test_repeated_singleton_union_preserves_counter_and_detached_ownership():
-    from vectormark.skia_geometry import SkPath, unary_union
+    from vectoreyes.skia_geometry import SkPath, unary_union
     original = _forest()[0].footprint
     copies = [original]
     for _ in range(4):
@@ -195,30 +195,30 @@ def test_repeated_singleton_union_preserves_counter_and_detached_ownership():
 
 
 def test_manual_symmetry_uses_shared_union_and_rejects_outside_axis_without_mutation():
-    from vectormark.drawing_trace import TraceOptions, TraceResult
-    from vectormark.drawing_plan import parse_plan
+    from vectoreyes.drawing_trace import TraceOptions, TraceResult
+    from vectoreyes.drawing_plan import parse_plan
     shape = Shape("path", {"d": "M36 8 L56 8 L56 24 L36 24 Z"})
     source = RegionSample(2, shape, FlatFill("#123456"), raster=np.zeros((32, 64), bool),
                           drawing_id="r2", source_regions=("r2",))
     trace = TraceResult(64, 32, TraceOptions(), (), "")
     def plan(x):
-        return parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
+        return parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
                            "ops": [{"op": "set_symmetry", "target": "r2",
                                     "axis": {"point": [x, 16], "angle_degrees": 90}}]})
     output = drawing_refine.refine(trace, (source,), plan(46))
     assert output[0].diagnostics["materialization"]["operation"] == "self_symmetry_union"
     assert output[0].diagnostics["symmetry"]["materialized"]
     assert output[0].footprint.symmetric_difference(source.footprint).area < 1e-8
-    with pytest.raises(ValueError, match="empty|divide"):
+    with pytest.raises(ValueError, match="two non-empty halves"):
         drawing_refine.refine(trace, (source,), plan(30))
     assert source.current is shape and not source.diagnostics
 
 
 def test_pipeline_renderer_requires_retained_geometry_and_cannot_fit(monkeypatch):
-    from vectormark import fit, skia_geometry
-    from vectormark import drawing_simplification
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
-    from vectormark.pipeline import _render_refinement_body
+    from vectoreyes import fit, skia_geometry
+    from vectoreyes import drawing_simplification
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.pipeline import _render_refinement_body
     before = _forest()
     retained = materialize_self_symmetry(before)
     def forbidden(*args, **kwargs):
@@ -233,8 +233,8 @@ def test_pipeline_renderer_requires_retained_geometry_and_cannot_fit(monkeypatch
 
 
 def test_top_level_symmetry_source_assesses_nested_clone_leaf_not_parent_exterior(monkeypatch):
-    from vectormark.refinement import framework
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
+    from vectoreyes.refinement import framework
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
     branch, clone = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     source = joined.with_current(Shape("path", {**joined.current.params, "tag": "before"}),
@@ -259,9 +259,9 @@ def test_top_level_symmetry_source_assesses_nested_clone_leaf_not_parent_exterio
 
 
 def test_real_recursive_compound_producer_preserves_colliding_local_ids_at_export():
-    from vectormark.refinement.framework import select_refinements
-    from vectormark.refinement.passes.compound import split_compound_pass
-    from vectormark.pipeline import _render_refinement_body
+    from vectoreyes.refinement.framework import select_refinements
+    from vectoreyes.refinement.passes.compound import split_compound_pass
+    from vectoreyes.pipeline import _render_refinement_body
     mask = np.zeros((40, 40), dtype=bool)
     compound = RegionSample(1, Shape("path", {"d": "M0 0 L8 0 L8 8 L0 8 Z M12 0 L20 0 L20 8 L12 8 Z", "fill_rule": "evenodd"}),
                             FlatFill("#123456"), raster=mask)
@@ -275,7 +275,7 @@ def test_real_recursive_compound_producer_preserves_colliding_local_ids_at_expor
 
 
 def test_clone_local_source_shadows_unrelated_cross_scope_materialization():
-    from vectormark.refinement.symmetry_materialize import remap_symmetry_clones, union_self_symmetry
+    from vectoreyes.refinement.symmetry_materialize import remap_symmetry_clones, union_self_symmetry
     mask = np.zeros((40, 40), dtype=bool)
     outer = RegionSample(1, Shape("rect", {"x": 0, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
     local = RegionSample(1, Shape("rect", {"x": 12, "y": 0, "w": 8, "h": 8}), FlatFill("#123456"), raster=mask)
@@ -285,7 +285,7 @@ def test_clone_local_source_shadows_unrelated_cross_scope_materialization():
     changed = union_self_symmetry(outer, (outer.footprint,), diagnostics={"mode": "self"})
     out = remap_symmetry_clones((changed, branch), {(1,): (1,)}, before=(outer, branch))
     assert out[1] is branch and out[1].children[1] is clone
-    from vectormark.pipeline import _render_refinement_body
+    from vectoreyes.pipeline import _render_refinement_body
     body, defs = _render_refinement_body(out)
     assert 'href="#s10-1-geometry"' in "".join(body)
     assert 'id="s10-1-geometry"' in "".join(defs)
@@ -294,10 +294,10 @@ def test_clone_local_source_shadows_unrelated_cross_scope_materialization():
 
 def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
     import importlib
-    symmetry = importlib.import_module("vectormark.refinement.passes.symmetry")
-    detection = importlib.import_module("vectormark.symmetry_detection")
-    from vectormark.refinement.framework import select_refinements
-    from vectormark.drawing_adapter import transform_working_shape
+    symmetry = importlib.import_module("vectoreyes.refinement.passes.symmetry")
+    detection = importlib.import_module("vectoreyes.symmetry_detection")
+    from vectoreyes.refinement.framework import select_refinements
+    from vectoreyes.drawing_adapter import transform_working_shape
     mask = np.zeros((32, 48), dtype=bool)
     shape = Shape("path", {"d": "M2 2 L18 2 L18 18 L2 18 Z"})
     source = RegionSample(1, shape, FlatFill("#123456"), raster=mask, drawing_id="r1", source_regions=("r1",))
@@ -313,11 +313,8 @@ def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
                             symmetry.Axis2D(np.pi / 2, 10, 10),
                             half,
                             mirror,
-                            half_shape,
                             0.0,
-                            "path_half",
-                            "left",
-                            0.0,
+                              "positive",
                         ))
     out = select_refinements([source, clone], {1: mask, 2: mask}, [symmetry.symmetry_pass])
     assert [region.id for region in out] == [1, 2]
@@ -330,11 +327,11 @@ def test_automatic_vector_halves_do_not_retire_live_clone_identity(monkeypatch):
 
 
 def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
-    from vectormark.drawing_adapter import drawing_from_region_samples
-    from vectormark.drawing_trace import TraceOptions, TraceResult
-    from vectormark.drawing_plan import parse_plan
-    from vectormark.pipeline import _render_refinement_body
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.drawing_trace import TraceOptions, TraceResult
+    from vectoreyes.drawing_plan import parse_plan
+    from vectoreyes.pipeline import _render_refinement_body
     branch, clone = _forest()
     local = RegionSample(1, Shape("rect", {"x": 0, "y": 20, "w": 4, "h": 4}), FlatFill("#aabbcc"),
                          raster=branch.raster, drawing_id="r3-1", source_regions=("r3",))
@@ -356,7 +353,7 @@ def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
     assert 'href="#geometry-r1"' in rendered.svg
     canonical = drawing_from_region_samples("drw_x", width=48, height=24, regions=out)
     assert canonical.regions[1].children[1].geometry.source_region_id == "r1"
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
                        "ops": [{"op": "set_fill", "target": "r3-2", "fill": {"type": "flat", "color": "#ffffff"}}]})
     refined = drawing_refine.refine(trace, out, plan)
     assert 'href="#geometry-r1"' in _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(refined))).svg
@@ -366,7 +363,7 @@ def test_real_branch_collapse_pins_nested_clone_against_local_id_shadowing():
 
 @pytest.mark.parametrize("bad_path", [("..", "..", 11), ("bad", 11), (1, "..", 11), (True,), (), (123, 11)])
 def test_final_export_rejects_invalid_explicit_paths_without_input_mutation(bad_path):
-    from vectormark.pipeline import _render_refinement_body
+    from vectoreyes.pipeline import _render_refinement_body
     branch, clone = _forest()
     source = branch.children[0]
     # Use a valid local source ID so no bare-reference fallback may hide the
@@ -380,8 +377,8 @@ def test_final_export_rejects_invalid_explicit_paths_without_input_mutation(bad_
 
 
 def test_ambiguous_external_reference_is_rejected_not_arbitrarily_selected():
-    from vectormark.pipeline import _render_refinement_body
-    from vectormark.refinement.symmetry_materialize import remap_symmetry_clones
+    from vectoreyes.pipeline import _render_refinement_body
+    from vectoreyes.refinement.symmetry_materialize import remap_symmetry_clones
     branch, clone = _forest()
     source = branch.children[0]
     first = RegionSample.branch(id=10, children=(source,), raster=source.raster)
@@ -395,8 +392,8 @@ def test_ambiguous_external_reference_is_rejected_not_arbitrarily_selected():
 
 
 def test_recursive_transaction_does_not_update_shadowed_clone_in_other_subtree():
-    from vectormark.refinement.framework import Proposal, select_refinements
-    from vectormark.refinement.symmetry_materialize import union_self_symmetry
+    from vectoreyes.refinement.framework import Proposal, select_refinements
+    from vectoreyes.refinement.symmetry_materialize import union_self_symmetry
     mask = np.zeros((40, 40), dtype=bool)
     source = RegionSample(1, Shape("rect", {"x": 0, "y": 0, "w": 8, "h": 8, "reconstruct": True}),
                           FlatFill("#123456"), raster=mask)
@@ -419,7 +416,7 @@ def test_recursive_transaction_does_not_update_shadowed_clone_in_other_subtree()
 
 
 def test_remap_binds_before_new_local_id_can_shadow_original_source():
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry, remap_symmetry_clones
     branch, clone = _forest()
     joined = materialize_self_symmetry((branch,))[0]
     clone = clone.with_current(Shape("use", {**clone.current.params, "href_obj_id": 1}), footprint=clone.footprint)

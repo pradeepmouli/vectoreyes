@@ -20,7 +20,7 @@ notes below; neither alone completes the unified quality/fill or holdout gates.
 ## Goal
 
 An LLM agent with an image-generation tool can generate artwork, pass it to
-VectorMark, inspect the result, and iteratively produce a faithful, practical-to-edit
+vectorEyes, inspect the result, and iteratively produce a faithful, practical-to-edit
 SVG that replaces the raster as the user's source of truth.
 
 Initial acceptance domain: logos, icons, and flat/gradient illustrations.
@@ -29,7 +29,7 @@ not implicit promises. Unsupported artwork must be identified, not silently
 flattened or embedded as raster and reported as successful vector reconstruction.
 
 This plan completes and hardens the existing workflow. It does not replace its
-public action vocabulary or move image generation into VectorMark.
+public action vocabulary or move image generation into vectorEyes.
 
 ## Non-negotiable invariants
 
@@ -229,7 +229,7 @@ not a target pass count or a current full-suite certification.
   continuous-color closed boundaries, and noisy open boundaries. The focused
   run passes 18 tests; the full rerun is **620 passed / 16 failed**, 636 total,
   with the original hole-rendering failure resolved and no new failures.
-  Evidence: `/tmp/vectormark-cutout-audit/{pytest.log,junit.xml}`.
+  Evidence: `/tmp/vectoreyes-cutout-audit/{pytest.log,junit.xml}`.
 - Annulus structural recovery and simplify boundary drift are distinct pending
   issues; their cutouts are not absent in the observed outputs. See the audit
   follow-up for measured evidence. No expected SVGs or corpus entries changed.
@@ -251,11 +251,11 @@ not a target pass count or a current full-suite certification.
   sampled boundary estimates, not analytic Hausdorff bounds. Weighted command
   cost falls from 115 to 82 while the command count remains 62.
 - Cached-fixture SVG comparison:
-  `/tmp/vectormark-cutout-boundary-review/index.html`. This is not a corpus retrace.
+  `/tmp/vectoreyes-cutout-boundary-review/index.html`. This is not a corpus retrace.
 - Final full suite: **652 passed / 15 failed**, 667 total, no errors or skips.
   Compared with the preceding local-corner audit, the compound simplify failure
   is resolved and there are no new failing identities. Evidence:
-  `/tmp/vectormark-cutout-boundary-final-{pytest.log,junit.xml}`.
+  `/tmp/vectoreyes-cutout-boundary-final-{pytest.log,junit.xml}`.
   Remaining stabilization failures still need reconciliation before Slice 1
   can close.
 
@@ -271,7 +271,7 @@ not a target pass count or a current full-suite certification.
   and a tiny-disk primitive acceptance-policy mismatch. No new failing identities,
   golden replacements, corpus regeneration, commits, or deployment in this batch.
 - Evidence and details are in the stabilization audit and
-  `/tmp/vectormark-retained-annulus-reviewed-{pytest.log,junit.xml}`.
+  `/tmp/vectoreyes-retained-annulus-reviewed-{pytest.log,junit.xml}`.
 
 ## Slice 2 — Corner ownership and provenance
 
@@ -336,9 +336,9 @@ first so subsequent detector experiments can be evaluated independently.
   final skip-stability check reports **632 passed / 16 failed**; failure identities
   exactly match the preceding audit, with no added failures. The final focused
   rerun includes the additional check. Evidence:
-  `/tmp/vectormark-corner-final-{pytest.log,junit.xml}`.
+  `/tmp/vectoreyes-corner-final-{pytest.log,junit.xml}`.
 - Historical cached radish, Apple Music, and Vbird paths have a linked-SVG
-  comparison at `/tmp/vectormark-corner-ownership-review/index.html`. All seven
+  comparison at `/tmp/vectoreyes-corner-ownership-review/index.html`. All seven
   reviewed region records retain their bound corner IDs. These comparisons use
   the recorded paths matching their provenance, not newly retraced corpus output.
 - Detector thresholds remain unchanged. Over-wide or unresolved pre-fit corner
@@ -361,9 +361,9 @@ first so subsequent detector experiments can be evaluated independently.
   ownership, fitter, and contour checks, **45 focused tests pass**.
 - Final full-suite verification: **642 passed / 16 failed** in 97.40s. Failure
   identities exactly match the preceding corner-ownership audit; no new
-  failures. Evidence: `/tmp/vectormark-local-corners-final-{pytest.log,junit.xml}`.
+  failures. Evidence: `/tmp/vectoreyes-local-corners-final-{pytest.log,junit.xml}`.
   `git diff --check` passes. Existing stabilization failures remain unresolved.
-- `/tmp/vectormark-local-corners-review/index.html` compares identical outlines
+- `/tmp/vectoreyes-local-corners-review/index.html` compares identical outlines
   reconstructed from cached region pixels: polyline evidence, previous fit and
   ownership, updated fit and ownership, and updated corner normalization. This
   is not a fresh source trace or a full-optimizer/corpus rerun.
@@ -1619,7 +1619,7 @@ was added.
 
 Independent spec and quality review approved the task without findings. The final
 frozen-code suite passes **721 tests**, with 949 existing warnings, in 104.96s.
-Evidence: `/tmp/vectormark-explicit-path-fitter-frozen-{pytest.log,junit.xml}`.
+Evidence: `/tmp/vectoreyes-explicit-path-fitter-frozen-{pytest.log,junit.xml}`.
 No corpus, reference, golden, deployed-server, or committed-branch changes were
 made. This is the fitting capability, not yet canonical version storage or replay.
 
@@ -1637,7 +1637,7 @@ one extracted JSON converter serves both core trace artifacts and MCP output.
 Source, returned-snapshot, public-dictionary, and sibling-version mutation checks
 pass without changing tracing or paint values. Independent review approved the
 task; the full suite passes **723 tests**, with 949 existing warnings, in 100.38s.
-Evidence: `/tmp/vectormark-retained-evidence-{pytest.log,junit.xml}`.
+Evidence: `/tmp/vectoreyes-retained-evidence-{pytest.log,junit.xml}`.
 Merged source-polyline retention is completed below; canonical recipe replay
 remains pending.
 
@@ -1657,7 +1657,7 @@ it with a new cache format, and ordinary public output remains compact. Missing
 source contours now fail explicitly instead of fabricating source evidence from
 a potentially fitted SVG. Independent spec/quality review approved the task.
 The full suite passes **740 tests**,949 existing warnings,96.90s; evidence:
-`/tmp/vectormark-root-path-evidence-{pytest.log,junit.xml}`. No corpus, references,
+`/tmp/vectoreyes-root-path-evidence-{pytest.log,junit.xml}`. No corpus, references,
 goldens, commits, or deployed server were changed. This is a replay prerequisite,
 not completion of canonical version storage or public recipe editing.
 
@@ -1677,7 +1677,7 @@ ownership at construction; fit diagnostics reuse the extracted existing freezer.
 No duplicate recipe-specific snapshot implementation was added. Reversible edits,
 source/sibling isolation, strict JSON reporting, and exact endpoints are covered.
 Final full suite: **756 passed**,949 existing warnings,99.22s. Evidence:
-`/tmp/vectormark-corner-recipe-round1-{pytest.log,junit.xml}`. Task13 spec and code
+`/tmp/vectoreyes-corner-recipe-round1-{pytest.log,junit.xml}`. Task13 spec and code
 quality are independently approved. Compatible artwork evidence caches were
 unavailable; this verifies deterministic fixtures, not a new corpus run.
 
@@ -1722,7 +1722,7 @@ Mutation, validation, JSON, and exact-value/SVG preservation checks pass.
 Independent spec and quality review approved the task with no Critical or
 Important findings. The final frozen-code suite passes **761 tests**,949 warnings,
 in107.97s; evidence:
-`/tmp/vectormark-canonical-ownership-{pytest.log,junit.xml}`. Eight known NumPy
+`/tmp/vectoreyes-canonical-ownership-{pytest.log,junit.xml}`. Eight known NumPy
 cross-product warnings in the focused gate remain tracked debt. No geometry,
 paint, topology, rendering, corpus, dependency, commit, or deployment change was
 made in this batch. This secures canonical values; it does not make them the
@@ -1955,7 +1955,7 @@ Approved target annotations remain evaluator-only in blind runs.
 
 [StarVector](https://arxiv.org/html/2312.11556v4) motivates evaluating primitive
 usage and compactness alongside appearance, and reports weaknesses in pixel-only
-quality ranking. For VectorMark, do not replace localized boundary/paint checks
+quality ranking. For vectorEyes, do not replace localized boundary/paint checks
 with a perceptual score: semantic resemblance cannot excuse a missing cutout or
 a misplaced shared endpoint. Likewise, do not require an exact target command
 sequence when equivalent editable geometry is valid.
@@ -2352,7 +2352,7 @@ deployment, server restart or corpus overwrite was performed for this cleanup.
 The earlier whole-group guards for scoped children and primitive sequences are
 now removed. Their root cause was an input-identity contract that hashed derived
 footprint encodings, including stale parent footprints. The new internal
-`vectormark.replay.input.v2` payload hashes typed region inputs, selected geometry,
+`vectoreyes.replay.input.v2` payload hashes typed region inputs, selected geometry,
 original source geometry, raster/coverage observations, fill, ordering, identity,
 and semantic diagnostics, but not a disposable footprint. Numeric proposal
 recording and canonical replay share that contract and its validation error.

@@ -4,15 +4,15 @@ import numpy as np
 import pytest
 
 from tests.test_fill_fit import _hramp, _solid
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
-from vectormark.fill_fit import fit_fill
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.fill_fit import fit_fill
 
 
 def test_disabled_gradients_are_a_forced_choice_not_supported_flat_evidence(monkeypatch):
     mask, rgb = _hramp(h=8, w=20)
     def forbidden(*args, **kwargs):
         raise AssertionError('disabled gradient search must not execute')
-    monkeypatch.setattr('vectormark.fill_fit._best_parametric', forbidden)
+    monkeypatch.setattr('vectoreyes.fill_fit._best_parametric', forbidden)
     result = fit_fill(mask, rgb, flat_hex='#123456', allow_gradients=False)
     assert result.fill == FlatFill('#123456')
     assert result.status == 'forced_flat'
@@ -55,7 +55,7 @@ def test_empty_support_does_not_claim_a_successful_fit():
 ])
 def test_failed_gradient_is_an_accountable_fallback(monkeypatch, candidate, reason):
     mask, rgb = _hramp(h=8, w=20)
-    monkeypatch.setattr('vectormark.fill_fit._best_parametric', lambda *args: candidate)
+    monkeypatch.setattr('vectoreyes.fill_fit._best_parametric', lambda *args: candidate)
     result = fit_fill(mask, rgb, flat_hex='#123456', max_gradient_de=.02)
     assert result.fill == FlatFill('#123456')
     assert result.status == 'fallback_flat'
@@ -78,7 +78,7 @@ def test_invalid_gradient_budget_cannot_approve_a_candidate(monkeypatch, limit):
     mask, rgb = _hramp(h=8, w=20)
     def forbidden(*args, **kwargs):
         raise AssertionError('invalid gradient budget must not trigger a search')
-    monkeypatch.setattr('vectormark.fill_fit._best_parametric', forbidden)
+    monkeypatch.setattr('vectoreyes.fill_fit._best_parametric', forbidden)
     result = fit_fill(mask, rgb, flat_hex='#123456', max_gradient_de=limit)
     assert result.status == 'fallback_flat'
     assert result.reason == 'invalid_gradient_budget'
@@ -87,7 +87,7 @@ def test_invalid_gradient_budget_cannot_approve_a_candidate(monkeypatch, limit):
 
 
 def test_canonical_paint_result_exposes_the_actual_selection():
-    from vectormark.paint_fitting import fit_source_paint
+    from vectoreyes.paint_fitting import fit_source_paint
     mask, rgb = _hramp(h=8, w=20)
     result = fit_source_paint(rgb, source_mask=mask, visible_mask=mask, allow_gradients=False)
     assert result.diagnostics['selection']['status'] == 'forced_flat'
@@ -96,7 +96,7 @@ def test_canonical_paint_result_exposes_the_actual_selection():
 
 def test_v0_root_retains_fill_selection_evidence():
     from tests.test_drawing_recipe_actions import _single_region_uri, _trace
-    from vectormark import mcp_server
+    from vectoreyes import mcp_server
     _, response = _trace(_single_region_uri())
     version = mcp_server._DRAWINGS.get_version(response['drawing_id'], response['version'])
     reported = {target['id']: target for target in response['outputs'][0]['report']['targets']}

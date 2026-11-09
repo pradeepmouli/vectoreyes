@@ -1,16 +1,21 @@
-# vectormark
+# vectorEyes
+
+![vectorEyes](src/vectoreyes/assets/vectoreyes-lockup.svg)
 
 > Deterministic logo idealizer — turn a *rendered* (raster) logo into a clean,
 > editable, symmetry and shape-preserving SVG.
 
 Where conventional tracers (`vtracer`, `potrace`, `autotrace`) chase pixel edges
-and emit anonymous `<path>` soup, **vectormark recognizes structure**: it
+and emit anonymous `<path>` soup, **vectorEyes recognizes structure**: it
 collapses anti-aliasing to a true palette, detects symmetry, and fits *ideal
 primitives* (`<ellipse>`, `<rect>`, regular polygons) to regions — falling back
 to fitted Bézier paths only where no primitive matches. The output SVG doubles as
 a human-editable parametric model.
 
 No model/LLM in the loop. Every stage is a known, deterministic algorithm.
+The Python package and command-line tool are both named `vectoreyes`.
+The MCP server command is `vectoreyes-mcp`; its tools use the `vectoreyes_`
+prefix. Saved refinement plans for this build use `vectoreyes.plan.v1`.
 
 ### Agent plugin
 
@@ -30,7 +35,7 @@ structured SVG with exact bilateral symmetry. See the design spec and plan:
 
 ```bash
 uv sync --extra dev
-uv run vectormark path/to/logo.png -o out.svg
+uv run vectoreyes path/to/logo.png -o out.svg
 uv run pytest
 ```
 
@@ -40,9 +45,9 @@ Explore the geometric design space in one shot — `idealize` swept across an
 `epsilon × max_error` grid:
 
 ```bash
-uv run vectormark logo.png --variants                       # 3×3 grid -> ./logo-variants/
-uv run vectormark logo.png --variants --out-dir ./looks/
-uv run vectormark logo.png --variants --epsilons 0.5,2,4 --max-errors 0.5,2
+uv run vectoreyes logo.png --variants                       # 3×3 grid -> ./logo-variants/
+uv run vectoreyes logo.png --variants --out-dir ./looks/
+uv run vectoreyes logo.png --variants --epsilons 0.5,2,4 --max-errors 0.5,2
 ```
 
 Add `--axes` to draw each detected symmetry axis over the contact-sheet tiles —
@@ -61,7 +66,7 @@ MCP integration is available for AI clients that can call local stdio servers
 uv sync --extra server --extra scoring
 npm --prefix integrations/mcp-app install
 npm --prefix integrations/mcp-app run build
-uv run vectormark-mcp
+uv run vectoreyes-mcp
 ```
 
 See [`docs/mcp.md`](docs/mcp.md) for client configuration and hosted app notes.

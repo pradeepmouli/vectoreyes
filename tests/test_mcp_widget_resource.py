@@ -1,6 +1,6 @@
 """The widget loader supports installed package data and editable checkouts."""
 
-from vectormark import mcp_server
+from vectoreyes import mcp_server
 
 
 def test_packaged_widget_takes_precedence_over_checkout(tmp_path, monkeypatch):

@@ -1,10 +1,10 @@
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape, _smooth_quadratic_path_d
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.passes.smooth import smooth_pass
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape, _smooth_quadratic_path_d
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.passes.smooth import smooth_pass
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 def test_smooth_pass_adjusts_quadratic_tangents_within_the_error_budget():
@@ -28,7 +28,7 @@ def test_smooth_pass_adjusts_quadratic_tangents_within_the_error_budget():
 
 
 def test_smooth_pass_skips_gradient_fills():
-    from vectormark.candidate import LinearGradientFill
+    from vectoreyes.candidate import LinearGradientFill
 
     shape = Shape("path", {"d": "M0 0 Q2 8 10 10 Q18 8 20 0 L0 0 Z"})
     region = RegionSample(

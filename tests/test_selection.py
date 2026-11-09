@@ -1,6 +1,6 @@
 import pytest
 
-from vectormark.selection import (
+from vectoreyes.selection import (
     ElementSelection, SelectionPolicy, validate_strategies,
     KNOWN_STRATEGIES, PRIMITIVE, PATH, SYMMETRIC,
 )
@@ -36,8 +36,8 @@ def test_validate_rejects_unknown_force_label_even_when_allow_none():
         validate_strategies(ElementSelection(force="blob"))
 
 
-from vectormark.candidate import Candidate, FlatFill
-from vectormark.fit import Shape
+from vectoreyes.candidate import Candidate, FlatFill
+from vectoreyes.fit import Shape
 
 
 def test_candidate_strategy_defaults_none_and_is_settable():
@@ -52,9 +52,9 @@ import warnings
 
 import numpy as np
 
-from vectormark.pipeline import Options
-from vectormark.types import Region
-from vectormark.selector import select_geometry, generate_geometry_candidates
+from vectoreyes.pipeline import Options
+from vectoreyes.types import Region
+from vectoreyes.selector import select_geometry, generate_geometry_candidates
 
 
 def _disk(cx, cy, r, h, w):

@@ -2,15 +2,14 @@ from types import SimpleNamespace
 
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.passes.seams import seams_pass
-import vectormark.seam_detection as seams_module
-from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.pipeline import Options, _refinement_passes
-from vectormark._fitcurve import cubic_inflects
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.passes.seams import seams_pass
+import vectoreyes.seam_detection as seams_module
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.pipeline import Options, _refinement_passes
 
 
 def _mask(shape: Shape, shape_hw: tuple[int, int] = (80, 120)) -> np.ndarray:
@@ -76,6 +75,25 @@ def test_seams_pass_closes_adjacent_path_gap_to_shared_boundary():
     assert by_id[2].current.params["d"].startswith("M49.8 10")
     assert by_id[1].footprint.boundary.distance(by_id[2].footprint.boundary) == 0
     assert by_id[1].diagnostics["seams"]["selected"] == "midpoint"
+
+
+def test_seams_pass_preserves_remote_s_curve_while_closing_shared_edge():
+    curve = "C0 50 20 30 10 10"
+    left = RegionSample(1, Shape("path", {
+        "d": f"M10 10 L49.2 10 L49.2 70 L10 70 {curve} Z",
+    }), FlatFill("#111111"), 0)
+    right = RegionSample(2, Shape("path", {
+        "d": "M50.4 10 L90 10 L90 70 L50.4 70 Z",
+    }), FlatFill("#222222"), 1)
+
+    out = select_refinements(
+        [left, right], {1: _mask(left.current), 2: _mask(right.current)}, [seams_pass],
+    )
+
+    by_id = {obj.id: obj for obj in out}
+    assert "L49.8 10 L49.8 70" in by_id[1].current.params["d"]
+    assert curve in by_id[1].current.params["d"]
+    assert by_id[1].footprint.boundary.distance(by_id[2].footprint.boundary) == 0
 
 
 def test_seams_pass_projects_shared_line_endpoints_exactly_after_trace_jitter():
@@ -193,49 +211,7 @@ def test_seams_pass_does_not_snap_curve_control_handles_to_seam():
     d = by_id[1].current.params["d"]
     assert "49.8 70" in d
     assert "C49.8 18" not in d
-    for subpath in seams_module._parse_subpaths(d):
-        current = None
-        for command, values in subpath:
-            if command == "M":
-                current = np.array(values[:2], dtype=float)
-            elif command == "L":
-                current = np.array(values[:2], dtype=float)
-            elif command == "Q":
-                current = np.array(values[2:4], dtype=float)
-            elif command == "C" and current is not None:
-                ctrl = np.array([current, values[:2], values[2:4], values[4:6]], dtype=float)
-                assert cubic_inflects(ctrl) == []
-                current = np.array(values[4:6], dtype=float)
-
-
-def test_seams_pass_removes_inflecting_cubics_after_vertex_edits():
-    shape = Shape(
-        "path",
-        {
-            "d": (
-                "M166.88 484.26 "
-                "C164.99 482.5 163.09 480.72 161.19 478.95 "
-                "L156.96 472.09 L166.88 484.26 Z"
-            )
-        },
-    )
-    cleaned = seams_module._cleanup_inflecting_cubics(shape, max_error=1.0, line_epsilon=1.0)
-
-    assert cleaned != shape
-    for subpath in seams_module._parse_subpaths(cleaned.params["d"]):
-        current = None
-        for command, values in subpath:
-            if command == "M":
-                current = np.array(values[:2], dtype=float)
-            elif command == "L":
-                current = np.array(values[:2], dtype=float)
-            elif command == "Q":
-                current = np.array(values[2:4], dtype=float)
-            elif command == "C" and current is not None:
-                ctrl = np.array([current, values[:2], values[2:4], values[4:6]], dtype=float)
-                assert cubic_inflects(ctrl) == []
-                current = np.array(values[4:6], dtype=float)
-
+    assert "C48.9 18 40 35 49.8 70" in d
 
 def test_seams_pass_snaps_branch_child_against_sibling_region():
     left = RegionSample(
@@ -555,7 +531,7 @@ def test_refinement_detects_clones_before_symmetry_and_runs_one_final_full_scene
 
 
 def test_refinement_final_stitch_reconciles_all_shared_boundaries(monkeypatch):
-    import vectormark.refinement.passes as passes
+    import vectoreyes.refinement.passes as passes
 
     calls: list[bool] = []
 

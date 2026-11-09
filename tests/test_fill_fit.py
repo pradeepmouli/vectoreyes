@@ -1,6 +1,6 @@
 import numpy as np
-from vectormark.fill_fit import fit_fill
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.fill_fit import fit_fill
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
 
 
 def _solid(h=40, w=40, color=(30, 120, 200)):

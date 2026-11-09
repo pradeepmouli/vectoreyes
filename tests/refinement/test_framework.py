@@ -1,12 +1,12 @@
 import numpy as np
 from typing import cast
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import ProposalIntent
-from vectormark.refinement.framework import Proposal as _Proposal, select_refinements
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import ProposalIntent
+from vectoreyes.refinement.framework import Proposal as _Proposal, select_refinements
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 def Proposal(*args, **kwargs):
@@ -54,7 +54,7 @@ def test_framework_explicit_zero_budget_rejects_nonidentical_policy_proposal():
     masks = {1: rasterize(obj.footprint, (20, 20))}
 
     def almost_same(os, ms):
-        from vectormark.quality import GeometryPolicy
+        from vectoreyes.quality import GeometryPolicy
         return [Proposal((1,), [_rect_obj(1, 9.9, 10)], GeometryPolicy(max_boundary_error_px=1.0))]
 
     out = select_refinements([obj], masks, [almost_same], budget=0.0)

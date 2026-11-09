@@ -2,7 +2,7 @@ from dataclasses import replace
 
 import pytest
 
-from vectormark.path_geometry import (
+from vectoreyes.path_geometry import (
     AffineTransform, ArcCommand, CornerAnchor, CubicCommand, LineCommand,
     MoveCommand, QuadraticCommand, geometry_from_svg_d,
 )
@@ -17,12 +17,12 @@ from vectormark.path_geometry import (
      CubicCommand('p.c1', (7, 22), (5, 24), (3, 26))),
 ])
 def test_transform_command_rotates_every_control_without_renaming(command, expected):
-    from vectormark.geometry_transforms import transform_command
+    from vectoreyes.geometry_transforms import transform_command
     assert transform_command(command, AffineTransform(0, 1, -1, 0, 10, 20)) == expected
 
 
 def test_reflection_moves_arc_axis_and_reverses_sweep():
-    from vectormark.geometry_transforms import transform_command
+    from vectoreyes.geometry_transforms import transform_command
     original = ArcCommand('p.c8', (5, 7), 8, 3, 30, True, False)
     result = transform_command(original, AffineTransform(-1, 0, 0, 1, 20, 0))
     assert result.end == (15, 7)
@@ -33,7 +33,7 @@ def test_reflection_moves_arc_axis_and_reverses_sweep():
 
 
 def test_path_transform_retains_sparse_ids_and_corner_annotations_without_rounding():
-    from vectormark.geometry_transforms import transform_path_geometry
+    from vectoreyes.geometry_transforms import transform_path_geometry
     path = geometry_from_svg_d('M0 0 Q2 0 4 0 L4 4 L0 4 Z', region_id='r1')
     commands = tuple(replace(command, id=f'r1.p0.c{index * 7}')
         for index, command in enumerate(path.path.commands))
@@ -48,8 +48,8 @@ def test_path_transform_retains_sparse_ids_and_corner_annotations_without_roundi
 
 
 def test_svg_projection_uses_the_same_numeric_command_transform(monkeypatch):
-    from vectormark import geometry_transforms
-    from vectormark.emit import transform_path_d
+    from vectoreyes import geometry_transforms
+    from vectoreyes.emit import transform_path_d
     seen = []
     execute = geometry_transforms.transform_command
     def record(command, transform):

@@ -3,17 +3,17 @@
 import numpy as np
 import pytest
 
-from vectormark.contour import region_contours
-from vectormark.drawing_actions import ActionSettings
-from vectormark.fit import fit_path
-from vectormark.path_geometry import PathGeometry, PathGeometryWithCutouts, parse_svg_paths
-from vectormark.path_topology import classify_filled_paths
+from vectoreyes.contour import region_contours
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.fit import fit_path
+from vectoreyes.path_geometry import PathGeometry, PathGeometryWithCutouts, parse_svg_paths
+from vectoreyes.path_topology import classify_filled_paths
 
 
 @pytest.mark.parametrize('strategy', ['quadratic', 'progressive', 'progressive_allow_lines'])
 @pytest.mark.parametrize('cutout', [False, True])
 def test_raster_path_kernel_preserves_fitter_geometry_and_contour_order(strategy, cutout):
-    from vectormark.path_fitting import fit_raster_paths
+    from vectoreyes.path_fitting import fit_raster_paths
     raster = np.zeros((20, 24), dtype=bool)
     raster[2:12, 3:13] = True
     raster[15:18, 18:22] = True
@@ -39,7 +39,7 @@ def test_raster_path_kernel_preserves_fitter_geometry_and_contour_order(strategy
 
 @pytest.mark.parametrize('raster', [np.zeros((0, 0), dtype=bool), np.zeros((8, 8), dtype=bool)])
 def test_raster_path_kernel_rejects_empty_evidence(raster):
-    from vectormark.path_fitting import fit_raster_paths
+    from vectoreyes.path_fitting import fit_raster_paths
     with pytest.raises(ValueError, match='empty drawing region'):
         fit_raster_paths(raster, region_id='r1',
             settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
@@ -47,7 +47,7 @@ def test_raster_path_kernel_rejects_empty_evidence(raster):
 
 @pytest.mark.parametrize('raster', [np.ones(8), np.ones((2, 3, 4))])
 def test_raster_path_kernel_rejects_nonplanar_evidence(raster):
-    from vectormark.path_fitting import fit_raster_paths
+    from vectoreyes.path_fitting import fit_raster_paths
     with pytest.raises(ValueError, match='two-dimensional'):
         fit_raster_paths(raster, region_id='r1',
             settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))

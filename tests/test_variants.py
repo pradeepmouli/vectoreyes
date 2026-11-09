@@ -5,11 +5,11 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-import vectormark.variants as V
-from vectormark.cli import main as cli_main
-from vectormark.pipeline import AxisLine, IdealizeReport
-from vectormark.score import SvgRendererUnavailable
-from vectormark.variants import (
+import vectoreyes.variants as V
+from vectoreyes.cli import main as cli_main
+from vectoreyes.pipeline import AxisLine, IdealizeReport
+from vectoreyes.score import SvgRendererUnavailable
+from vectoreyes.variants import (
     DEFAULT_EPSILONS, DEFAULT_MAX_ERRORS, Variant, _axis_line_svg, _inject_axes,
     generate_variants, write_variant_set,
 )
@@ -54,7 +54,7 @@ def test_generate_variants_captures_failed_cell(monkeypatch):
     # empty svg) without aborting the grid.
     def boom(*a, **k):
         raise RuntimeError("kaboom")
-    monkeypatch.setattr("vectormark.variants.idealize", boom)
+    monkeypatch.setattr("vectoreyes.variants.idealize", boom)
     variants = generate_variants(_mark(), epsilons=(0.5, 3.0), max_errors=(1.0,))
     assert len(variants) == 2
     assert all(v.error == "kaboom" and v.svg == "" for v in variants)

@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-import vectormark.fit as fit
-from vectormark.path_sampling import _parse_subpaths
+import vectoreyes.fit as fit
+from vectoreyes.path_sampling import _parse_subpaths
 
 
 def _sample_ring(points):

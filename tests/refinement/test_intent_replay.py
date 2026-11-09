@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from dataclasses import replace
 
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.refinement.automatic_replay import (
     AutomaticActionOutcome,
     CornerDiagnosticsObservation,
     ApplySeamConstraintsOperation,
@@ -26,10 +26,10 @@ from vectormark.refinement.automatic_replay import (
     input_revision,
     replay_batches,
 )
-from vectormark.refinement.passes.primitives import primitives_pass
-from vectormark.refinement.trace import trace_regions
-from vectormark.pipeline import Options
-from vectormark.path_geometry import CirclePrimitive, PrimitiveGeometry
+from vectoreyes.refinement.passes.primitives import primitives_pass
+from vectoreyes.refinement.trace import trace_regions
+from vectoreyes.pipeline import Options
+from vectoreyes.path_geometry import CirclePrimitive, PrimitiveGeometry
 
 
 def _assert_semantic_regions_equal(actual, expected):
@@ -68,8 +68,8 @@ def test_actual_refinement_records_and_replays_accepted_primitive_without_detect
     def fail_detector(*_args, **_kwargs):
         raise AssertionError("semantic primitive detection ran during replay")
 
-    monkeypatch.setattr("vectormark.refinement.passes.primitives.recognize_primitive_geometry", fail_detector)
-    monkeypatch.setattr("vectormark.primitive_fitting.recognize_primitive", fail_detector)
+    monkeypatch.setattr("vectoreyes.refinement.passes.primitives.recognize_primitive_geometry", fail_detector)
+    monkeypatch.setattr("vectoreyes.primitive_fitting.recognize_primitive", fail_detector)
     replayed = replay_batches(objects, result.batches, masks=masks)
 
     assert replayed[0].current == result.objects[0].current
@@ -93,9 +93,9 @@ def test_capture_rejects_an_accepted_geometry_proposal_without_concrete_intent()
 
 
 def test_rejected_proposal_has_typed_outcome_but_no_active_replay_operation():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample
 
     shape = Shape(
         "path",
@@ -119,9 +119,9 @@ def test_rejected_proposal_has_typed_outcome_but_no_active_replay_operation():
 
 
 def test_rejected_diagnostics_do_not_break_the_next_batch_input_identity():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample
 
     shape = Shape(
         "path",
@@ -137,9 +137,9 @@ def test_rejected_diagnostics_do_not_break_the_next_batch_input_identity():
 
 
 def test_semantic_diagnostic_sibling_remains_part_of_input_identity():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample
 
     shape = Shape("rect", {"x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0})
     first = RegionSample(
@@ -169,11 +169,11 @@ def test_semantic_diagnostic_sibling_remains_part_of_input_identity():
 
 
 def test_clone_intent_replays_source_identity_transform_and_independent_paint(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.clones import clones_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.clones import clones_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     def square(obj_id, x, fill):
         shape = Shape("path", {"d": f"M{x} 10 L{x + 12} 10 L{x + 12} 22 L{x} 22 Z"})
@@ -187,7 +187,7 @@ def test_clone_intent_replays_source_identity_transform_and_independent_paint(mo
     assert result.objects[1].current.params["href_obj_id"] == source.id
 
     monkeypatch.setattr(
-        "vectormark.clone_detection._best_transform",
+        "vectoreyes.clone_detection._best_transform",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("clone detection ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)
@@ -197,11 +197,11 @@ def test_clone_intent_replays_source_identity_transform_and_independent_paint(mo
 
 
 def test_accepted_operation_preserves_external_masks_for_the_next_batch(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.clones import clones_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.clones import clones_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     def square(obj_id, x, fill):
         shape = Shape("path", {"d": f"M{x} 10 L{x + 12} 10 L{x + 12} 22 L{x} 22 Z"})
@@ -220,7 +220,7 @@ def test_accepted_operation_preserves_external_masks_for_the_next_batch(monkeypa
     ] == [["AssignCloneOperation"], []]
 
     monkeypatch.setattr(
-        "vectormark.clone_detection._best_transform",
+        "vectoreyes.clone_detection._best_transform",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("clone detection ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)
@@ -228,16 +228,16 @@ def test_accepted_operation_preserves_external_masks_for_the_next_batch(monkeypa
 
 
 def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
-    from vectormark.candidate import FlatFill
-    from vectormark.drawing import DrawingRegion
-    from vectormark.fit import Shape
-    from vectormark.refinement.framework import Proposal
-    from vectormark.refinement.gate import rasterize
-    from vectormark.drawing_adapter import publish_selected_leaf
-    from vectormark.drawing_adapter import bind_region_inputs
-    from vectormark.refinement.automatic_replay import apply_relationship_choice
-    from vectormark.drawing_adapter import transform_working_shape
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.drawing import DrawingRegion
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.framework import Proposal
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.drawing_adapter import publish_selected_leaf
+    from vectoreyes.drawing_adapter import bind_region_inputs
+    from vectoreyes.refinement.automatic_replay import apply_relationship_choice
+    from vectoreyes.drawing_adapter import transform_working_shape
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     points = [
         (10.0 + 10.0 * np.cos(theta), 10.0 + 10.0 * np.sin(theta))
@@ -292,10 +292,10 @@ def test_same_pass_reads_resolve_against_the_recorded_input_snapshot():
 
 
 def test_topology_normalization_replays_disconnected_named_children(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.passes.compound import split_compound_pass
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.passes.compound import split_compound_pass
+    from vectoreyes.refinement.region_sample import RegionSample
 
     d = "M0 0 L8 0 L8 8 L0 8 Z M12 0 L20 0 L20 8 L12 8 Z"
     source = RegionSample.from_shape(
@@ -324,7 +324,7 @@ def test_topology_normalization_replays_disconnected_named_children(monkeypatch)
     }
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.compound.split_compound_pass",
+        "vectoreyes.refinement.passes.compound.split_compound_pass",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("compound detection ran")),
     )
     replayed = replay_batches([source], result.batches)
@@ -356,12 +356,12 @@ def test_topology_normalization_replays_disconnected_named_children(monkeypatch)
 
 
 def test_linelet_simplify_and_smooth_replay_their_recorded_settings(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.simplify import simplify_pass
-    from vectormark.refinement.passes.smooth import smooth_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.simplify import simplify_pass
+    from vectoreyes.refinement.passes.smooth import smooth_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     simplify_d = (
         "M247 417.5 Q241.23 417.72 237.5 413 "
@@ -389,7 +389,7 @@ def test_linelet_simplify_and_smooth_replay_their_recorded_settings(monkeypatch)
     assert simplify_action.max_boundary_error == 1.0
     assert simplify_result.objects[0].current.params["d"] != simplify_d
     monkeypatch.setattr(
-        "vectormark.refinement.passes.simplify.simplify_pass",
+        "vectoreyes.refinement.passes.simplify.simplify_pass",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("simplify pass ran")),
     )
     _assert_semantic_regions_equal(
@@ -418,7 +418,7 @@ def test_linelet_simplify_and_smooth_replay_their_recorded_settings(monkeypatch)
     assert smooth_action.max_boundary_error == 1.1
     assert smooth_result.objects[0].current.params["d"] != smooth_shape.params["d"]
     monkeypatch.setattr(
-        "vectormark.refinement.passes.smooth.smooth_pass",
+        "vectoreyes.refinement.passes.smooth.smooth_pass",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("smooth pass ran")),
     )
     _assert_semantic_regions_equal(
@@ -432,11 +432,11 @@ def test_linelet_simplify_and_smooth_replay_their_recorded_settings(monkeypatch)
 
 @pytest.fixture
 def captured_corner_normalization():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.refinement.passes.corners import corner_normalize_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.refinement.passes.corners import corner_normalize_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     d = "M0 0 L10 0 Q12 0 13 1 Q14 2 14 4 L0 12 Z"
     declaration = path_corner_diagnostics(
@@ -474,7 +474,7 @@ def test_enabled_corner_normalization_replays_recorded_prefit_declaration(
     assert corner_action.declaration is not None
     assert result.objects[0].current.params["d"] != d
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
     replayed = replay_batches([source], result.batches, masks={source.id: mask})
@@ -502,7 +502,7 @@ def test_corner_operation_rejects_missing_or_stale_declaration_before_detection(
     )
     stale_batches = (replace(batch, entries=(stale_record,)), *result.batches[1:])
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
 
@@ -526,10 +526,10 @@ def test_corner_operation_rejects_missing_or_stale_declaration_before_detection(
 def test_enabled_corner_without_retained_declaration_is_observation_only(
     monkeypatch, retained_corners
 ):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.passes.corners import corner_normalize_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.passes.corners import corner_normalize_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     shape = Shape("path", {"d": "M0 0 L10 0 Q12 0 13 1 Q14 2 14 4 L0 12 Z"})
     source = RegionSample(
@@ -568,7 +568,7 @@ def test_enabled_corner_without_retained_declaration_is_observation_only(
     ]
 
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
     replayed = replay_batches([source], result.batches, masks=masks)
@@ -576,11 +576,11 @@ def test_enabled_corner_without_retained_declaration_is_observation_only(
 
 
 def test_authoritative_empty_corner_declaration_replays_without_redetection(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.refinement.passes.corners import corner_normalize_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.refinement.passes.corners import corner_normalize_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
     shape = Shape("path", {"d": "M0 0 L12 0 L12 12 L0 12 Z"})
     declaration = path_corner_diagnostics(shape.params["d"])
@@ -604,7 +604,7 @@ def test_authoritative_empty_corner_declaration_replays_without_redetection(monk
     assert action.declaration is not None
 
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("corner detection ran")),
     )
     replayed = replay_batches([source], result.batches, masks=masks)
@@ -612,7 +612,7 @@ def test_authoritative_empty_corner_declaration_replays_without_redetection(monk
 
 
 def test_occlusion_replays_completed_sources_and_lens_dependency_without_detection(monkeypatch):
-    from vectormark.refinement.passes.occlusion import occlusion_pass
+    from vectoreyes.refinement.passes.occlusion import occlusion_pass
 
     height, width, gap, radius = 240, 360, 58, 104
     yy, xx = np.ogrid[:height, :width]
@@ -638,7 +638,7 @@ def test_occlusion_replays_completed_sources_and_lens_dependency_without_detecti
     assert all(not hasattr(child, "d") for child in action.children)
 
     monkeypatch.setattr(
-        "vectormark.occlusion_detection.reconstruct_scene",
+        "vectoreyes.occlusion_detection.reconstruct_scene",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("occlusion detection ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)
@@ -647,7 +647,7 @@ def test_occlusion_replays_completed_sources_and_lens_dependency_without_detecti
 
 
 def test_occlusion_replay_rejects_absent_forward_and_cyclic_child_dependencies():
-    from vectormark.refinement.passes.occlusion import occlusion_pass
+    from vectoreyes.refinement.passes.occlusion import occlusion_pass
 
     height, width, gap, radius = 240, 360, 58, 104
     yy, xx = np.ogrid[:height, :width]
@@ -694,12 +694,12 @@ def test_occlusion_replay_rejects_absent_forward_and_cyclic_child_dependencies()
 
 
 def test_stitch_replays_axis_cluster_and_pathops_constraints_without_discovery(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.seams import seams_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
-    from vectormark.skia_geometry import SkPath
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.seams import seams_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.skia_geometry import SkPath
 
     def region(obj_id, d, z=0):
         shape = Shape("path", {"d": d})
@@ -786,11 +786,11 @@ def test_stitch_replays_axis_cluster_and_pathops_constraints_without_discovery(m
     assert top_receipt.commands
 
     monkeypatch.setattr(
-        "vectormark.seam_detection._candidate_for_pair",
+        "vectoreyes.seam_detection._candidate_for_pair",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("seam pair discovery ran")),
     )
     monkeypatch.setattr(
-        "vectormark.seam_detection._cluster_leaf_vertices",
+        "vectoreyes.seam_detection._cluster_leaf_vertices",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("seam cluster discovery ran")),
     )
     _assert_semantic_regions_equal(
@@ -807,10 +807,9 @@ def test_stitch_replays_axis_cluster_and_pathops_constraints_without_discovery(m
 
 
 def test_seam_correspondence_retains_unaffected_commands_but_not_replaced_cubic():
-    from vectormark.fit import Shape
-    from vectormark.refinement.automatic_replay import PassInputRegionRef
-    from vectormark.drawing_seams import (
-        _cleanup_inflecting_cubics,
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.automatic_replay import PassInputRegionRef
+    from vectoreyes.drawing_seams import (
         _path_correspondence,
     )
 
@@ -824,9 +823,12 @@ def test_seam_correspondence_retains_unaffected_commands_but_not_replaced_cubic(
             )
         },
     )
-    after = _cleanup_inflecting_cubics(
-        before, max_error=1.0, line_epsilon=1.0
-    )
+    # An explicit curve replacement invalidates only that command's binding;
+    # seam execution itself no longer refits inflecting cubics.
+    after = Shape("path", {"d": (
+        "M166.88 484.26 Q164.99 482.5 161.19 478.95 "
+        "L156.96 472.09 L166.88 484.26 Z"
+    )})
     (receipt,) = _path_correspondence(
         PassInputRegionRef("", "", (1,)),
         before,
@@ -841,12 +843,12 @@ def test_seam_correspondence_retains_unaffected_commands_but_not_replaced_cubic(
 
 
 def test_symmetry_modes_replay_exact_axis_winner_without_candidate_selection(monkeypatch):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.skia_geometry import SkPath
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.symmetry import symmetry_pass
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.skia_geometry import SkPath
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.symmetry import symmetry_pass
+    from vectoreyes.refinement.region_sample import RegionSample
 
     def path_region(obj_id, polygon):
         coords = list(polygon.exterior.coords)
@@ -899,18 +901,18 @@ def test_symmetry_modes_replay_exact_axis_winner_without_candidate_selection(mon
     )
     self_action = self_result.batches[0].operations[0].intent.action
     assert isinstance(self_action, ReconstructSelfSymmetryOperation)
-    assert self_action.fit_kind in {"ellipse_cap", "symmetric_half", "path_half", "geometry_path"}
+    assert self_action.side in {'positive', 'negative'}
 
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._best_self_reconstruction",
+        "vectoreyes.symmetry_detection._best_self_reconstruction",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("self selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._best_self_axis",
+        "vectoreyes.symmetry_detection._best_self_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("axis selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._mirror_pair_axis",
+        "vectoreyes.symmetry_detection._mirror_pair_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("pair selection ran")),
     )
     _assert_semantic_regions_equal(
@@ -963,15 +965,15 @@ def test_symmetry_modes_replay_exact_axis_winner_without_candidate_selection(mon
         ("path_half", "retained_path"),
     ],
 )
-def test_each_self_symmetry_winner_replays_only_its_recorded_fitter(
+def test_each_self_symmetry_winner_replays_retained_side_without_fitting(
     monkeypatch, expected_kind, source_kind
 ):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.symmetry import symmetry_pass
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
-    from vectormark.skia_geometry import SkPath
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.symmetry import symmetry_pass
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.skia_geometry import SkPath
 
     if source_kind == "ellipse32":
         angles = np.linspace(0.0, 2.0 * np.pi, 32, endpoint=False)
@@ -1022,15 +1024,16 @@ def test_each_self_symmetry_winner_replays_only_its_recorded_fitter(
     result = select_refinements_with_intent([source], masks, [configured])
     action = result.batches[0].operations[0].intent.action
     assert isinstance(action, ReconstructSelfSymmetryOperation)
-    assert action.fit_kind == expected_kind
-    assert action.cubic is True
+    assert action.side in {'positive', 'negative'}
+    assert not hasattr(action, 'fit_kind')
+    assert not hasattr(action, 'cubic')
 
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._best_self_reconstruction",
+        "vectoreyes.symmetry_detection._best_self_reconstruction",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("winner selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._best_self_axis",
+        "vectoreyes.symmetry_detection._best_self_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("axis selection ran")),
     )
     replayed = replay_batches([source], result.batches, masks=masks)
@@ -1041,13 +1044,13 @@ def test_each_self_symmetry_winner_replays_only_its_recorded_fitter(
 def test_recursive_intent_commits_or_rolls_back_as_one_outer_clone_transaction(
     reject_outer, monkeypatch
 ):
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.passes.symmetry import symmetry_pass
-    from vectormark.drawing_adapter import transform_working_shape
-    from vectormark.refinement.region_sample import RegionSample, to_polygon
-    from vectormark.skia_geometry import SkPath
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.passes.symmetry import symmetry_pass
+    from vectoreyes.drawing_adapter import transform_working_shape
+    from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+    from vectoreyes.skia_geometry import SkPath
 
     angles = np.linspace(0.0, 2.0 * np.pi, 32, endpoint=False)
     source_footprint = SkPath(shell=[
@@ -1114,11 +1117,11 @@ def test_recursive_intent_commits_or_rolls_back_as_one_outer_clone_transaction(
         assert result.objects[1].current.params["href_region_path"] == (10, 11)
 
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._best_self_reconstruction",
+        "vectoreyes.symmetry_detection._best_self_reconstruction",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("recursive selection ran")),
     )
     monkeypatch.setattr(
-        "vectormark.symmetry_detection._best_self_axis",
+        "vectoreyes.symmetry_detection._best_self_axis",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("recursive axis ran")),
     )
     replayed = replay_batches(objects, result.batches, masks=masks)

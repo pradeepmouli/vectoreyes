@@ -22,8 +22,8 @@
 
 ## File Structure
 
-- `src/vectormark/symmetry.py` — add `Axis2D`, `_perimeter`, `reflection_off_count`, `region_is_self_symmetric`, `regions_mirror_pair`, `propose_axes`, `cluster_axes`, `detect_symmetry_groups`. Reuse existing `_axis_mismatch`.
-- `src/vectormark/pipeline.py` — rewire the symmetry block of `_render_body`; extend diagnostics to report all axes.
+- `src/vectoreyes/symmetry.py` — add `Axis2D`, `_perimeter`, `reflection_off_count`, `region_is_self_symmetric`, `regions_mirror_pair`, `propose_axes`, `cluster_axes`, `detect_symmetry_groups`. Reuse existing `_axis_mismatch`.
+- `src/vectoreyes/pipeline.py` — rewire the symmetry block of `_render_body`; extend diagnostics to report all axes.
 - `tests/test_symmetry_regions.py` (new) — unit tests for every helper + the entry point.
 - `tests/test_symmetry_corpus_regression.py` (new) — the byte + diagnostic baseline/diff gate.
 - `scratch/sym_baseline.py` (new, NOT committed) — one-off baseline capture script.
@@ -33,7 +33,7 @@
 ### Task 1: `Axis2D` + resampling-free reflection off-count
 
 **Files:**
-- Modify: `src/vectormark/symmetry.py`
+- Modify: `src/vectoreyes/symmetry.py`
 - Test: `tests/test_symmetry_regions.py` (create)
 
 **Interfaces:**
@@ -47,7 +47,7 @@
 
 ```python
 import numpy as np
-from vectormark.symmetry import Axis2D, _perimeter, reflection_off_count
+from vectoreyes.symmetry import Axis2D, _perimeter, reflection_off_count
 from scipy import ndimage as ndi
 
 def _disk(h, w, cy, cx, r):
@@ -84,7 +84,7 @@ Expected: FAIL — `ImportError: cannot import name 'Axis2D'`.
 
 - [ ] **Step 3: Implement**
 
-Add to `src/vectormark/symmetry.py` (near the existing `_axis_mismatch`):
+Add to `src/vectoreyes/symmetry.py` (near the existing `_axis_mismatch`):
 
 ```python
 from collections import namedtuple
@@ -124,7 +124,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/symmetry.py tests/test_symmetry_regions.py
+git add src/vectoreyes/symmetry.py tests/test_symmetry_regions.py
 git commit -m "feat(symmetry): Axis2D + resampling-free reflection off-count
 
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
@@ -135,7 +135,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 ### Task 2: Absolute self-symmetry + mirror-pair tests
 
 **Files:**
-- Modify: `src/vectormark/symmetry.py`
+- Modify: `src/vectoreyes/symmetry.py`
 - Test: `tests/test_symmetry_regions.py` (extend)
 
 **Interfaces:**
@@ -148,8 +148,8 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 - [ ] **Step 1: Write the failing test**
 
 ```python
-from vectormark.symmetry import region_is_self_symmetric, regions_mirror_pair, Axis2D, K_BAND
-from vectormark.types import Region
+from vectoreyes.symmetry import region_is_self_symmetric, regions_mirror_pair, Axis2D, K_BAND
+from vectoreyes.types import Region
 
 def _region(mask, label=1):
     return Region(label=label, mask=mask, color_hex="#000000")
@@ -213,7 +213,7 @@ def regions_mirror_pair(a, b, axis: Axis2D) -> bool:
 ### Task 3: Axis proposals from regions (self-axes + pair bisectors)
 
 **Files:**
-- Modify: `src/vectormark/symmetry.py`
+- Modify: `src/vectoreyes/symmetry.py`
 - Test: `tests/test_symmetry_regions.py` (extend)
 
 **Interfaces:**
@@ -228,7 +228,7 @@ def regions_mirror_pair(a, b, axis: Axis2D) -> bool:
 - [ ] **Step 1: Write the failing test**
 
 ```python
-from vectormark.symmetry import propose_axes
+from vectoreyes.symmetry import propose_axes
 
 def test_propose_axes_finds_vertical_for_centered_symmetric_region():
     m = _disk(100, 120, 50, 60, 30)                    # centered disk
@@ -297,7 +297,7 @@ def propose_axes(regions, *, theta_steps: int = 12):
 ### Task 4: Cluster proposals into axes
 
 **Files:**
-- Modify: `src/vectormark/symmetry.py`
+- Modify: `src/vectoreyes/symmetry.py`
 - Test: `tests/test_symmetry_regions.py` (extend)
 
 **Interfaces:**
@@ -308,7 +308,7 @@ def propose_axes(regions, *, theta_steps: int = 12):
 - [ ] **Step 1: Write the failing test**
 
 ```python
-from vectormark.symmetry import cluster_axes, AxisProposal, Axis2D
+from vectoreyes.symmetry import cluster_axes, AxisProposal, Axis2D
 
 def test_cluster_merges_near_duplicates_and_ranks_by_weight():
     props = [
@@ -365,7 +365,7 @@ def cluster_axes(proposals, *, d_theta: float = 0.09, d_offset: float = 2.0, min
 ### Task 5: `detect_symmetry_groups` entry point
 
 **Files:**
-- Modify: `src/vectormark/symmetry.py`
+- Modify: `src/vectoreyes/symmetry.py`
 - Test: `tests/test_symmetry_regions.py` (extend)
 
 **Interfaces:**
@@ -382,7 +382,7 @@ def cluster_axes(proposals, *, d_theta: float = 0.09, d_offset: float = 2.0, min
 - [ ] **Step 1: Write the failing test**
 
 ```python
-from vectormark.symmetry import detect_symmetry_groups
+from vectoreyes.symmetry import detect_symmetry_groups
 
 def test_radish_plus_text_isolates_symmetric_subset():
     # 3 centered symmetric bands (radish) + 1 off-center asymmetric blob (text)
@@ -466,7 +466,7 @@ def detect_symmetry_groups(regions):
 ### Task 6: Wire `detect_symmetry_groups` into `_render_body`
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py` (the symmetry block of `_render_body`, ~lines 246–284, and `IdealizeReport` axis diagnostics)
+- Modify: `src/vectoreyes/pipeline.py` (the symmetry block of `_render_body`, ~lines 246–284, and `IdealizeReport` axis diagnostics)
 - Test: `tests/test_symmetry_regions.py` (extend with an end-to-end idealize assertion)
 
 **Interfaces:**
@@ -496,7 +496,7 @@ import numpy as np
 from PIL import Image
 from shapely.geometry import Polygon
 from shapely.affinity import scale as shp_scale
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 
 def _sym_iou_of_largest_body(svg, axis_x):
     ds = re.findall(r'<path[^>]*\bd="([^"]*)"', svg)
@@ -544,7 +544,7 @@ Add `tests/_symhelp.py` with `sym_iou_largest(svg, axis_x)` (flatten paths to po
 import hashlib, json, numpy as np
 from pathlib import Path
 from PIL import Image
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 
 CORPUS = Path("scratch/real-logos")
 BASE = json.loads(Path("tests/fixtures/sym_baseline.json").read_text())

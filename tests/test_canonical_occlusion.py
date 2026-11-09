@@ -1,16 +1,16 @@
 import numpy as np
 import pytest
 
-from vectormark.geometry_native import region_path
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.geometry_native import region_path
+from vectoreyes.refinement.automatic_replay import (
     AnnulusPrimitive, CompletedOcclusionPrimitive, IntersectionLens,
     PassInputRegionRef, ReconstructOcclusionOperation, RetainedOcclusionSource,
 )
-from vectormark.path_geometry import CirclePrimitive, PathGeometryWithCutouts, PrimitiveGeometry
+from vectoreyes.path_geometry import CirclePrimitive, PathGeometryWithCutouts, PrimitiveGeometry
 
 
 def test_canonical_occlusion_builds_completed_circles_and_dependent_lens():
-    from vectormark.drawing_occlusion import OcclusionSource, reconstruct_occlusion
+    from vectoreyes.drawing_occlusion import OcclusionSource, reconstruct_occlusion
 
     left, right = PassInputRegionRef('', '', (1,)), PassInputRegionRef('', '', (2,))
     action = ReconstructOcclusionOperation((left, right), 1, 4, (24, 24), (
@@ -32,7 +32,7 @@ def test_canonical_occlusion_builds_completed_circles_and_dependent_lens():
 
 
 def test_canonical_occlusion_annulus_retains_real_cutout_geometry():
-    from vectormark.drawing_occlusion import OcclusionSource, reconstruct_occlusion
+    from vectoreyes.drawing_occlusion import OcclusionSource, reconstruct_occlusion
 
     ref = PassInputRegionRef('', '', (1,))
     action = ReconstructOcclusionOperation((ref,), 1, 0, (32, 32), (
@@ -46,7 +46,7 @@ def test_canonical_occlusion_annulus_retains_real_cutout_geometry():
 
 
 def test_canonical_occlusion_rejects_missing_child_dependency_before_source_lookup():
-    from vectormark.drawing_occlusion import reconstruct_occlusion
+    from vectoreyes.drawing_occlusion import reconstruct_occlusion
 
     ref = PassInputRegionRef('', '', (1,))
     action = ReconstructOcclusionOperation((ref,), 1, 0, (16, 16), (
@@ -57,7 +57,7 @@ def test_canonical_occlusion_rejects_missing_child_dependency_before_source_look
 
 
 def test_canonical_occlusion_retained_source_keeps_disconnected_components():
-    from vectormark.drawing_occlusion import OcclusionSource, reconstruct_occlusion
+    from vectoreyes.drawing_occlusion import OcclusionSource, reconstruct_occlusion
 
     mask = np.zeros((24, 24), bool)
     mask[2:6, 2:6] = True
@@ -74,11 +74,11 @@ def test_canonical_occlusion_retained_source_keeps_disconnected_components():
 
 
 def test_automatic_occlusion_publication_keeps_annulus_as_editable_cutout():
-    from vectormark.candidate import FlatFill
-    from vectormark.drawing_adapter import drawing_from_region_samples
-    from vectormark.fit import Shape
-    from vectormark.refinement.automatic_replay import apply_occlusion_choice
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.automatic_replay import apply_occlusion_choice
+    from vectoreyes.refinement.region_sample import RegionSample
 
     ref = PassInputRegionRef('', '', (1,))
     source = RegionSample(1, Shape('circle', {'cx': 16, 'cy': 16, 'r': 10}),
@@ -97,7 +97,7 @@ def test_automatic_occlusion_publication_keeps_annulus_as_editable_cutout():
 def test_generated_occlusion_diagnostics_remain_structured_in_report():
     import json
     from types import MappingProxyType
-    from vectormark.pipeline import _to_json_safe
+    from vectoreyes.pipeline import _to_json_safe
 
     diagnostics = MappingProxyType({'occlusion': MappingProxyType({
         'reconstructed_child': True, 'consumed_ids': (1, 2, 3),
@@ -111,12 +111,12 @@ def test_generated_occlusion_diagnostics_remain_structured_in_report():
 
 
 def test_occlusion_replay_accepts_named_output_with_scoped_ancestry():
-    from vectormark.candidate import FlatFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.automatic_replay import (
+    from vectoreyes.candidate import FlatFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.automatic_replay import (
         OperationOutputRegionRef, apply_occlusion_choice,
     )
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.refinement.region_sample import RegionSample
 
     ref = OperationOutputRegionRef('earlier', 'leaf', (7,))
     source = RegionSample(7, Shape('circle', {'cx': 8, 'cy': 8, 'r': 5}),

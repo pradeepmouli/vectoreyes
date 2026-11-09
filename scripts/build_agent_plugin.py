@@ -1,4 +1,4 @@
-"""Build both host adapters from VectorMark's canonical packaged skills."""
+"""Build both host adapters from vectorEyes's canonical packaged skills."""
 from __future__ import annotations
 
 import argparse
@@ -32,8 +32,8 @@ def bundle_files(endpoint: str | None) -> dict[str, bytes]:
         portable = {"type": "streamable-http", "url": endpoint}
         compatibility = {"type": "http", "url": endpoint}
     else:
-        portable = {"type": "stdio", "command": "vectormark-mcp", "args": [],
-                    "env": {"VECTORMARK_MCP_TRANSPORT": "stdio"}}
+        portable = {"type": "stdio", "command": "vectoreyes-mcp", "args": [],
+                    "env": {"VECTOREYES_MCP_TRANSPORT": "stdio"}}
         compatibility = dict(portable)
     files = {
         "plugin.json": json_bytes(manifest),
@@ -41,12 +41,12 @@ def bundle_files(endpoint: str | None) -> dict[str, bytes]:
         ".codex-plugin/plugin.json": json_bytes({**identity, "skills": "./skills/", "mcpServers": "./.mcp.json",
                                                  "interface": manifest["extensions"]["com.openai"]["interface"]}),
         "mcp.json": json_bytes({"$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-                                 "mcpServers": {"vectormark": portable}}),
-        ".mcp.json": json_bytes({"mcpServers": {"vectormark": compatibility}}),
+                                 "mcpServers": {"vectoreyes": portable}}),
+        ".mcp.json": json_bytes({"mcpServers": {"vectoreyes": compatibility}}),
         "README.md": (ROOT / "docs/plugins.md").read_bytes(),
         "LICENSE": (ROOT / "LICENSE").read_bytes(),
     }
-    skills = ROOT / "src/vectormark/assets/skills"
+    skills = ROOT / "src/vectoreyes/assets/skills"
     for path in sorted(skills.rglob("*")):
         if path.is_symlink():
             raise ValueError(f"Plugin resources must not be symlinks: {path}")

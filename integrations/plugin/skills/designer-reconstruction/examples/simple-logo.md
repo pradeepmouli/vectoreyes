@@ -5,7 +5,7 @@ ribbon. The circle should be round, the ribbon has intentional corner points,
 and one smooth side should be one quadratic. These are observations to verify
 against the actual source, not defaults to apply to every logo.
 
-1. Submit `trace_drawing` with the attached ImageRef and
+1. Submit `vectoreyes_trace_drawing` with the attached ImageRef and
    `{"refine":"auto","max_sampling_colors":4,"fit_strategy":"progressive_allow_lines"}`.
    Inspect v0 and the returned pass revisions; use whichever preserves the intended silhouette better.
 2. Read the selected version's region map. Assume the circle is `r1` and ribbon is `r2` there.
@@ -23,7 +23,7 @@ against the actual source, not defaults to apply to every logo.
    its shape mismatches the source or exceeds the action's error tolerance.
    A more complex side may require `strategy="progressive"` instead of a forced
    single command; do not simply loosen tolerance until a bad shape passes.
-5. Retrieve the accepted SVG with `get_drawing_artifact` and return it with the
+5. Retrieve the accepted SVG with `vectoreyes_get_drawing_artifact` and return it with the
    retained version. Describe any unresolved limitation.
 
 The plans are schema-valid examples, not a recorded execution: live IDs,

@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from vectormark.drawing import DrawingRegion
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.drawing import DrawingRegion
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
 def region():
@@ -12,7 +12,7 @@ def region():
 
 
 def test_region_paint_fits_source_without_changing_geometry():
-    from vectormark.paint_fitting import fit_region_paint
+    from vectoreyes.paint_fitting import fit_region_paint
     original = region()
     rgb = np.full((10, 10, 3), (20, 100, 240), dtype=np.uint8)
     mask = np.ones((10, 10), dtype=bool)
@@ -30,7 +30,7 @@ def test_region_paint_fits_source_without_changing_geometry():
 
 
 def test_region_paint_falls_back_to_visible_pixels_when_source_no_longer_overlaps():
-    from vectormark.paint_fitting import fit_region_paint
+    from vectoreyes.paint_fitting import fit_region_paint
     rgb = np.full((10, 10, 3), (240, 30, 20), dtype=np.uint8)
     updated = fit_region_paint(region(), rgb, source_mask=np.zeros((10, 10), dtype=bool),
         visible_mask=np.ones((10, 10), dtype=bool), allow_gradients=False)
@@ -39,7 +39,7 @@ def test_region_paint_falls_back_to_visible_pixels_when_source_no_longer_overlap
 
 
 def test_region_paint_retains_thin_source_details_without_erosion():
-    from vectormark.paint_fitting import fit_region_paint
+    from vectoreyes.paint_fitting import fit_region_paint
     source = np.zeros((10, 10), dtype=bool)
     source[4] = True
     updated = fit_region_paint(region(), np.zeros((10, 10, 3), dtype=np.uint8),
@@ -49,18 +49,18 @@ def test_region_paint_retains_thin_source_details_without_erosion():
 
 
 def test_region_paint_rejects_wrong_visible_canvas():
-    from vectormark.paint_fitting import fit_region_paint
+    from vectoreyes.paint_fitting import fit_region_paint
     with pytest.raises(ValueError, match='visible mask.*RGB canvas'):
         fit_region_paint(region(), np.zeros((10, 10, 3), dtype=np.uint8),
             source_mask=np.ones((10, 10), dtype=bool), visible_mask=np.ones((8, 8), dtype=bool))
 
 
 def test_working_refill_routes_only_invalidated_leaf_to_canonical_paint(monkeypatch):
-    from vectormark import paint_fitting
-    from vectormark.candidate import FlatFill as WorkingFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample
-    from vectormark.refinement.paint_binding import refill_regions
+    from vectoreyes import paint_fitting
+    from vectoreyes.candidate import FlatFill as WorkingFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample
+    from vectoreyes.refinement.paint_binding import refill_regions
     source = np.ones((10, 10), dtype=bool)
     first = RegionSample.from_shape(id=1, drawing_id='r1', shape=Shape('rect', dict(x=0, y=0, w=4, h=4)),
         fill=None, z=0, raster=source)
@@ -79,7 +79,7 @@ def test_working_refill_routes_only_invalidated_leaf_to_canonical_paint(monkeypa
 
 
 def test_source_paint_result_is_geometry_independent_and_immutable():
-    from vectormark.paint_fitting import fit_source_paint
+    from vectoreyes.paint_fitting import fit_source_paint
     mask = np.ones((4, 4), dtype=bool)
     result = fit_source_paint(np.full((4, 4, 3), 123, dtype=np.uint8),
         source_mask=mask, visible_mask=mask, allow_gradients=False)

@@ -1,7 +1,7 @@
 from dataclasses import asdict as _trace_options
-from vectormark.drawing_render import trace_summary as _canonical_trace
-from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
-from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
+from vectoreyes.drawing_render import trace_summary as _canonical_trace
+from vectoreyes.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectoreyes.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 from pathlib import Path
 from dataclasses import replace
 
@@ -9,29 +9,29 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from vectormark.drawing_plan import parse_plan
-from vectormark import drawing_refine
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_engine import RasterImage
+from vectoreyes.drawing_plan import parse_plan
+from vectoreyes import drawing_refine
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe,
     build_paint_evidence,
 )
-from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
-from vectormark.drawing_refine import refine
-from vectormark.refinement.assembly_binding import assemble_working_roots
-from vectormark.drawing_render import render_drawing as render_canonical_drawing
-from vectormark.drawing_state import DrawingStore, VersionCandidate
-from vectormark.drawing_trace import PythonTraceEngine, TraceCommand, TraceOptions, TracePath, TraceRegion, TraceResult, svg_path_commands
-from vectormark.candidate import FlatFill, LinearGradientFill
-from vectormark.fill_fit import fit_fill
-from vectormark.paint_fitting import sampled_flat_hex
-from vectormark.refinement import paint_binding as drawing_paint
-from vectormark.fit import Shape
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.skia_geometry import unary_union
+from vectoreyes.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
+from vectoreyes.drawing_refine import refine
+from vectoreyes.refinement.assembly_binding import assemble_working_roots
+from vectoreyes.drawing_render import render_drawing as render_canonical_drawing
+from vectoreyes.drawing_state import DrawingStore, VersionCandidate
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceCommand, TraceOptions, TracePath, TraceRegion, TraceResult, svg_path_commands
+from vectoreyes.candidate import FlatFill, LinearGradientFill
+from vectoreyes.fill_fit import fit_fill
+from vectoreyes.paint_fitting import sampled_flat_hex
+from vectoreyes.refinement import paint_binding as drawing_paint
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.skia_geometry import unary_union
 
 
 def _disk() -> np.ndarray:
@@ -58,7 +58,7 @@ def test_public_paint_and_order_preserve_path_receipts_without_shape_republicati
     region = rooted.regions[0]
     tagged = replace(region, current=Shape(region.current.kind, {
         **region.current.params, 'path_command_lineage': {'commands': {'a': 'b'}}}))
-    plan = parse_plan({'version': 'vectormark.plan.v1', 'drawing_id': 'paint', 'base_version': 'v0',
+    plan = parse_plan({'version': 'vectoreyes.plan.v1', 'drawing_id': 'paint', 'base_version': 'v0',
         'ops': [{'op': 'set_fill', 'target': tagged.drawing_id,
                  'fill': {'type': 'flat', 'color': '#FF6600'}},
                 {'op': 'set_z_order', 'targets': [tagged.drawing_id]}]})
@@ -102,7 +102,7 @@ def _gradient_bands() -> np.ndarray:
 def test_refine_forces_circle_and_flat_fill_without_mutating_trace():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
     original = trace.regions[0].trace_path.d
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "fit_primitive", "target": "r1", "type": "circle"},
         {"op": "set_fill", "target": "r1", "fill": {"type": "flat", "color": "#FF6600"}},
     ]})
@@ -258,7 +258,7 @@ def test_merge_one_semantic_root_unions_all_of_its_current_children():
     root = RegionSample.branch(
         id=1, children=(left, right), z=0, drawing_id="r1", source_regions=("r1", "r2")
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "merge", "id": "blue", "regions": ["r1"]},
     ]})
 
@@ -286,7 +286,7 @@ def test_explicit_split_creates_two_addressable_children_without_changing_footpr
         id=1, shape=Shape("rect", {"x": 4, "y": 8, "w": 56, "h": 16}), fill=FlatFill("#FF6600"),
         z=0, raster=raster, drawing_id="orange", source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "split", "target": "orange", "divider": divider},
     ]})
 
@@ -314,7 +314,7 @@ def test_merge_invalidates_its_inherited_fill_then_refills_from_the_cached_sourc
         id=2, shape=Shape("rect", {"x": 36, "y": 8, "w": 20, "h": 16}), fill=FlatFill("#445566"),
         z=1, raster=right_raster, drawing_id="r2", source_regions=("r2",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "merge", "id": "material", "regions": ["r1", "r2"]},
     ]})
 
@@ -341,7 +341,7 @@ def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cach
         id=1, shape=Shape("rect", {"x": 4, "y": 8, "w": 56, "h": 16}), fill=FlatFill("#FF6600"),
         z=0, raster=raster, drawing_id="orange", source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "split", "target": "orange", "divider": {"type": "line", "points": [[32, 0], [32, 32]]}},
     ]})
 
@@ -359,7 +359,7 @@ def test_split_invalidates_the_parent_fill_then_refills_each_child_from_the_cach
 
 def test_refine_uses_declared_z_order():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "set_z_order", "targets": ["r2", "r1"]},
     ]})
 
@@ -373,7 +373,7 @@ def test_refine_uses_declared_z_order():
 
 def test_merge_creates_one_native_target_with_combined_source_provenance():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "merge", "id": "g1", "regions": ["r1", "r2"]},
         {"op": "set_z_order", "targets": ["g1"]},
     ]})
@@ -406,7 +406,7 @@ def test_merge_unions_adjacent_same_fill_geometry_before_svg_emission():
         id=2, shape=Shape("path", {"d": "M10 0 L20 0 L20 10 L10 10 Z"}), fill=FlatFill("#0064F0"),
         z=1, raster=raster, drawing_id="r2", source_regions=("r2",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "merge", "id": "g1", "regions": ["r1", "r2"]},
     ]})
 
@@ -430,7 +430,7 @@ def test_merge_accepts_a_child_region_target_and_removes_it_from_its_parent_tree
         id=2, shape=Shape("path", {"d": "M10 0 L20 0 L20 10 L10 10 Z"}), fill=FlatFill("#0064F0"),
         z=1, raster=raster, drawing_id="r2", source_regions=("r2",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "merge", "id": "g1", "regions": ["r1-1", "r2"]},
     ]})
 
@@ -444,7 +444,7 @@ def test_merge_accepts_a_child_region_target_and_removes_it_from_its_parent_tree
 def test_path_local_simplify_runs_after_the_requested_path_is_fitted():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
     command = next(command for command in trace.regions[0].trace_path.commands if command.command not in {"M", "Z"})
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {
             "op": "update_geometry",
             "target": "r1",
@@ -488,7 +488,7 @@ def test_path_geometry_preserves_compound_subpaths_and_evenodd_fill_rule():
         id=1, shape=Shape("path", {"d": path.d, "fill_rule": "evenodd"}), fill=FlatFill("#0064F0"),
         z=0, raster=np.ones((10, 10), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "fit", "target": "r1.p0.c1", "type": "keep"},
             {"op": "fit", "target": "r1.p0.c2", "type": "keep"},
@@ -513,7 +513,7 @@ def test_path_fit_addresses_a_segment_child_and_preserves_unedited_retained_geom
     assert root.current is not None
     original = root.current.params["d"]
     line_command = next(command for command in svg_path_commands(original, "r1") if command.command == "Q")
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "fit", "target": line_command.id, "type": "line"},
         ]},
@@ -547,7 +547,7 @@ def test_path_match_length_uses_another_retained_segment_as_its_reference():
         id=1, shape=Shape("path", {"d": path.d}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "match_length", "target": "r1.p0.c2", "reference": "r1.p0.c1"},
         ]},
@@ -588,7 +588,7 @@ def test_path_constraints_reconstruct_a_segment_from_a_retained_reference(path_o
         id=1, shape=Shape("path", {"d": path.d}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "update_geometry", "target": "r1", "ops": [path_op]},
     ]})
 
@@ -619,7 +619,7 @@ def test_path_remove_joins_the_surviving_segments():
         id=1, shape=Shape("path", {"d": path.d}), fill=FlatFill("#0064F0"), z=0,
         raster=np.ones((12, 12), dtype=bool), drawing_id="r1", source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "remove", "target": "r1.p0.c2"},
         ]},
@@ -644,7 +644,7 @@ def test_path_remove_does_not_schedule_implicit_cleanup(monkeypatch):
         return tuple(regions)
 
     monkeypatch.setattr(drawing_refine, "_run_detection", record_smoothing)
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "update_geometry", "target": "r1", "ops": [
             {"op": "remove", "target": removable.id},
         ]},
@@ -665,7 +665,7 @@ def test_align_centers_one_retained_region_on_another_along_selected_axes():
         id=2, shape=Shape("rect", {"x": 20, "y": 30, "w": 4, "h": 6}), fill=FlatFill("#F06400"), z=1,
         raster=np.ones((10, 10), dtype=bool), drawing_id="r2", source_regions=("r2",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "align", "target": "r2", "reference": "r1", "axes": ["x", "y"]},
     ]})
 
@@ -679,7 +679,7 @@ def test_align_centers_one_retained_region_on_another_along_selected_axes():
 def test_plan_settings_preserve_global_values_and_an_operation_override():
     trace = PythonTraceEngine().trace(_disk(), TraceOptions())
     command = next(command for command in trace.regions[0].trace_path.commands if command.command not in {"M", "Z"})
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
         "settings": {"epsilon": 0.25, "max_error": 0.75}, "ops": [
             {"op": "update_geometry", "target": "r1", "settings": {"epsilon": 0.5}, "ops": [
                     {"op": "fit", "target": command.id, "type": "quadratic"},
@@ -702,7 +702,7 @@ def test_daikonic_root_symmetry_can_be_detected_then_explicitly_set():
     trace, roots = rooted.trace, rooted.regions
 
     detected = refine(trace, roots, parse_plan({
-        "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
+        "version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
         "ops": [{"op": "detect_symmetry", "target": "r1"}],
     }))
     symmetric_root = next(region for region in detected if region.drawing_id == "r1")
@@ -712,12 +712,12 @@ def test_daikonic_root_symmetry_can_be_detected_then_explicitly_set():
     source = target = "r1"
 
     refined = refine(trace, detected, parse_plan({
-        "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0.0",
+        "version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0.0",
         "ops": [{"op": "set_symmetry", "target": target, "axis": detected_axis}],
     }))
     updated_root = next(region for region in refined if region.drawing_id == "r1")
 
-    assert updated_root.diagnostics["symmetry"]["mode"] == "explicit_self"
+    assert updated_root.diagnostics["symmetry"]["mode"] == "self"
     reported_target = next(target for target in _canonical_render(_export_drawing("export", width=(trace).width, height=(trace).height, regions=_export_addresses(detected))).report["targets"] if target["id"] == source)
     reported_axis = reported_target["diagnostics"]["symmetry"]["axis"]
     assert tuple(reported_axis["point"]) == tuple(detected_axis["point"])
@@ -730,7 +730,7 @@ def test_daikonic_supports_geometry_choices_then_a_targeted_symmetry_block():
     rooted = assemble_working_roots(trace, image)
     trace, roots = rooted.trace, rooted.regions
     plan = parse_plan({
-        "version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
+        "version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0",
         "ops": [
             {"op": "fit_primitive", "target": "r1", "type": "circle"},
             {"op": "fit_primitive", "target": "r2", "type": "rounded_rect"},
@@ -794,7 +794,7 @@ def test_canonical_drawing_is_the_retained_version_and_svg_is_a_projection():
 
 def test_refine_applies_an_explicit_clone_to_native_region_samples():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "assign_clone", "source": "r1", "target": "r2", "transforms": [{"tx": 32}]},
     ]})
 
@@ -810,7 +810,7 @@ def test_refine_applies_an_explicit_clone_to_native_region_samples():
 
 def test_clone_instances_keep_distinct_target_fills():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "assign_clone", "source": "r1", "target": "r2", "transforms": [{"tx": 32}]},
     ]})
 
@@ -832,7 +832,7 @@ def test_clone_instances_keep_distinct_target_fills():
 
 def test_detect_clones_and_set_symmetry_apply_the_existing_region_relationships():
     trace = PythonTraceEngine().trace(_two_regions(), TraceOptions())
-    clones = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    clones = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "detect_clones"},
     ]})
 
@@ -841,12 +841,12 @@ def test_detect_clones_and_set_symmetry_apply_the_existing_region_relationships(
     cloned = refine(trace, rooted.regions, clones)
     assert cloned[1].diagnostics["clones"]["accepted"] is True
 
-    symmetry = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    symmetry = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "set_symmetry", "target": "r2", "axis": {"point": [46, 16], "angle_degrees": 90}},
     ]})
     mirrored = refine(trace, rooted.regions, symmetry)
 
-    assert mirrored[1].diagnostics["symmetry"]["mode"] == "explicit_self"
+    assert mirrored[1].diagnostics["symmetry"]["mode"] == "self"
 
 
 def test_branch_children_are_addressable_with_the_existing_hyphenated_convention():
@@ -862,7 +862,7 @@ def test_branch_children_are_addressable_with_the_existing_hyphenated_convention
         drawing_id="r1",
         source_regions=("r1",),
     )
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "set_fill", "target": "r1-3", "fill": {"type": "flat", "color": "#FF6600"}},
     ]})
 
@@ -878,7 +878,7 @@ def test_detect_symmetry_publishes_one_joined_target_for_polish_and_versions():
     image = np.full((64, 64, 3), 255, dtype=np.uint8)
     image[16:48, 16:48] = (20, 100, 240)
     trace = PythonTraceEngine().trace(image, TraceOptions())
-    detect = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
+    detect = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0", "ops": [
         {"op": "detect_symmetry", "target": "r1"},
     ]})
     rooted = assemble_working_roots(trace)
@@ -900,7 +900,7 @@ def test_detect_symmetry_publishes_one_joined_target_for_polish_and_versions():
     assert polished_root.current.kind == "path"
     assert polished_root.diagnostics["symmetry"]["materialized"] is True
 
-    fill_child = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drw_x", "base_version": "v0.0", "ops": [
+    fill_child = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drw_x", "base_version": "v0.0", "ops": [
         {"op": "set_fill", "target": "r1", "fill": {"type": "flat", "color": "#FF6600"}},
     ]})
     refined = refine(trace, regions, fill_child)

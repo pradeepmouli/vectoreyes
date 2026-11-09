@@ -3,32 +3,32 @@ from dataclasses import replace
 import pytest
 
 from tests.test_canonical_automatic_replay import primitive_case
-from vectormark.candidate import FlatFill
-from vectormark.drawing import Canvas
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing import Canvas
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import (
     AssignCloneOperation, AutomaticIntent, AutomaticOperationRecord,
     DeclareIntrinsicSymmetryOperation, NamedRegionOutput, OperationOutputRegionRef,
     replay_batches,
 )
-from vectormark.refinement.framework import select_refinements_with_intent
-from vectormark.refinement.passes.clones import clones_pass
-from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.refinement.framework import select_refinements_with_intent
+from vectoreyes.refinement.passes.clones import clones_pass
+from vectoreyes.refinement.replay_binding import capture_replay_state, working_regions_from_state
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def forbid_working_execution(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('canonical transaction used working execution')
-    monkeypatch.setattr('vectormark.refinement.automatic_replay._execute_intent', forbidden)
-    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.automatic_replay._execute_intent', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.replay_binding.working_regions_from_state', forbidden)
 
 
 def test_symbolic_clone_publication_keeps_independent_paint_and_source_mask(monkeypatch):
-    from vectormark.drawing_automatic import replay_automatic_batches
-    from vectormark.refinement.gate import rasterize
-    from vectormark.refinement.region_sample import to_polygon
+    from vectoreyes.drawing_automatic import replay_automatic_batches
+    from vectoreyes.refinement.gate import rasterize
+    from vectoreyes.refinement.region_sample import to_polygon
     def square(identity, x, color):
         shape = Shape('path', {'d': f'M{x} 10 L{x + 12} 10 L{x + 12} 22 L{x} 22 Z'})
         return RegionSample.from_shape(id=identity, drawing_id=f'r{identity}', shape=shape,
@@ -49,7 +49,7 @@ def test_symbolic_clone_publication_keeps_independent_paint_and_source_mask(monk
 
 
 def test_named_output_reads_the_producer_not_the_pass_snapshot(monkeypatch):
-    from vectormark.drawing_automatic import replay_automatic_batches
+    from vectoreyes.drawing_automatic import replay_automatic_batches
     state, batches, _ = primitive_case()
     batch = batches[0]
     producer = batch.operations[0]
@@ -68,7 +68,7 @@ def test_named_output_reads_the_producer_not_the_pass_snapshot(monkeypatch):
 
 
 def test_named_output_forward_reference_is_rejected_before_publication():
-    from vectormark.drawing_automatic import replay_automatic_batches
+    from vectoreyes.drawing_automatic import replay_automatic_batches
     state, batches, _ = primitive_case()
     producer = batches[0].operations[0]
     action = DeclareIntrinsicSymmetryOperation(OperationOutputRegionRef('future', 'result'), (0., 60., 60.), 0.)

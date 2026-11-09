@@ -5,20 +5,20 @@ import pytest
 
 from tests.test_canonical_multi_replay import forbid_working_execution
 from tests.test_canonical_structural_replay import committed, leaf, numeric_expected
-from vectormark.candidate import FlatFill
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import (
     ApplySeamConstraintsOperation, AxisSeamConstraint, DependentCloneRefresh,
     PassInputRegionRef, ReconstructSelfSymmetryOperation, RefreshDependentClonesOperation,
     ReplayBatch,
 )
-from vectormark.refinement.framework import select_refinements_with_intent
-from vectormark.refinement.passes.compound import split_compound_pass
-from vectormark.refinement.replay_binding import capture_replay_state, working_regions_from_state
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.refinement.framework import select_refinements_with_intent
+from vectoreyes.refinement.passes.compound import split_compound_pass
+from vectoreyes.refinement.replay_binding import capture_replay_state, working_regions_from_state
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def check_canonical(monkeypatch, state, batch):
@@ -61,7 +61,7 @@ def test_self_symmetry_transaction_uses_recorded_fit_and_preserves_receipt(monke
     state = capture_replay_state(roots, Canvas(300, 440))
     action = ReconstructSelfSymmetryOperation(PassInputRegionRef('', '', (1,)),
         () if dependent == 'none' else (PassInputRegionRef('', '', (2,)),),
-        (np.pi / 2, 48., 48.), 0., 'symmetric_half', 'left', 0., 1., 1., False)
+        (np.pi / 2, 48., 48.), 0., 'positive')
     ids = (1,) if dependent == 'none' else (1, 2)
     result = check_canonical(monkeypatch, state, committed(state, action, ids, ids))
     assert result.drawing.region('r1').fill == state.drawing.region('r1').fill
@@ -69,7 +69,7 @@ def test_self_symmetry_transaction_uses_recorded_fit_and_preserves_receipt(monke
 
 @pytest.mark.parametrize('clone', ['none', 'single', 'multiple'])
 def test_topology_transaction_publishes_named_components_and_checks_correspondence(monkeypatch, clone):
-    from vectormark.path_geometry import AffineTransform, CloneGeometry, CompoundPathGeometry, parse_svg_paths
+    from vectoreyes.path_geometry import AffineTransform, CloneGeometry, CompoundPathGeometry, parse_svg_paths
     shape = Shape('path', {'d': 'M0 0 L8 0 L8 8 L0 8 Z M12 0 L20 0 L20 8 L12 8 Z',
         'fill_rule': 'evenodd', 'path_ids': ('r1.p0', 'r1.p1')})
     shape = Shape('path', {**shape.params, 'canonical_path_geometry': CompoundPathGeometry(
@@ -120,8 +120,8 @@ def test_refresh_transaction_rebinds_recorded_source_without_copying_its_paint(m
 
 
 def test_topology_retires_corner_evidence_with_its_redundant_source_path(monkeypatch):
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.path_geometry import CompoundPathGeometry, parse_svg_paths
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.path_geometry import CompoundPathGeometry, parse_svg_paths
     d = 'M4 4 L8 4 L8 8 L4 8 Z M0 0 L12 0 L12 12 L0 12 Z'
     shape = Shape('path', {'d': d, 'fill_rule': 'nonzero',
         'path_ids': ('r1.p0', 'r1.p1'), 'canonical_path_geometry': CompoundPathGeometry(
@@ -137,8 +137,8 @@ def test_topology_retires_corner_evidence_with_its_redundant_source_path(monkeyp
 
 @pytest.mark.parametrize('fill_rule', ['evenodd', 'nonzero'])
 def test_hole_first_topology_keeps_source_ordinals_and_feature_retirement(monkeypatch, fill_rule):
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.path_geometry import CompoundPathGeometry, parse_svg_paths
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.path_geometry import CompoundPathGeometry, parse_svg_paths
     d = 'M4 4 L8 4 L8 8 L4 8 Z M0 0 L12 0 L12 12 L0 12 Z M20 0 L24 0 L24 4 L20 4 Z'
     shape = Shape('path', {'d': d, 'fill_rule': fill_rule,
         'path_ids': ('r1.p0', 'r1.p1', 'r1.p2'), 'canonical_path_geometry': CompoundPathGeometry(

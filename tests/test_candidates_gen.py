@@ -1,6 +1,6 @@
 import numpy as np
 
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
 from tests._candidates import generate_candidates
 
 
@@ -10,7 +10,7 @@ def _disk(cx, cy, r, h, w):
 
 
 def test_generate_includes_primitive_and_path_for_a_disk():
-    from vectormark.types import Region
+    from vectoreyes.types import Region
     h = w = 80
     src = np.full((h, w, 3), 255, np.uint8)
     mask = _disk(40, 40, 25, h, w)

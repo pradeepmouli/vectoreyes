@@ -1,8 +1,8 @@
 import numpy as np
 
-from vectormark.contour import region_contours
-from vectormark.emit import path_svg, render_svg_doc
-from vectormark.refine import symmetric_fit
+from vectoreyes.contour import region_contours
+from vectoreyes.emit import path_svg, render_svg_doc
+from vectoreyes.refine import symmetric_fit
 from tests._render import render_svg, ssim
 
 
@@ -32,7 +32,7 @@ def _tapered_band(H=60, W=120):
 
 
 def test_rounded_trapezoid_fit_symmetric_and_rejects_curves():
-    from vectormark.refine import rounded_trapezoid_fit
+    from vectoreyes.refine import rounded_trapezoid_fit
     c = region_contours(_tapered_band())[0]
     sh = rounded_trapezoid_fit(c, 60.0, radius=8.0, max_error=1.5)
     assert sh is not None and sh.kind == "path"
@@ -47,7 +47,7 @@ def test_rounded_trapezoid_fit_symmetric_and_rejects_curves():
 
 
 def test_half_ellipse_cap_fit_is_convex_and_symmetric():
-    from vectormark.refine import half_ellipse_cap_fit
+    from vectoreyes.refine import half_ellipse_cap_fit
     H, W = 70, 80
     yy, xx = np.ogrid[:H, :W]
     dome = (((xx - 40) ** 2 / 900 + (yy - 55) ** 2 / 2025) <= 1) & (yy <= 55)
@@ -61,7 +61,7 @@ def test_half_ellipse_cap_fit_is_convex_and_symmetric():
 
 
 def test_half_ellipse_cap_fit_rounds_base_corners_when_asked():
-    from vectormark.refine import half_ellipse_cap_fit
+    from vectoreyes.refine import half_ellipse_cap_fit
     H, W = 80, 80
     yy, xx = np.ogrid[:H, :W]
     dome = (((xx - 40) ** 2 / 900 + (yy - 55) ** 2 / 2025) <= 1) & (yy <= 55)
@@ -77,7 +77,7 @@ def test_half_ellipse_cap_fit_rounds_base_corners_when_asked():
 def test_symmetric_fit_rounds_sharp_corner_with_shared_radius():
     """A flat-topped, curved-sided 'cone' gets its top corners filleted by the
     shared radius (a cubic fillet appears), and stays exactly symmetric."""
-    from vectormark.refine import symmetric_fit
+    from vectoreyes.refine import symmetric_fit
     H, W = 90, 120
     m = np.zeros((H, W), bool)
     for y in range(15, 78):                            # flat top, sides curving to a point
@@ -94,7 +94,7 @@ def test_symmetric_fit_rounds_sharp_corner_with_shared_radius():
 
 def test_half_ellipse_cap_fit_rejects_pointed_tip():
     """A teardrop/point has no wide flat base -> not a cap; falls through to None."""
-    from vectormark.refine import half_ellipse_cap_fit
+    from vectoreyes.refine import half_ellipse_cap_fit
     H, W = 80, 80
     m = np.zeros((H, W), bool)
     for y in range(10, 70):                         # triangle narrowing to a point at top
@@ -106,7 +106,7 @@ def test_half_ellipse_cap_fit_rejects_pointed_tip():
 def test_pipeline_output_is_inflection_free():
     """End-to-end: a symmetric mark idealizes with only convex arcs — every free
     curved run is a quadratic (Q); the only cubics (C) are parametric quarter-arcs."""
-    from vectormark.pipeline import idealize, Options
+    from vectoreyes.pipeline import idealize, Options
     H, W = 90, 120
     img = np.full((H, W, 3), 255, np.uint8)
     yy, xx = np.ogrid[:H, :W]
@@ -124,7 +124,7 @@ def test_pipeline_output_is_inflection_free():
 def test_symmetric_polygon_fit_keeps_diamond_sharp():
     """A straddling diamond stays a straight-edged, sharp-cornered, exactly
     symmetric polygon — not curve-fit into a petal."""
-    from vectormark.refine import symmetric_polygon_fit
+    from vectoreyes.refine import symmetric_polygon_fit
     H, W = 120, 100
     yy, xx = np.ogrid[:H, :W]
     diamond = (np.abs(xx - 50) / 30 + np.abs(yy - 60) / 50) <= 1
@@ -137,7 +137,7 @@ def test_symmetric_polygon_fit_keeps_diamond_sharp():
 
 def test_symmetric_polygon_fit_rejects_curved_region():
     """A dome is curved, not polygonal -> None, so it falls through to the curve fits."""
-    from vectormark.refine import symmetric_polygon_fit
+    from vectoreyes.refine import symmetric_polygon_fit
     H, W = 70, 80
     yy, xx = np.ogrid[:H, :W]
     dome = (((xx - 40) ** 2 / 900 + (yy - 55) ** 2 / 2025) <= 1) & (yy <= 55)
@@ -145,7 +145,7 @@ def test_symmetric_polygon_fit_rejects_curved_region():
 
 
 def test_symmetric_fit_beats_raw_path_symmetry():
-    from vectormark.fit import fit_path
+    from vectoreyes.fit import fit_path
     H, W = 70, 80
     yy, xx = np.ogrid[:H, :W]
     dome = (((xx - 40) ** 2 / 900 + (yy - 55) ** 2 / 2025) <= 1) & (yy <= 55)

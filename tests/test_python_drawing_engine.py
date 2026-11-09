@@ -3,18 +3,18 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.drawing_actions import DrawingPlan
-from vectormark.drawing_engine import TraceDrawingRequest, RasterImage
-from vectormark.refinement.assembly_binding import working_regions_from_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.drawing_actions import DrawingPlan
+from vectoreyes.drawing_engine import TraceDrawingRequest, RasterImage
+from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe, ResolveOriginalPaintOperation,
     build_paint_evidence, drawing_revision, )
-from vectormark.drawing_refine import stitch_regions_with_intent
-from vectormark.refinement.assembly_binding import assemble_working_roots
-from vectormark.drawing_replay import propose_effective_recipe
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
-from vectormark.python_drawing_engine import PythonDrawingEngine
+from vectoreyes.drawing_refine import stitch_regions_with_intent
+from vectoreyes.refinement.assembly_binding import assemble_working_roots
+from vectoreyes.drawing_replay import propose_effective_recipe
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions
+from vectoreyes.python_drawing_engine import PythonDrawingEngine
 
 
 def source():
@@ -24,9 +24,9 @@ def source():
 
 
 def test_automatic_refinement_records_before_final_output_palette():
-    from vectormark.refinement.replay_binding import replay_working_regions
-    from vectormark.output_settings import DrawingOutputSettings
-    from vectormark.refinement.automatic_replay import input_revision
+    from vectoreyes.refinement.replay_binding import replay_working_regions
+    from vectoreyes.output_settings import DrawingOutputSettings
+    from vectoreyes.refinement.automatic_replay import input_revision
 
     _, raster = source()
     engine = PythonDrawingEngine()
@@ -52,8 +52,8 @@ def test_automatic_refinement_records_before_final_output_palette():
 @pytest.mark.parametrize("stitch", [False, True])
 @pytest.mark.parametrize("trace_level", ["pixel", "subpixel"])
 def test_engine_v0_matches_existing_operations(strategy, stitch, trace_level):
-    from vectormark.drawing_assembly import assemble_drawing_roots
-    from vectormark.drawing_recipe import build_geometry_evidence
+    from vectoreyes.drawing_assembly import assemble_drawing_roots
+    from vectoreyes.drawing_recipe import build_geometry_evidence
     rgb, raster = source()
     options = TraceOptions(max_sampling_colors=2, remove_background="off", fit_strategy=strategy, trace_level=trace_level)
     trace = PythonTraceEngine().trace(rgb, options, geometry_rgb=rgb)
@@ -61,7 +61,7 @@ def test_engine_v0_matches_existing_operations(strategy, stitch, trace_level):
     evidence = build_geometry_evidence(kind="source", trace=rooted.trace,
         geometry_source=raster, drawing=rooted.drawing,
         shape_metadata=rooted.shape_metadata, region_evidence=rooted.region_evidence)
-    from vectormark.output_settings import DrawingOutputSettings
+    from vectoreyes.output_settings import DrawingOutputSettings
     output = DrawingOutputSettings(allow_gradients=False)
     paint = build_paint_evidence(raster, output_settings=output)
     settings = ActionSettings(epsilon=options.simplify_tolerance,
@@ -83,7 +83,7 @@ def test_engine_plan_uses_existing_executor_and_rejects_stale_scene():
     baseline = engine.trace_drawing(TraceDrawingRequest("drw_engine", raster,
         TraceOptions(max_sampling_colors=2, remove_background="off"), min_region_fraction=0))
     target = baseline.drawing.regions[0].leaves()[0].id
-    plan = DrawingPlan.model_validate(dict(version="vectormark.plan.v1", drawing_id="drw_engine",
+    plan = DrawingPlan.model_validate(dict(version="vectoreyes.plan.v1", drawing_id="drw_engine",
         base_version="v0", ops=[dict(op="set_fill", target=target,
             fill=dict(type="flat", color="#FF0000"))]))
     result = engine.apply_plan(baseline.drawing, baseline.evidence, plan)
@@ -96,13 +96,13 @@ def test_engine_plan_uses_existing_executor_and_rejects_stale_scene():
 
 
 def test_corner_replay_uses_engine_entry_point_by_default():
-    from vectormark.corner_recipe import CornerRecipeExecutor
+    from vectoreyes.corner_recipe import CornerRecipeExecutor
     assert isinstance(CornerRecipeExecutor()._path_fitter, PythonDrawingEngine)
 
 
 def test_standalone_rgba_trace_uses_alpha_but_retains_composited_paint():
     from PIL import Image
-    from vectormark.pipeline import _flatten_on_white
+    from vectoreyes.pipeline import _flatten_on_white
     rgba = np.zeros((32, 32, 4), dtype=np.uint8)
     rgba[6:26, 6:26] = (20, 80, 140, 255)
     engine = PythonDrawingEngine()
@@ -118,9 +118,9 @@ def test_standalone_rgba_trace_uses_alpha_but_retains_composited_paint():
 
 
 def test_path_action_and_drawing_action_share_plan_executor():
-    from vectormark.drawing_engine import DrawingActionRequest, PathActionRequest
-    from vectormark.drawing_actions import FitPathAction, UpdateGeometryAction
-    from vectormark.path_geometry import PathGeometry
+    from vectoreyes.drawing_engine import DrawingActionRequest, PathActionRequest
+    from vectoreyes.drawing_actions import FitPathAction, UpdateGeometryAction
+    from vectoreyes.path_geometry import PathGeometry
     _, raster = source()
     engine = PythonDrawingEngine()
     baseline = engine.trace_drawing(TraceDrawingRequest("drw_engine", raster,
@@ -139,7 +139,7 @@ def test_path_action_and_drawing_action_share_plan_executor():
 
 
 def test_source_pretrace_labels_keep_existing_merge_policy():
-    from vectormark.material_pretrace import MaterialPretraceResult
+    from vectoreyes.material_pretrace import MaterialPretraceResult
     yy, xx = np.mgrid[:100, :120]
     inside = (yy > 9) & (yy < 90) & (xx > 9) & (xx < 110)
     left = xx < 60 + 18 * np.sin(yy * np.pi / 10)
@@ -169,8 +169,8 @@ def test_geometry_guide_keeps_quantized_boundary_classification():
 
 
 def test_action_region_changes_include_branch_identity(monkeypatch):
-    import vectormark.python_drawing_engine as engine_module
-    from vectormark.drawing import DrawingRegion
+    import vectoreyes.python_drawing_engine as engine_module
+    from vectoreyes.drawing import DrawingRegion
     _, raster = source()
     engine = PythonDrawingEngine()
     baseline = engine.trace_drawing(TraceDrawingRequest("drw_engine", raster,
@@ -184,7 +184,7 @@ def test_action_region_changes_include_branch_identity(monkeypatch):
             replay=replace(execution.replay, output_revision=drawing_revision(drawing)))
 
     monkeypatch.setattr(engine_module, "propose_effective_recipe", grouped_proposal)
-    plan = DrawingPlan.model_validate(dict(version="vectormark.plan.v1", drawing_id="drw_engine",
+    plan = DrawingPlan.model_validate(dict(version="vectoreyes.plan.v1", drawing_id="drw_engine",
         base_version="v0", ops=[]))
     result = engine.apply_plan(baseline.drawing, baseline.evidence, plan)
     assert result.drawing.regions[0].is_branch

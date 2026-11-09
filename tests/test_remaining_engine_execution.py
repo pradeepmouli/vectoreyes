@@ -1,8 +1,8 @@
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import (
     DependentCloneRefresh,
     NormalizeCornersOperation,
     NormalizeRetainedTopologyOperation,
@@ -10,11 +10,11 @@ from vectormark.refinement.automatic_replay import (
     RefreshDependentClonesOperation,
     SmoothPathOperation,
 )
-from vectormark.refinement.symmetry_materialize import (
+from vectoreyes.refinement.symmetry_materialize import (
     index_region_paths,
     resolve_source_path,
 )
-from vectormark.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
 
 class Resolver:
@@ -26,8 +26,8 @@ class Resolver:
 
 
 def test_engine_smoothing_respects_budget_and_preserves_source():
-    from vectormark.drawing_adapter import bind_path_input
-    from vectormark.refinement.automatic_replay import apply_smoothing_choice
+    from vectoreyes.drawing_adapter import bind_path_input
+    from vectoreyes.refinement.automatic_replay import apply_smoothing_choice
 
     shape = Shape("path", {"d": "M0 0 Q2 9.8 10 10 Q18 9.8 20 0 L0 0 Z"})
     target = RegionSample(1, shape, FlatFill("#123456"), footprint=to_polygon(shape))
@@ -42,7 +42,7 @@ def test_engine_smoothing_respects_budget_and_preserves_source():
 
 
 def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_receipt():
-    from vectormark.refinement.topology_binding import (
+    from vectoreyes.refinement.topology_binding import (
         apply_retained_topology,
         normalize_working_topology,
         topology_path_correspondence,
@@ -75,9 +75,9 @@ def test_engine_topology_applies_exact_recorded_ownership_and_rejects_stale_rece
 
 
 def test_engine_corner_normalization_preserves_authoritative_empty_declaration():
-    from vectormark.drawing_adapter import bind_path_input
-    from vectormark.refinement.automatic_replay import apply_corner_normalization_choice
-    from vectormark.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.drawing_adapter import bind_path_input
+    from vectoreyes.refinement.automatic_replay import apply_corner_normalization_choice
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
 
     shape = Shape("path", {"d": "M0 0 L12 0 L12 12 L0 12 Z"})
     target = RegionSample(1, shape, FlatFill("#123456"))
@@ -99,7 +99,7 @@ def test_engine_corner_normalization_preserves_authoritative_empty_declaration()
 
 
 def test_engine_refreshes_cross_scope_clone_without_mutating_source_or_parent():
-    from vectormark.drawing_adapter import refresh_dependent_clones
+    from vectoreyes.drawing_adapter import refresh_dependent_clones
 
     source = RegionSample(
         10, Shape("rect", {"x": 0, "y": 0, "w": 4, "h": 6}), FlatFill("#123456")

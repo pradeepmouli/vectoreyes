@@ -4,12 +4,12 @@ from dataclasses import asdict
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_adapter import drawing_from_region_samples
-from vectormark.fit import Shape
-from vectormark.corner_diagnostics import path_corner_diagnostics
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_adapter import drawing_from_region_samples
+from vectoreyes.fit import Shape
+from vectoreyes.corner_diagnostics import path_corner_diagnostics
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import (
     CornerAnchor,
     ExtremumAnchor,
     InflectionAnchor,

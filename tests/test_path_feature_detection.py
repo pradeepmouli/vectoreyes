@@ -5,7 +5,7 @@ from hashlib import sha256
 import numpy as np
 import pytest
 
-import vectormark.fit as fit
+import vectoreyes.fit as fit
 
 
 def contours():
@@ -39,18 +39,19 @@ PRESETS = (
     dict(cubic=True),
 )
 
-# Captured from the parent implementation before splitting discovery and fitting.
+# Original geometry baselines, rehashed for the renamed evidence namespace.
+# Verified that substituting only the prior namespace reproduces all ten old digests.
 BASELINES = {
-    ("rounded", 0): "4af6a40bf0486c9ad42453b10bbda4365c7b752468afd0770837bbd4403ef657",
-    ("serif", 0): "8c45b998f55b7b2afffe9c2ff03647cbf6da154fe2a0348eadcf1f1bc1f17404",
-    ("rounded", 1): "a59515b33098a59763ba31d6dc5711d3f9ead4a056265300d07a7798e2de9d85",
-    ("serif", 1): "77db6abc8ffefc7f568b8bc5bd60c4c4d7372e312b1c2fc7e0395bf7f7736ea5",
-    ("rounded", 2): "07a9b9fe72b22c0c092bdd2f35e6b74ad71bafd3365318e3081ee9481bc9f611",
-    ("serif", 2): "431da0206d4ddad3c56c6c9fc2b5be1e1bba616410cb9b5a1b53e7b0e14e1afb",
-    ("rounded", 3): "6b0e302c1536dee08f79bc0f6ff5cb252529e9332c9ad5354187666e7599b196",
-    ("serif", 3): "fa50131ce2d1902ebd1d5d6515f4c96e45219dbef316fd0caa9e55038afc6086",
-    ("rounded", 4): "bc6c6c8e46c28b7a9470cbed42bcb125adaefb8397787057ba3f69d6cdcbe560",
-    ("serif", 4): "9cbbd17c793064924060eedc811011012f4c1619d98f9ca1ef8352026e3d3a48",
+    ("rounded", 0): "d328f4b0933a964e6a1c6f53a9b6b315706aebb3aca7707623b5024e120c4b37",
+    ("serif", 0): "7bffc41ca073e4f609b66d373b3ad5143a4f9dda4d79772e889977f6d47162a7",
+    ("rounded", 1): "b3ff424d4e8fa55e9761f78a7b8785248f35f318c94ee5899da529a6de02cfd2",
+    ("serif", 1): "cd874e36e4a1c5cf3fb6a6ab997e6a2628effd93464abe50c84f887cd29e9385",
+    ("rounded", 2): "9c07d58c998dd1f997706e18e2a44bc6d57427e1ad8dddd5838a87815418fe39",
+    ("serif", 2): "a5cac1b11bb6c9804fa260168b7e4a753e4e3646912821d697b431bdbe42321b",
+    ("rounded", 3): "c4bd939ce5fe883be1f019b3b9dac78ddafef3636c91873723857b0f53e10870",
+    ("serif", 3): "1bcad1886dcef9bb05c2867ea8437691585d089251c15047d15ad618b429b796",
+    ("rounded", 4): "6426b483b65f4ff6e743431e438ce920adacb6482bb86f69250945250a3f3a53",
+    ("serif", 4): "66a95752d6e3684d55238c56fdc5f2f2dae1b92977f5cb55f2605030d1f5a68a",
 }
 
 
@@ -98,7 +99,7 @@ def test_automatic_fit_consumes_one_discovery_result(monkeypatch):
 
 
 def source_geometry():
-    from vectormark.path_geometry import ClosedPath, LineCommand, MoveCommand, PathGeometry
+    from vectoreyes.path_geometry import ClosedPath, LineCommand, MoveCommand, PathGeometry
     points = contours()["rounded"]
     return PathGeometry(ClosedPath("r1.p0", (
         MoveCommand("r1.p0.c0", tuple(points[0])),
@@ -107,9 +108,9 @@ def source_geometry():
 
 
 def test_engine_discovery_returns_original_commands_with_typed_features(monkeypatch):
-    import vectormark.drawing_engine as contracts
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    import vectoreyes.drawing_engine as contracts
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
     assert hasattr(contracts, "DetectPathFeaturesRequest"), "engine must expose pre-fit detection"
     source = source_geometry()
 
@@ -130,10 +131,10 @@ def test_engine_discovery_returns_original_commands_with_typed_features(monkeypa
 
 def test_engine_detection_rejects_existing_declarations_and_foreign_forced_ids():
     from dataclasses import replace
-    import vectormark.drawing_engine as contracts
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.python_drawing_engine import PythonDrawingEngine
-    from vectormark.path_geometry import CornerAnchor
+    import vectoreyes.drawing_engine as contracts
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
+    from vectoreyes.path_geometry import CornerAnchor
     assert hasattr(contracts, "DetectPathFeaturesRequest"), "detection must validate canonical source addresses"
     source = source_geometry()
     engine = PythonDrawingEngine()
@@ -147,9 +148,9 @@ def test_engine_detection_rejects_existing_declarations_and_foreign_forced_ids()
 
 def test_forced_corner_cannot_silently_bind_a_different_coincident_command():
     from dataclasses import replace
-    from vectormark.drawing_engine import DetectPathFeaturesRequest
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectoreyes.drawing_engine import DetectPathFeaturesRequest
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
     source = source_geometry()
     commands = list(source.path.commands)
     commands[128] = replace(commands[128], end=commands[1].end)
@@ -162,10 +163,10 @@ def test_forced_corner_cannot_silently_bind_a_different_coincident_command():
 
 @pytest.mark.parametrize("use_discovered_cuts", (False, True))
 def test_discovered_fit_boundaries_are_authoritative_for_pure_fitting(monkeypatch, use_discovered_cuts):
-    import vectormark.python_path_fitter as fitter
-    from vectormark.drawing_engine import DetectPathFeaturesRequest, FitPathRequest, PathFitOptions
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    import vectoreyes.python_path_fitter as fitter
+    from vectoreyes.drawing_engine import DetectPathFeaturesRequest, FitPathRequest, PathFitOptions
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
     engine = PythonDrawingEngine()
     features = engine.detect_path_features(DetectPathFeaturesRequest(source_geometry(),
         TraceOptions(simplify_tolerance=0.5, fit_strategy="progressive"), 1254))
@@ -187,8 +188,8 @@ def test_discovered_fit_boundaries_are_authoritative_for_pure_fitting(monkeypatc
 
 @pytest.mark.parametrize("excluded,boundary", (("r1.p0.c32", "r1.p0.c32"), ("r1.p0.c0", "r1.p0.c256")))
 def test_explicit_fit_boundaries_reject_foreign_or_excluded_source_commands(excluded, boundary):
-    from vectormark.drawing_engine import FitPathRequest, PathFitOptions
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectoreyes.drawing_engine import FitPathRequest, PathFitOptions
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
     assert "fit_boundary_command_ids" in FitPathRequest.__dataclass_fields__, "fit boundaries need source validation"
     source = source_geometry()
     options = PathFitOptions(0.5, 1.5, "progressive")
@@ -201,10 +202,10 @@ def test_explicit_fit_boundaries_reject_foreign_or_excluded_source_commands(excl
 
 
 def test_forced_corner_survives_recovery_candidate_cleanup():
-    from vectormark.drawing_engine import DetectPathFeaturesRequest
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.path_geometry import ClosedPath, LineCommand, MoveCommand, PathGeometry
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectoreyes.drawing_engine import DetectPathFeaturesRequest
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.path_geometry import ClosedPath, LineCommand, MoveCommand, PathGeometry
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
     vertices = np.asarray([[92, 0], [50, 29], [39, 67], [0, 68], [-30, 53], [-60, 35],
         [-71, 0], [-70, -40], [-43, -75], [0, -51], [31, -54], [69, -40]], dtype=float)
     t = np.arange(16)[:, None] / 16
@@ -222,9 +223,9 @@ def test_forced_corner_survives_recovery_candidate_cleanup():
 
 def test_removing_detected_corner_does_not_retain_its_cut_implicitly(monkeypatch):
     from dataclasses import replace
-    from vectormark.drawing_engine import DetectPathFeaturesRequest, FitPathRequest, PathFitOptions
-    from vectormark.drawing_trace import TraceOptions
-    from vectormark.python_drawing_engine import PythonDrawingEngine
+    from vectoreyes.drawing_engine import DetectPathFeaturesRequest, FitPathRequest, PathFitOptions
+    from vectoreyes.drawing_trace import TraceOptions
+    from vectoreyes.python_drawing_engine import PythonDrawingEngine
     engine = PythonDrawingEngine()
     source = source_geometry()
     features = engine.detect_path_features(DetectPathFeaturesRequest(source,
@@ -240,7 +241,7 @@ def test_removing_detected_corner_does_not_retain_its_cut_implicitly(monkeypatch
         observed.extend(cuts)
         return original(ring, cuts, **kwargs)
 
-    monkeypatch.setattr("vectormark.python_path_fitter._fit_path_d_from_cuts", capture)
+    monkeypatch.setattr("vectoreyes.python_path_fitter._fit_path_d_from_cuts", capture)
     engine.fit_path(FitPathRequest(unprotected, PathFitOptions(0.5, 1.5, "progressive"),
         fit_boundary_command_ids=features.fit_boundary_command_ids))
     assert 240 not in observed

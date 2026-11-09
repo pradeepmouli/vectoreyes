@@ -3,16 +3,16 @@ from dataclasses import replace
 import pytest
 
 from tests.test_canonical_recipe_replay import inputs
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import SetFillAction
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import geometry_from_svg_d
-from vectormark.replay_state import ReplayState
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import SetFillAction
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import geometry_from_svg_d
+from vectoreyes.replay_state import ReplayState
 
 
 def selected_recipe():
-    from vectormark.drawing_replay import bind_recipe_operation
-    from vectormark.selected_outcomes import retain_selected_outcome
+    from vectoreyes.drawing_replay import bind_recipe_operation
+    from vectoreyes.selected_outcomes import retain_selected_outcome
 
     evidence, paint, recipe = inputs()
     # Address evidence is sufficient; no original-shape or raster codec exists.
@@ -30,7 +30,7 @@ def selected_recipe():
 
 
 def test_selected_recipe_replays_canonical_result_without_working_shape_observations():
-    from vectormark.drawing_replay import replay_drawing
+    from vectoreyes.drawing_replay import replay_drawing
 
     evidence, paint, recipe = selected_recipe()
     result = replay_drawing(evidence, paint, recipe, finalize_output=False)
@@ -41,7 +41,7 @@ def test_selected_recipe_replays_canonical_result_without_working_shape_observat
 
 @pytest.mark.parametrize('change', ['paint', 'geometry', 'observations'])
 def test_selected_canonical_dependency_rejects_changed_inputs(change):
-    from vectormark.drawing_replay import replay_drawing
+    from vectoreyes.drawing_replay import replay_drawing
 
     evidence, paint, recipe = selected_recipe()
     if change == 'observations':
@@ -57,8 +57,8 @@ def test_selected_canonical_dependency_rejects_changed_inputs(change):
 
 
 def test_selected_root_delta_prunes_retired_evidence_and_keeps_unmodified_roots():
-    from vectormark.drawing_recipe import SelectedOperationOutcome
-    from vectormark.selected_outcomes import apply_selected_outcome
+    from vectoreyes.drawing_recipe import SelectedOperationOutcome
+    from vectoreyes.selected_outcomes import apply_selected_outcome
 
     geometry = geometry_from_svg_d('M0 0 L4 0 L4 4 L0 4 Z', region_id='r1')
     child = DrawingRegion('r1-1', geometry, FlatFill('#123456'))
@@ -82,8 +82,8 @@ def test_selected_root_delta_prunes_retired_evidence_and_keeps_unmodified_roots(
 
 
 def test_selected_delta_rejects_unavailable_borrowed_source_coverage():
-    from vectormark.drawing_recipe import SelectedOperationOutcome
-    from vectormark.selected_outcomes import apply_selected_outcome
+    from vectoreyes.drawing_recipe import SelectedOperationOutcome
+    from vectoreyes.selected_outcomes import apply_selected_outcome
 
     evidence, _, _ = inputs()
     state = ReplayState(evidence.drawing, {}, {})
@@ -94,8 +94,8 @@ def test_selected_delta_rejects_unavailable_borrowed_source_coverage():
 
 
 def test_paint_and_order_proposals_need_no_working_shape_or_raster_codec():
-    from vectormark.drawing_actions import DrawingPlan
-    from vectormark.drawing_replay import extend_recipe_with_plan, replay_drawing
+    from vectoreyes.drawing_actions import DrawingPlan
+    from vectoreyes.drawing_replay import extend_recipe_with_plan, replay_drawing
 
     evidence, paint, base = inputs()
     second = DrawingRegion('r2', geometry_from_svg_d(
@@ -103,7 +103,7 @@ def test_paint_and_order_proposals_need_no_working_shape_or_raster_codec():
     evidence = replace(evidence, drawing=replace(evidence.drawing,
         regions=(*evidence.drawing.regions, second)),
         region_evidence={'r1': {'ancestry': (1,)}, 'r2': {'ancestry': (2,)}})
-    plan = DrawingPlan.model_validate({'version': 'vectormark.plan.v1',
+    plan = DrawingPlan.model_validate({'version': 'vectoreyes.plan.v1',
         'drawing_id': 'test', 'base_version': 'v0', 'ops': [
             {'op': 'set_fill', 'target': 'r1', 'fill': {'type': 'flat', 'color': '#abcdef'}},
             {'op': 'set_z_order', 'targets': ['r2', 'r1']},
@@ -120,11 +120,11 @@ def test_paint_and_order_proposals_need_no_working_shape_or_raster_codec():
 
 
 def test_empty_plan_keeps_canonical_input_without_working_projection():
-    from vectormark.drawing_actions import DrawingPlan
-    from vectormark.drawing_replay import extend_recipe_with_plan
+    from vectoreyes.drawing_actions import DrawingPlan
+    from vectoreyes.drawing_replay import extend_recipe_with_plan
 
     evidence, paint, base = inputs()
-    plan = DrawingPlan.model_validate({'version': 'vectormark.plan.v1',
+    plan = DrawingPlan.model_validate({'version': 'vectoreyes.plan.v1',
         'drawing_id': 'test', 'base_version': 'v0', 'ops': []})
     result = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan)
     assert result.recipe == base

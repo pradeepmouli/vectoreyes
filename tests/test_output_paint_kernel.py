@@ -1,11 +1,11 @@
 import numpy as np
 
-from vectormark.drawing_fill import FlatFill, GradientStop, LinearGradientFill
-from vectormark.output_settings import DrawingOutputSettings
+from vectoreyes.drawing_fill import FlatFill, GradientStop, LinearGradientFill
+from vectoreyes.output_settings import DrawingOutputSettings
 
 
 def test_output_paint_limits_use_source_samples_without_geometry_access():
-    from vectormark.paint_fitting import constrain_output_paint
+    from vectoreyes.paint_fitting import constrain_output_paint
 
     gradient = LinearGradientFill((0, 0), (10, 0), (
         GradientStop(0, '#ff0000'), GradientStop(1, '#0000ff')))
@@ -18,7 +18,7 @@ def test_output_paint_limits_use_source_samples_without_geometry_access():
 
 
 def test_output_palette_can_collapse_gradient_stops_to_one_flat_fill():
-    from vectormark.paint_fitting import constrain_output_paint
+    from vectoreyes.paint_fitting import constrain_output_paint
 
     gradient = LinearGradientFill((0, 0), (10, 0), (
         GradientStop(0, '#ff0000'), GradientStop(1, '#fe0000')))

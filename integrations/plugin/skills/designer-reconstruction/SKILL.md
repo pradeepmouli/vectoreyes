@@ -1,9 +1,9 @@
 ---
 name: designer-reconstruction
-description: Reconstruct raster logos and illustrations as faithful editable SVG using VectorMark trace, inspection, semantic refinement plans, and optional geometry guides.
+description: Reconstruct raster logos and illustrations as faithful editable SVG using vectorEyes trace, inspection, semantic refinement plans, and optional geometry guides.
 ---
 
-# Designer-quality reconstruction with VectorMark
+# Designer-quality reconstruction with vectorEyes
 
 The deliverable is an editable vector replacement for the source, not merely
 a successful trace. Judge geometry and paint separately. Visible structural
@@ -17,11 +17,22 @@ model first and retain its actual PNG as the source. If no generation tool is
 available, ask for a PNG rather than claiming an image was generated. The
 plugin supplies vector tooling, not an image-generation model or API key.
 
+For an authorized generate-and-convert request, continue directly from the
+actual generated PNG into `vectoreyes_trace_drawing`, inspect and refine the result, and
+deliver the SVG. Reuse the host file reference or available image data; do not
+ask the user to download and re-upload an image you already have. Choose suitable
+defaults from the presets rather than pausing for a routine settings interview.
+The widget and human Review/Edit are optional, not approval gates. Ask only for
+a genuinely missing creative decision or a blocking access/delivery problem;
+never claim a cross-host file reference is accessible without verifying it.
+
 Start with [use-case presets](references/trace-presets.md), then verify the
-returned panel. These are suggested option bundles, not named server modes.
+returned panel. Select a starting bundle with `options.preset`; explicit options
+override it, and responses record the effective settings. Presets are starting
+points, not guarantees of output quality.
 Use the live schema for accepted fields, enums, and defaults.
 
-- `trace_drawing(image, options)` retains the original source. `refine="auto"`
+- `vectoreyes_trace_drawing(image, options)` retains the original source. `refine="auto"`
   returns pre-refinement v0 and one normal revision per executed refinement
   pass, including unchanged results. Disabled passes have no revision. Use the
   returned `version` for the final result, not a hard-coded v1. Any retained
@@ -41,13 +52,36 @@ Use the live schema for accepted fields, enums, and defaults.
 
 ## Inspect before declaring
 
+Make semantic naming the first agent pass after identifying the regions. Use
+`vectoreyes_name_regions(drawing_id,base_version,names=[{target:"r3",name:"orange-band"},...])`
+to publish one atomic naming revision without writing a refinement plan.
+The same operation remains available inside plans as described below.
+Assign concise lowercase hyphenated names with `set_region_name`, for example
+`{"op":"set_region_name","target":"r3","name":"orange-band"}`.
+Name parent regions as meaningful groups too. Subsequent region addresses can
+be stable ID strings or explicit `{"name":"orange-band"}` references; this
+also works in target lists and band spans. Names resolve exactly in the current
+plan state; ambiguous names return candidate IDs. Do not guess or use fuzzy names.
+Accepted recipes bind to IDs, so later renaming cannot retarget earlier work.
+Path, command, and feature addresses remain the displayed version-scoped IDs.
+
+Treat negative space as ordinary regions connected by `assign_cutout`, not as
+a special region type or a paint-color assumption. For example,
+`{"op":"assign_cutout","source":{"name":"d-counter"},"targets":[{"name":"lettering"}]}`
+retains both geometries and subtracts the source at export. An empty target list
+removes the relationship. Parent targets cover their children. Self-subtraction,
+cycles, and nested Boolean operands are rejected; clear/reassign a relationship
+before removing its referenced targets. Containment and cutout relationships are
+separate. Editable SVG preserves names, editor labels and relationship metadata;
+request `vectoreyes_get_drawing_artifact(artifact="svg", editable_svg=false)` for plain SVG.
+
 Inspect the returned review panel: source, retained baseline, actual parent,
 current output, region map, and amplified difference. For each region decide
 whether geometry is a primitive or path, which corners/inflections are real,
 whether other regions are clones, and whether self-symmetry is intentional.
 Evaluate fills independently; a gradient must not redefine a silhouette.
 
-Fetch `get_drawing_artifact` with `labeled_svg` for region addresses,
+Fetch `vectoreyes_get_drawing_artifact` with `labeled_svg` for region addresses,
 `path_map` for individual colored segments and exact command IDs in its side
 legend, `command_map` for endpoint labels, and `raw_trace` for exact source
 polyline addresses and corner spans. Use the selected version's reported
@@ -66,7 +100,7 @@ corner-pass and fit-pass review, are in [the evaluation loop](references/evaluat
 
 ## Refine through declarations
 
-Every `refine_drawing` plan includes the live `drawing_id`, chosen
+Every `vectoreyes_refine_drawing` plan includes the live `drawing_id`, chosen
 `base_version`, and ordered `ops`. Returned versions can branch from any retained
 version. Re-read child IDs after a split or refit. IDs in the examples are
 illustrative and must be replaced with IDs from your selected version.
@@ -92,7 +126,7 @@ illustrative and must be replaced with IDs from your selected version.
   use it only to investigate a specific missed relationship visible in review.
 
 Do not edit the exported SVG as a substitute for a supported plan. If plans
-cannot express the required geometry, `retrace_drawing` accepts a flat-color,
+cannot express the required geometry, `vectoreyes_retrace_drawing` accepts a flat-color,
 transparent geometry guide with exactly the retained canvas dimensions. Guide
 colors are labels; final fills come from the original source.
 
@@ -113,16 +147,16 @@ and move to another region when a local attempt is exhausted. A failed trial
 or a generated report is not the end of the evaluation. Follow the reference's
 bounded search and stopping rules; do not wait for user input after each trial.
 
-`get_drawing_artifact(artifact="svg")` returns the exact SVG text plus an MCP
+`vectoreyes_get_drawing_artifact(artifact="svg")` returns the exact SVG text plus an MCP
 file resource link. Resource-capable clients can read that link; it is not an
 HTTP URL or a `/mnt/data` path. If you have filesystem tools, save
 `structuredContent.svg` verbatim and attach the resulting file. Do not claim
 a downloadable file exists merely because SVG text was retrieved. In the
-review widget, select SVG and use **Export selected file**, then the host's
-**Download** link. If host file APIs are unavailable, report that limitation;
+review widget, use **Download SVG** (other artifacts are under **Files and drawing
+details**), then use the host's download link when one is returned. If host file APIs are unavailable, report that limitation;
 do not retrace, invent a URL, or edit the SVG to work around delivery.
 
-If an internal MCP failure blocks conversion and local VectorMark execution is
+If an internal MCP failure blocks conversion and local vectorEyes execution is
 available, read [the direct fallback](references/direct-fallback.md). This
 produces an independent file, not a retained MCP version or a successful plan.
 

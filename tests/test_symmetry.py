@@ -1,6 +1,6 @@
 import numpy as np
-from vectormark.types import Axis, Region
-from vectormark.symmetry import _iou, _reflect_cols, classify_regions, detect_axis
+from vectoreyes.types import Axis, Region
+from vectoreyes.symmetry import _iou, _reflect_cols, classify_regions, detect_axis
 
 
 def _leaning_triangle(apex_x, H=44, W=40, base_l=6, base_r=33, base_y=38, apex_y=5):

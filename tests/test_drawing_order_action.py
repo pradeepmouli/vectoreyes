@@ -2,10 +2,10 @@ from dataclasses import replace
 
 import pytest
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import SetZOrderAction
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import SetZOrderAction
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
 def scene():
@@ -20,7 +20,7 @@ def scene():
 
 
 def test_canonical_order_expands_group_in_existing_paint_order():
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     original = scene()
     result = actions.set_drawing_z_order(original,
         SetZOrderAction(op='set_z_order', targets=('r3', 'r1', 'r2')))
@@ -40,7 +40,7 @@ def test_canonical_order_expands_group_in_existing_paint_order():
 
 
 def test_canonical_order_preserves_ties_by_tree_order():
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     original = scene()
     group = original.region('r1')
     original = replace(original, regions=(replace(group,
@@ -58,6 +58,6 @@ def test_canonical_order_preserves_ties_by_tree_order():
     (('r1', 'r2', 'r4'), 'unknown region'),
 ])
 def test_canonical_order_rejects_incomplete_overlapping_or_unknown_targets(targets, message):
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     with pytest.raises(ValueError, match=message):
         actions.set_drawing_z_order(scene(), SetZOrderAction(op='set_z_order', targets=targets))

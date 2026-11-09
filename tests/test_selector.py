@@ -1,10 +1,10 @@
 import numpy as np
 
-from vectormark.contour import region_contours
-from vectormark.fit import fit_path, recognize_polygon
-from vectormark.pipeline import Options
-from vectormark.types import Axis, Region
-from vectormark.selector import generate_geometry_candidates
+from vectoreyes.contour import region_contours
+from vectoreyes.fit import fit_path, recognize_polygon
+from vectoreyes.pipeline import Options
+from vectoreyes.types import Axis, Region
+from vectoreyes.selector import generate_geometry_candidates
 
 
 def _disk(cx, cy, r, h, w):
@@ -81,7 +81,7 @@ def test_primitive_only_straddler_excludes_nonsymmetric_fallback(monkeypatch):
     # recognize_polygon/fit_path fallbacks must still be excluded. Forcing the four
     # refine fitters to None is the only way to reach the prim-clause of
     # has_symmetry_preserving (on natural straddlers symmetric_fit always succeeds).
-    import vectormark.selector as sel
+    import vectoreyes.selector as sel
     for name in ("symmetric_fit", "rounded_trapezoid_fit",
                  "half_ellipse_cap_fit", "symmetric_polygon_fit"):
         monkeypatch.setattr(sel, name, lambda *a, **k: None)
@@ -102,7 +102,7 @@ def test_primitive_only_straddler_excludes_nonsymmetric_fallback(monkeypatch):
                        for c in cands)
 
 
-from vectormark.selector import select_geometry
+from vectoreyes.selector import select_geometry
 
 
 def test_select_picks_circle_for_clean_disk():

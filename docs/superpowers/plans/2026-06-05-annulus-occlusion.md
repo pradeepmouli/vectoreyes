@@ -14,8 +14,8 @@
 
 ## File structure
 
-- `src/vectormark/emit.py` — add `_annulus_path_d`; handle `"annulus"` in `shape_to_svg` and `shape_to_path_d`. (Pipeline needs no change — `_render_body` already routes `ScenePrimitive` through these.)
-- `src/vectormark/occlusion.py` — `label_boundary(contour_index=…)`; extract `_fit_circle`; add `complete_annulus`; `primitive_mask` annulus case; `_pair_constraint` + `_topo_order`; rewrite `reconstruct_scene`. New constants `_CONCENTRIC_TOL`, `_MIN_OVERLAP_PX`, `_OVERLAP_OWNERSHIP`.
+- `src/vectoreyes/emit.py` — add `_annulus_path_d`; handle `"annulus"` in `shape_to_svg` and `shape_to_path_d`. (Pipeline needs no change — `_render_body` already routes `ScenePrimitive` through these.)
+- `src/vectoreyes/occlusion.py` — `label_boundary(contour_index=…)`; extract `_fit_circle`; add `complete_annulus`; `primitive_mask` annulus case; `_pair_constraint` + `_topo_order`; rewrite `reconstruct_scene`. New constants `_CONCENTRIC_TOL`, `_MIN_OVERLAP_PX`, `_OVERLAP_OWNERSHIP`.
 - `tests/test_emit.py` — annulus emit tests (create if absent).
 - `tests/test_occlusion.py` — unit tests for the new occlusion functions.
 - `tests/test_acceptance_annulus.py` — end-to-end acceptance + negative/regression (create).
@@ -25,7 +25,7 @@
 ### Task 1: Annulus SVG emit
 
 **Files:**
-- Modify: `src/vectormark/emit.py`
+- Modify: `src/vectoreyes/emit.py`
 - Test: `tests/test_emit.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -34,8 +34,8 @@
 # tests/test_emit.py
 import numpy as np
 
-from vectormark.emit import shape_to_svg, shape_to_path_d
-from vectormark.fit import Shape
+from vectoreyes.emit import shape_to_svg, shape_to_path_d
+from vectoreyes.fit import Shape
 from tests._render import render_svg
 
 
@@ -66,7 +66,7 @@ Expected: FAIL — `shape_to_svg` raises `ValueError: unknown shape kind: annulu
 
 - [ ] **Step 3: Implement**
 
-In `src/vectormark/emit.py`, add the helper after `_ellipse_path_d`:
+In `src/vectoreyes/emit.py`, add the helper after `_ellipse_path_d`:
 
 ```python
 def _annulus_path_d(cx: float, cy: float, r_outer: float, r_inner: float) -> str:
@@ -98,7 +98,7 @@ Expected: PASS (2 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/emit.py tests/test_emit.py
+git add src/vectoreyes/emit.py tests/test_emit.py
 git commit -m "feat(emit): annulus as an even-odd two-circle path"
 ```
 
@@ -107,7 +107,7 @@ git commit -m "feat(emit): annulus as an even-odd two-circle path"
 ### Task 2: `label_boundary` per-contour
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py:38-56`
+- Modify: `src/vectoreyes/occlusion.py:38-56`
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -115,8 +115,8 @@ git commit -m "feat(emit): annulus as an even-odd two-circle path"
 ```python
 # tests/test_occlusion.py  (add)
 import numpy as np
-from vectormark.types import Region
-from vectormark.occlusion import label_boundary
+from vectoreyes.types import Region
+from vectoreyes.occlusion import label_boundary
 
 
 def _ring_region(label, cx, cy, r_out, r_in, h=120, w=120, color="#3366cc"):
@@ -145,7 +145,7 @@ Expected: FAIL — `label_boundary() got an unexpected keyword argument 'contour
 
 - [ ] **Step 3: Implement**
 
-Replace `label_boundary` in `src/vectormark/occlusion.py`:
+Replace `label_boundary` in `src/vectoreyes/occlusion.py`:
 
 ```python
 def label_boundary(
@@ -178,7 +178,7 @@ Expected: PASS (new test + all existing occlusion tests, since the default `cont
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): label_boundary reads any contour (outer or hole)"
 ```
 
@@ -187,14 +187,14 @@ git commit -m "feat(occlusion): label_boundary reads any contour (outer or hole)
 ### Task 3: Extract `_fit_circle`
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (`complete_primitive` circle branch)
+- Modify: `src/vectoreyes/occlusion.py` (`complete_primitive` circle branch)
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_occlusion.py  (add)
-from vectormark.occlusion import _fit_circle
+from vectoreyes.occlusion import _fit_circle
 
 
 def test_fit_circle_recovers_full_circle():
@@ -220,7 +220,7 @@ Expected: FAIL — `cannot import name '_fit_circle'`.
 
 - [ ] **Step 3: Implement**
 
-In `src/vectormark/occlusion.py`, add `_fit_circle` above `complete_primitive`:
+In `src/vectoreyes/occlusion.py`, add `_fit_circle` above `complete_primitive`:
 
 ```python
 def _fit_circle(
@@ -268,7 +268,7 @@ Expected: PASS — new `_fit_circle` tests plus the existing `complete_primitive
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "refactor(occlusion): extract _fit_circle (own-arc circle fit)"
 ```
 
@@ -277,14 +277,14 @@ git commit -m "refactor(occlusion): extract _fit_circle (own-arc circle fit)"
 ### Task 4: `primitive_mask` annulus case
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py:156-162`
+- Modify: `src/vectoreyes/occlusion.py:156-162`
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_occlusion.py  (add)
-from vectormark.occlusion import primitive_mask
+from vectoreyes.occlusion import primitive_mask
 
 
 def test_primitive_mask_annulus():
@@ -302,7 +302,7 @@ Expected: FAIL — annulus falls into the ellipse branch and raises `KeyError: '
 
 - [ ] **Step 3: Implement**
 
-Replace `primitive_mask` in `src/vectormark/occlusion.py`:
+Replace `primitive_mask` in `src/vectoreyes/occlusion.py`:
 
 ```python
 def primitive_mask(prim: dict, h: int, w: int) -> np.ndarray:
@@ -325,7 +325,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): primitive_mask handles annulus"
 ```
 
@@ -334,14 +334,14 @@ git commit -m "feat(occlusion): primitive_mask handles annulus"
 ### Task 5: `complete_annulus`
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (add `complete_annulus`, `_complete_member`, `_CONCENTRIC_TOL`)
+- Modify: `src/vectoreyes/occlusion.py` (add `complete_annulus`, `_complete_member`, `_CONCENTRIC_TOL`)
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_occlusion.py  (add)
-from vectormark.occlusion import complete_annulus
+from vectoreyes.occlusion import complete_annulus
 
 
 def _occluded_ring(h=140, w=140):
@@ -376,7 +376,7 @@ Expected: FAIL — `cannot import name 'complete_annulus'`.
 
 - [ ] **Step 3: Implement**
 
-In `src/vectormark/occlusion.py`, add the constant near the others (`_MAX_RESIDUAL = 1.6` block):
+In `src/vectoreyes/occlusion.py`, add the constant near the others (`_MAX_RESIDUAL = 1.6` block):
 
 ```python
 _CONCENTRIC_TOL = 2.0
@@ -427,7 +427,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): complete_annulus from outer+inner own arcs"
 ```
 
@@ -436,14 +436,14 @@ git commit -m "feat(occlusion): complete_annulus from outer+inner own arcs"
 ### Task 6: Pairwise over/under + topological order
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py` (add `_pair_constraint`, `_topo_order`, `_MIN_OVERLAP_PX`, `_OVERLAP_OWNERSHIP`)
+- Modify: `src/vectoreyes/occlusion.py` (add `_pair_constraint`, `_topo_order`, `_MIN_OVERLAP_PX`, `_OVERLAP_OWNERSHIP`)
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_occlusion.py  (add)
-from vectormark.occlusion import _pair_constraint, _topo_order
+from vectoreyes.occlusion import _pair_constraint, _topo_order
 
 
 def test_pair_constraint_from_overlap_ownership():
@@ -472,7 +472,7 @@ Expected: FAIL — `cannot import name '_pair_constraint'`.
 
 - [ ] **Step 3: Implement**
 
-In `src/vectormark/occlusion.py`, add constants near `_MAX_RESIDUAL`:
+In `src/vectoreyes/occlusion.py`, add constants near `_MAX_RESIDUAL`:
 
 ```python
 _MIN_OVERLAP_PX = 12
@@ -528,7 +528,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): pairwise over/under + topological paint order"
 ```
 
@@ -537,14 +537,14 @@ git commit -m "feat(occlusion): pairwise over/under + topological paint order"
 ### Task 7: Generalize `reconstruct_scene` to N shapes
 
 **Files:**
-- Modify: `src/vectormark/occlusion.py:207-289` (rewrite `reconstruct_scene`)
+- Modify: `src/vectoreyes/occlusion.py:207-289` (rewrite `reconstruct_scene`)
 - Test: `tests/test_occlusion.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
 # tests/test_occlusion.py  (add)
-from vectormark.occlusion import reconstruct_scene
+from vectoreyes.occlusion import reconstruct_scene
 
 
 def test_reconstruct_ring_plus_disk():
@@ -581,7 +581,7 @@ Expected: FAIL — current `reconstruct_scene` only completes circle/ellipse cre
 
 - [ ] **Step 3: Implement**
 
-Replace `reconstruct_scene` in `src/vectormark/occlusion.py` with:
+Replace `reconstruct_scene` in `src/vectoreyes/occlusion.py` with:
 
 ```python
 def reconstruct_scene(
@@ -685,7 +685,7 @@ Expected: PASS — new ring+disk and weave-decline tests, plus all existing occl
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/occlusion.py tests/test_occlusion.py
+git add src/vectoreyes/occlusion.py tests/test_occlusion.py
 git commit -m "feat(occlusion): N-shape reconstruction with inferred global z-order"
 ```
 
@@ -702,7 +702,7 @@ git commit -m "feat(occlusion): N-shape reconstruction with inferred global z-or
 # tests/test_acceptance_annulus.py
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import render_svg, ssim
 
 

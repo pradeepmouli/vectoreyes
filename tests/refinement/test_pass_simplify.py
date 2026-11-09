@@ -2,15 +2,15 @@ import math
 
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape, minimum_line_length
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_sampling import _parse_subpaths
-from vectormark.refinement.passes.simplify import simplify_pass
-from vectormark.pipeline import Options, _refinement_passes
-import vectormark.drawing_simplification as simplify_module
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape, minimum_line_length
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_sampling import _parse_subpaths
+from vectoreyes.refinement.passes.simplify import simplify_pass
+from vectoreyes.pipeline import Options, _refinement_passes
+import vectoreyes.drawing_simplification as simplify_module
 
 
 def _command_count(d: str) -> int:

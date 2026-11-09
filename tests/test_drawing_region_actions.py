@@ -1,17 +1,18 @@
 import numpy as np
 import pytest
 
-from vectormark.drawing_fill import FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
-from vectormark.drawing import DrawingRegion
-from vectormark.drawing_actions import ActionSettings, FitPrimitiveAction
-from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.drawing_fill import FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
+from vectoreyes.drawing import DrawingRegion
+from vectoreyes.drawing_actions import ActionSettings, FitPrimitiveAction
+from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.geometry_native import region_path
 
 
 def test_canonical_path_fit_retains_matching_declared_corners_without_adapter():
-    from vectormark.drawing_actions import FitPathDrawingAction
-    from vectormark.drawing_region_actions import fit_region_path
-    from vectormark.path_fitting import fit_raster_paths
-    from vectormark.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.drawing_actions import FitPathDrawingAction
+    from vectoreyes.drawing_region_actions import fit_region_path
+    from vectoreyes.path_fitting import fit_raster_paths
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
     raster = np.ones((8, 8), dtype=bool)
     settings = ActionSettings(epsilon=.1, max_error=.1, fit_strategy='quadratic')
     path = fit_raster_paths(raster, region_id='r1', settings=settings)[0]
@@ -27,9 +28,9 @@ def test_canonical_path_fit_retains_matching_declared_corners_without_adapter():
 
 @pytest.mark.parametrize('split', [False, True])
 def test_region_path_action_publishes_canonical_components_and_cutouts(split):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing_actions import FitPathDrawingAction
-    from vectormark.path_geometry import PathGeometryWithCutouts
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing_actions import FitPathDrawingAction
+    from vectoreyes.path_geometry import PathGeometryWithCutouts
     region = DrawingRegion('r2-1', PrimitiveGeometry(RectanglePrimitive((0, 0), 2, 2)),
         fill=FlatFill('#123456'), z=7, source_region_ids=('original',))
     raster = np.zeros((20, 20), dtype=bool)
@@ -52,8 +53,8 @@ def test_region_path_action_publishes_canonical_components_and_cutouts(split):
 
 @pytest.mark.parametrize('branch', [False, True])
 def test_region_path_action_requires_matching_leaf(branch):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing_actions import FitPathDrawingAction
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing_actions import FitPathDrawingAction
     leaf = DrawingRegion('r1-1', PrimitiveGeometry(RectanglePrimitive((0, 0), 4, 4)))
     region = DrawingRegion('r1', children=(leaf,)) if branch else leaf
     with pytest.raises(ValueError, match='leaf' if branch else 'target'):
@@ -63,16 +64,15 @@ def test_region_path_action_requires_matching_leaf(branch):
 
 
 def test_region_primitive_action_preserves_identity_paint_and_provenance():
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     original = DrawingRegion('r2-1', PrimitiveGeometry(RectanglePrimitive((1, 1), 2, 2)),
         fill=FlatFill('#123456'), z=7, source_region_ids=('r2', 'r3'),
         diagnostics={'source': {'label': 3}, 'geometry': {'explicit': 'path'}})
-    raster = np.zeros((10, 12), dtype=bool)
-    raster[2:8, 3:11] = True
     result = actions.fit_region_primitive(original,
         FitPrimitiveAction(op='fit_primitive', target='r2-1', type='rect'),
-        raster=raster, settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
-    assert result.geometry == PrimitiveGeometry(RectanglePrimitive((3, 2), 8, 6))
+        footprint=region_path(original, {}),
+        settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
+    assert result.geometry == original.geometry
     assert result.id == original.id
     assert result.fill == original.fill
     assert result.z == original.z
@@ -85,12 +85,12 @@ def test_region_primitive_action_preserves_identity_paint_and_provenance():
 
 @pytest.mark.parametrize('branch', [False, True])
 def test_region_primitive_action_rejects_wrong_target_or_branch(branch):
-    import vectormark.drawing_region_actions as actions
+    import vectoreyes.drawing_region_actions as actions
     leaf = DrawingRegion('r1-1', PrimitiveGeometry(RectanglePrimitive((0, 0), 4, 4)))
     region = DrawingRegion('r1', children=(leaf,)) if branch else leaf
     action = FitPrimitiveAction(op='fit_primitive', target='r1', type='circle')
     with pytest.raises(ValueError, match='leaf' if branch else 'target'):
-        actions.fit_region_primitive(region, action, raster=np.ones((8, 8), dtype=bool),
+        actions.fit_region_primitive(region, action, footprint=region_path(leaf, {}),
             settings=ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
 
 
@@ -104,8 +104,8 @@ def test_region_primitive_action_rejects_wrong_target_or_branch(branch):
       'png_base64': 'iVBORw0KGgo='}, RasterFill),
 ])
 def test_region_fill_action_changes_only_paint(spec, fill_type):
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing_actions import SetFillAction
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing_actions import SetFillAction
     region = DrawingRegion('r1', PrimitiveGeometry(RectanglePrimitive((0, 0), 8, 8)),
         fill=FlatFill('#123456'), z=3, source_region_ids=('original',), diagnostics={'label': 4})
     result = actions.set_region_fill(region,
@@ -119,8 +119,8 @@ def test_region_fill_action_changes_only_paint(spec, fill_type):
 
 
 def test_region_fill_action_rejects_wrong_target():
-    import vectormark.drawing_region_actions as actions
-    from vectormark.drawing_actions import SetFillAction
+    import vectoreyes.drawing_region_actions as actions
+    from vectoreyes.drawing_actions import SetFillAction
     region = DrawingRegion('r1', PrimitiveGeometry(RectanglePrimitive((0, 0), 8, 8)))
     with pytest.raises(ValueError, match='target'):
         actions.set_region_fill(region, SetFillAction.model_validate(

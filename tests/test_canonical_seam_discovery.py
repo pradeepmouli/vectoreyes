@@ -3,12 +3,12 @@ from dataclasses import replace
 import pytest
 
 from tests.test_canonical_structural_replay import leaf
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.fit import Shape
-from vectormark.geometry_native import region_path
-from vectormark.refinement.replay_binding import capture_replay_state
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.fit import Shape
+from vectoreyes.geometry_native import region_path
+from vectoreyes.refinement.replay_binding import capture_replay_state
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def regions():
@@ -22,26 +22,26 @@ def fixture():
 
 @pytest.mark.parametrize('allow_underlap', [False, True])
 def test_canonical_seam_discovery_needs_no_sampling_scene_and_replays(monkeypatch, allow_underlap):
-    from vectormark.drawing_proposals import detect_seam_regions
+    from vectoreyes.drawing_proposals import detect_seam_regions
     state = fixture()
     def forbidden(*args, **kwargs):
         raise AssertionError('seam discovery projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.region_sample.RegionSample.__init__', forbidden)
-    monkeypatch.setattr('vectormark.drawing_adapter.bind_region_inputs', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.region_sample.RegionSample.__init__', forbidden)
+    monkeypatch.setattr('vectoreyes.drawing_adapter.bind_region_inputs', forbidden)
     result = detect_seam_regions(state, allow_underlap=allow_underlap)
     assert len(result.batches[0].operations) == 1
     indexed = {item.id: item for item in result.state.drawing.regions}
     assert region_path(indexed['r1'], indexed).bounds[2] == pytest.approx(49.8)
     assert region_path(indexed['r2'], indexed).bounds[0] == pytest.approx(49.8)
     assert indexed['r2'].fill == state.drawing.region('r2').fill
-    monkeypatch.setattr('vectormark.seam_detection._candidate_for_pair', forbidden)
+    monkeypatch.setattr('vectoreyes.seam_detection._candidate_for_pair', forbidden)
     assert canonical_input_revision(replay_automatic_batches(state, result.batches)) == canonical_input_revision(result.state)
 
 
 def test_seam_discovery_matches_existing_numeric_selection():
-    from vectormark.drawing_proposals import detect_seam_regions
-    from vectormark.refinement.automatic_replay import select_refinements_with_intent
-    from vectormark.refinement.passes.seams import seams_pass
+    from vectoreyes.drawing_proposals import detect_seam_regions
+    from vectoreyes.refinement.automatic_replay import select_refinements_with_intent
+    from vectoreyes.refinement.passes.seams import seams_pass
     source = regions()
     state = capture_replay_state(source, Canvas(300, 440))
     expected = select_refinements_with_intent(list(source), {item.id: item.raster for item in source}, [seams_pass])
@@ -52,7 +52,7 @@ def test_seam_discovery_matches_existing_numeric_selection():
 
 
 def test_distinct_material_groups_do_not_get_stitched():
-    from vectormark.drawing_proposals import detect_seam_regions
+    from vectoreyes.drawing_proposals import detect_seam_regions
     source = tuple(replace(item, diagnostics={'surface_fill': {'group': item.id}}) for item in regions())
     state = capture_replay_state(source, Canvas(300, 440))
     assert not detect_seam_regions(state).batches[0].operations
@@ -60,14 +60,14 @@ def test_distinct_material_groups_do_not_get_stitched():
 
 def test_public_stitch_plan_does_not_project_a_sampling_scene(monkeypatch):
     from tests.test_drawing_recipe_actions import _direct_recipe_fixture
-    from vectormark.drawing_plan import DrawingPlan
-    from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
+    from vectoreyes.drawing_plan import DrawingPlan
+    from vectoreyes.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
     evidence, paint, base = _direct_recipe_fixture(regions(), width=300, height=440)
-    plan = DrawingPlan.model_validate({'version': 'vectormark.plan.v1', 'drawing_id': 'drw_seams',
+    plan = DrawingPlan.model_validate({'version': 'vectoreyes.plan.v1', 'drawing_id': 'drw_seams',
         'base_version': 'v0', 'ops': [{'op': 'stitch', 'targets': ['r1', 'r2']}]})
     def forbidden(*args, **kwargs):
         raise AssertionError('public stitch projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.replay_binding.working_regions_from_state', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.replay_binding.working_regions_from_state', forbidden)
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     assert sum(len(batch.operations) for batch in recipe.automatic_batches) == 1
     result = propose_effective_recipe(drawing_id='drw_seams', evidence=evidence, paint=paint, recipe=recipe)
@@ -76,12 +76,12 @@ def test_public_stitch_plan_does_not_project_a_sampling_scene(monkeypatch):
 
 @pytest.mark.parametrize('selected', [('r1',), ('r2',), ('r1', 'r2')])
 def test_stitch_can_target_either_side_or_both(selected):
-    from vectormark.drawing_proposals import detect_seam_regions
+    from vectoreyes.drawing_proposals import detect_seam_regions
     assert detect_seam_regions(fixture(), target_ids=selected).batches[0].operations
 
 
 def test_post_symmetry_mode_does_not_revisit_unrelated_roots():
-    from vectormark.drawing_proposals import detect_seam_regions
+    from vectoreyes.drawing_proposals import detect_seam_regions
     state = fixture()
     result = detect_seam_regions(state, post_symmetry=True)
     assert not any(batch.operations for batch in result.batches)
@@ -89,8 +89,8 @@ def test_post_symmetry_mode_does_not_revisit_unrelated_roots():
 
 
 def test_nested_repeated_local_ids_keep_distinct_seam_updates():
-    from vectormark.drawing_proposals import detect_seam_regions
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.drawing_proposals import detect_seam_regions
+    from vectoreyes.refinement.region_sample import RegionSample
     upper = regions()
     lower = (leaf(1, Shape('path', {'d': 'M10 100 L49.2 100 L49.2 160 L10 160 Z'}), '#112233'),
         leaf(2, Shape('path', {'d': 'M50.4 100 L90 100 L90 160 L50.4 160 Z'}), '#abcdef'))
@@ -107,10 +107,10 @@ def test_nested_repeated_local_ids_keep_distinct_seam_updates():
 
 
 def test_shared_seam_candidates_keep_full_ancestry_for_duplicate_leaf_ids():
-    from vectormark.seam_detection import SeamDetectionInput, discover_seam_choices
-    from vectormark.refinement.automatic_replay import PassInputRegionRef
-    from vectormark.refinement.region_sample import to_polygon
-    from vectormark.skia_geometry import unary_union
+    from vectoreyes.seam_detection import SeamDetectionInput, discover_seam_choices
+    from vectoreyes.refinement.automatic_replay import PassInputRegionRef
+    from vectoreyes.refinement.region_sample import to_polygon
+    from vectoreyes.skia_geometry import unary_union
     source = regions()
     footprint = unary_union([item.footprint for item in source])
     nodes = [SeamDetectionInput(PassInputRegionRef('', '', (10,)), None, footprint,
@@ -130,9 +130,9 @@ def test_shared_seam_candidates_keep_full_ancestry_for_duplicate_leaf_ids():
 
 @pytest.mark.parametrize('allow_underlap', [False, True])
 def test_underlap_toggle_is_retained_in_actual_constraint_kind(allow_underlap):
-    from vectormark.seam_detection import SeamDetectionInput, discover_seam_choices
-    from vectormark.refinement.automatic_replay import PathOpsUnderlapConstraint, PassInputRegionRef
-    from vectormark.skia_geometry import SkPath
+    from vectoreyes.seam_detection import SeamDetectionInput, discover_seam_choices
+    from vectoreyes.refinement.automatic_replay import PathOpsUnderlapConstraint, PassInputRegionRef
+    from vectoreyes.skia_geometry import SkPath
     source = (leaf(21, Shape('path', {'d': 'M0 0 L100 0 L0 100 Z'}), '#112233'),
         leaf(22, Shape('path', {'d': 'M100 1 L100 100 L1 100 Z'}), '#abcdef'))
     clip = SkPath(shell=[(0, 0), (100, 0), (100, 100), (0, 100)])
@@ -153,8 +153,8 @@ def test_underlap_toggle_is_retained_in_actual_constraint_kind(allow_underlap):
 
 
 def test_targeting_a_nested_leaf_can_repair_its_seam_with_an_outside_region():
-    from vectormark.drawing_proposals import detect_seam_regions
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.drawing_proposals import detect_seam_regions
+    from vectoreyes.refinement.region_sample import RegionSample
     left, right = regions()
     parent = RegionSample.branch(id=10, drawing_id='parent', children=(left,))
     state = capture_replay_state((parent, right), Canvas(300, 440))
@@ -164,9 +164,9 @@ def test_targeting_a_nested_leaf_can_repair_its_seam_with_an_outside_region():
 
 
 def test_numeric_replay_does_not_alias_repeated_leaf_ids_within_one_owner():
-    from vectormark.refinement.region_sample import RegionSample
-    from vectormark.refinement.passes.seams import seams_pass
-    from vectormark.refinement.automatic_replay import select_refinements_with_intent, replay_batches
+    from vectoreyes.refinement.region_sample import RegionSample
+    from vectoreyes.refinement.passes.seams import seams_pass
+    from vectoreyes.refinement.automatic_replay import select_refinements_with_intent, replay_batches
     left, right = regions()
     right = replace(right, id=1, drawing_id='other')
     parent = RegionSample.branch(id=10, drawing_id='parent', children=(
@@ -181,8 +181,8 @@ def test_numeric_replay_does_not_alias_repeated_leaf_ids_within_one_owner():
 
 
 def test_post_symmetry_mode_repairs_only_the_marked_branch():
-    from vectormark.drawing_proposals import detect_seam_regions
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.drawing_proposals import detect_seam_regions
+    from vectoreyes.refinement.region_sample import RegionSample
     parent = RegionSample.branch(id=10, drawing_id='parent', children=regions(),
         diagnostics={'symmetry': {'mode': 'self'}})
     state = capture_replay_state((parent,), Canvas(300, 440))

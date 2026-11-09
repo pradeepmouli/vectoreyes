@@ -1,6 +1,6 @@
 import numpy as np
 
-from vectormark.softlabel import alpha_unmix, soft_label_field
+from vectoreyes.softlabel import alpha_unmix, soft_label_field
 
 
 def test_alpha_unmix_vectorizes_over_leading_dimensions():

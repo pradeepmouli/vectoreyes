@@ -35,7 +35,7 @@ Approach A: a declarative `SelectionPolicy` carried on `Options`, threaded
 pure; selection filters/forces as separate stages. Each geometry candidate carries
 a fitter-level **strategy** provenance label so both stages can name what they act on.
 
-### New module: `src/vectormark/selection.py`
+### New module: `src/vectoreyes/selection.py`
 
 User-facing config + the strategy vocabulary. `selector.py` imports it (no cycle:
 `selection.py` imports nothing from the pipeline).
@@ -225,9 +225,9 @@ supplied *and* a choice is actually exercised.
 
 ## Files
 
-- **Create:** `src/vectormark/selection.py`, `tests/test_selection.py`
-- **Modify:** `src/vectormark/selector.py` (GeomCandidate, labeled generation,
-  3-stage `select_geometry`), `src/vectormark/candidate.py` (`strategy` field),
-  `src/vectormark/pipeline.py` (`Options.selection`, thread + `sN` addressing in
+- **Create:** `src/vectoreyes/selection.py`, `tests/test_selection.py`
+- **Modify:** `src/vectoreyes/selector.py` (GeomCandidate, labeled generation,
+  3-stage `select_geometry`), `src/vectoreyes/candidate.py` (`strategy` field),
+  `src/vectoreyes/pipeline.py` (`Options.selection`, thread + `sN` addressing in
   `build_candidates`), `tests/test_selector.py` (return-type update),
   `tests/test_pipeline.py` (parity + override + restriction).

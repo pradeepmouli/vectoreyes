@@ -2,7 +2,7 @@
 
 Store independent source SVGs and reviewed reconstructions here, named after
 their corpus entry. Each SVG has a JSON provenance/review record. Generated
-VectorMark output belongs in `corpus/svg/`, never here. Corpus refreshes must not
+vectorEyes output belongs in `corpus/svg/`, never here. Corpus refreshes must not
 overwrite references.
 
 - `burger_king.svg`: upstream SVG approved by the user on 2026-09-08.

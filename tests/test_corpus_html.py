@@ -3,11 +3,11 @@ from PIL import Image
 
 import scripts.generate_corpus_html as corpus_html
 from scripts.generate_corpus_html import CorpusEntry, generate_corpus_html
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark import Options
-from vectormark.refinement import trace as trace_module
-from vectormark.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes import Options
+from vectoreyes.refinement import trace as trace_module
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
 
 
 def _tiny_disk():

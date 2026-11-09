@@ -1,8 +1,8 @@
-# Decoupling Shape from Fill in the vectormark Pipeline — Design
+# Decoupling Shape from Fill in the vectoreyes Pipeline — Design
 
 **Status:** approved (brainstorming)
 **Date:** 2026-06-27
-**Area:** `src/vectormark/pipeline.py`, `src/vectormark/gradient.py`, new fill/merge modules; `Region`/`Candidate` types unchanged.
+**Area:** `src/vectoreyes/pipeline.py`, `src/vectoreyes/gradient.py`, new fill/merge modules; `Region`/`Candidate` types unchanged.
 
 ## Goal
 

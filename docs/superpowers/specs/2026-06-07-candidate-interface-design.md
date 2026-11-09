@@ -34,7 +34,7 @@ element, which is best?" — there is no candidate object to compare.
 
 ## Architecture
 
-New module `src/vectormark/candidate.py` holding IO-free data types (matching the `types.py`
+New module `src/vectoreyes/candidate.py` holding IO-free data types (matching the `types.py`
 convention that pipeline-stage data is IO-free; SVG emission stays in `emit.py`/`pipeline.py`):
 
 ```python

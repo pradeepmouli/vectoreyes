@@ -1,7 +1,7 @@
 """Private root replay evidence must precede fitting and survive retention."""
 
-from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
-from vectormark.drawing_render import render_drawing as _canonical_render
+from vectoreyes.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectoreyes.drawing_render import render_drawing as _canonical_render
 from dataclasses import FrozenInstanceError, replace
 import hashlib
 import json
@@ -11,22 +11,22 @@ import numpy as np
 import pytest
 
 
-from vectormark.refinement.assembly_binding import assemble_working_roots
-from vectormark.contour import region_contours
-import vectormark.drawing_assembly as assembly
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_engine import RasterImage
+from vectoreyes.refinement.assembly_binding import assemble_working_roots
+from vectoreyes.contour import region_contours
+import vectoreyes.drawing_assembly as assembly
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe,
     build_paint_evidence,
 )
-from vectormark.drawing_replay import propose_effective_recipe
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
-from vectormark.drawing_state import DrawingStore, VersionCandidate
-from vectormark.path_geometry import LineCommand, geometry_from_svg_d
-import vectormark.fit as fit
-from vectormark.path_fit_evidence import automatic_fit_evidence
+from vectoreyes.drawing_replay import propose_effective_recipe
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions
+from vectoreyes.drawing_state import DrawingStore, VersionCandidate
+from vectoreyes.path_geometry import LineCommand, geometry_from_svg_d
+import vectoreyes.fit as fit
+from vectoreyes.path_fit_evidence import automatic_fit_evidence
 
 
 def _fixture(variant):
@@ -112,7 +112,7 @@ def test_single_material_retains_baseline_evidence_and_declarations():
     result = assemble_working_roots(trace, rgb, min_region_fraction=0)
     baseline = trace.geometry_regions[0].trace_path
     assert result.trace.root_path_evidence[0].fit == baseline.path_evidence[0]
-    from vectormark.immutable_value import freeze_value
+    from vectoreyes.immutable_value import freeze_value
     assert result.regions[0].diagnostics["corners"] == freeze_value({
         **baseline.corner_diagnostics, "path": baseline.d,
     })

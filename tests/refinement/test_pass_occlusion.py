@@ -1,16 +1,16 @@
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.occlusion import ScenePrimitive
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.passes.occlusion import occlusion_pass
-import vectormark.occlusion_detection as occlusion_module
-from vectormark.refinement.passes.primitives import primitives_pass
-from vectormark.refinement.trace import trace_regions
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.pipeline import Options
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.occlusion import ScenePrimitive
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.passes.occlusion import occlusion_pass
+import vectoreyes.occlusion_detection as occlusion_module
+from vectoreyes.refinement.passes.primitives import primitives_pass
+from vectoreyes.refinement.trace import trace_regions
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.pipeline import Options
 
 
 def _synthetic_mastercard(h=240, w=360, gap=58, r=104):

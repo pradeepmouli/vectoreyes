@@ -6,7 +6,7 @@
 
 **Architecture:** Surface the detected mirror axes from `idealize` as line segments in output-frame (viewBox) coordinates (`IdealizeReport.axes`, parallel to `strategies`; tilted marks mapped through `_rectify_affine`). The contact-sheet renderer injects those segments as `<line>` elements into each variant SVG before rasterizing, so resvg scales them with the artwork.
 
-**Tech Stack:** numpy, Pillow, existing vectormark pipeline; `resvg-py` (`scoring` extra) for the contact sheet.
+**Tech Stack:** numpy, Pillow, existing vectoreyes pipeline; `resvg-py` (`scoring` extra) for the contact sheet.
 
 **Spec:** `docs/superpowers/specs/2026-06-10-axis-overlay-design.md`
 
@@ -14,9 +14,9 @@
 
 ## File Structure
 
-- **Modify** `src/vectormark/pipeline.py` — `AxisLine` dataclass; `IdealizeReport.axes`; `_render_body` collects per-component frame axes; `idealize`/`_idealize_rectified` thread + map axes; `_report_from_cands` → `_build_report(cands, axes)`.
-- **Modify** `src/vectormark/variants.py` — `_axis_line_svg`, `_inject_axes`, `_render_tile(draw_axes=)`, `compose_contact_sheet(draw_axes=)`.
-- **Modify** `src/vectormark/cli.py` — `--axes` flag + stderr note.
+- **Modify** `src/vectoreyes/pipeline.py` — `AxisLine` dataclass; `IdealizeReport.axes`; `_render_body` collects per-component frame axes; `idealize`/`_idealize_rectified` thread + map axes; `_report_from_cands` → `_build_report(cands, axes)`.
+- **Modify** `src/vectoreyes/variants.py` — `_axis_line_svg`, `_inject_axes`, `_render_tile(draw_axes=)`, `compose_contact_sheet(draw_axes=)`.
+- **Modify** `src/vectoreyes/cli.py` — `--axes` flag + stderr note.
 - **Test** `tests/test_pipeline_report.py`, `tests/test_variants.py`.
 
 ---
@@ -24,7 +24,7 @@
 ## Task 1: Surface mirror axes on `IdealizeReport`
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py`
+- Modify: `src/vectoreyes/pipeline.py`
 - Test: `tests/test_pipeline_report.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -33,7 +33,7 @@ Append to `tests/test_pipeline_report.py` (it already imports numpy, PIL Image/I
 
 ```python
 from tests._render import render_svg
-from vectormark.pipeline import AxisLine, Options
+from vectoreyes.pipeline import AxisLine, Options
 
 
 def _arch_svg(deg):
@@ -74,7 +74,7 @@ Expected: FAIL — `ImportError: cannot import name 'AxisLine'`.
 
 - [ ] **Step 3: Add `AxisLine` and extend `IdealizeReport`**
 
-In `src/vectormark/pipeline.py`, add `AxisLine` just above `class IdealizeReport`, and add the `axes` field + update `empty()`:
+In `src/vectoreyes/pipeline.py`, add `AxisLine` just above `class IdealizeReport`, and add the `axes` field + update `empty()`:
 
 ```python
 @dataclass(frozen=True)
@@ -148,7 +148,7 @@ def _build_report(cands: list[Candidate], axes: list[AxisLine]) -> IdealizeRepor
     return IdealizeReport(types.MappingProxyType(dict(strategies)), gradients, len(cands), tuple(axes))
 ```
 
-Add the import for `apply_affine_point` to the existing `from .emit import ...` line in pipeline.py (verify the current emit import with `rg -n "from .emit import" src/vectormark/pipeline.py`; add `apply_affine_point` to it).
+Add the import for `apply_affine_point` to the existing `from .emit import ...` line in pipeline.py (verify the current emit import with `rg -n "from .emit import" src/vectoreyes/pipeline.py`; add `apply_affine_point` to it).
 
 Rewrite `_idealize_rectified` to thread frame axes and map them through the rectify affine (compute the affine once, use it for both the flatten bake and the axis mapping):
 
@@ -211,7 +211,7 @@ If `test_report_axes_tilted_is_non_vertical` does not see `"rotate("` in the svg
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_pipeline_report.py
+git add src/vectoreyes/pipeline.py tests/test_pipeline_report.py
 git commit -m "feat(pipeline): surface detected mirror axes on IdealizeReport
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -222,12 +222,12 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 2: Inject axes into the contact-sheet tiles
 
 **Files:**
-- Modify: `src/vectormark/variants.py`
+- Modify: `src/vectoreyes/variants.py`
 - Test: `tests/test_variants.py`
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `tests/test_variants.py` (top-of-file imports already include `io`, `pytest`, `Image`, `import vectormark.variants as V`, `generate_variants`, `_mark`; add `from vectormark.variants import _axis_line_svg, _inject_axes` to the top import block and `from vectormark.pipeline import AxisLine` to the top):
+Append to `tests/test_variants.py` (top-of-file imports already include `io`, `pytest`, `Image`, `import vectoreyes.variants as V`, `generate_variants`, `_mark`; add `from vectoreyes.variants import _axis_line_svg, _inject_axes` to the top import block and `from vectoreyes.pipeline import AxisLine` to the top):
 
 ```python
 def test_axis_line_svg_emits_line():
@@ -258,7 +258,7 @@ Expected: FAIL — `cannot import name '_axis_line_svg'` / `compose_contact_shee
 
 - [ ] **Step 3: Add the injection helpers and `draw_axes` threading**
 
-In `src/vectormark/variants.py`, add `import re` to the top imports and `from .pipeline import AxisLine` to the existing `from .pipeline import ...` line (verify with `rg -n "from .pipeline import" src/vectormark/variants.py`). Add the helpers (place them just above `_render_tile`):
+In `src/vectoreyes/variants.py`, add `import re` to the top imports and `from .pipeline import AxisLine` to the existing `from .pipeline import ...` line (verify with `rg -n "from .pipeline import" src/vectoreyes/variants.py`). Add the helpers (place them just above `_render_tile`):
 
 ```python
 _AXIS_STROKE = "#e000a0"   # magenta — distinct from typical logo palettes
@@ -313,7 +313,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/variants.py tests/test_variants.py
+git add src/vectoreyes/variants.py tests/test_variants.py
 git commit -m "feat(variants): inject symmetry-axis <line>s into contact-sheet tiles
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -324,7 +324,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 3: CLI `--axes` flag + README
 
 **Files:**
-- Modify: `src/vectormark/cli.py`, `README.md`
+- Modify: `src/vectoreyes/cli.py`, `README.md`
 - Test: `tests/test_variants.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -403,7 +403,7 @@ Expected: all pass. Paste the exact final summary line.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/vectormark/cli.py README.md tests/test_variants.py
+git add src/vectoreyes/cli.py README.md tests/test_variants.py
 git commit -m "feat(cli): --axes overlays symmetry axes on the variant contact sheet
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

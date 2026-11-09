@@ -6,11 +6,11 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.boundary_detail import (
+from vectoreyes.boundary_detail import (
     BoundaryDetailPolicy, BoundaryDetailRequest, assess_boundary_detail,
 )
-from vectormark.path_geometry import parse_svg_paths
-from vectormark.python_drawing_engine import PythonDrawingEngine
+from vectoreyes.path_geometry import parse_svg_paths
+from vectoreyes.python_drawing_engine import PythonDrawingEngine
 
 
 def path(d):

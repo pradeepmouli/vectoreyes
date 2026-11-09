@@ -4,12 +4,12 @@ import numpy as np
 import pytest
 
 from tests.refinement.test_pass_occlusion import _synthetic_mastercard
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.pipeline import Options
-from vectormark.refinement.replay_binding import capture_replay_state
-from vectormark.refinement.trace import trace_regions
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.pipeline import Options
+from vectoreyes.refinement.replay_binding import capture_replay_state
+from vectoreyes.refinement.trace import trace_regions
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def fixture():
@@ -20,13 +20,13 @@ def fixture():
 
 @pytest.mark.parametrize('no_symmetry', [False, True])
 def test_occlusion_discovery_uses_retained_evidence_without_sampling_scene(monkeypatch, no_symmetry):
-    from vectormark.drawing_proposals import detect_occlusion_regions
+    from vectoreyes.drawing_proposals import detect_occlusion_regions
     regions, _masks, state = fixture()
     before = canonical_input_revision(state)
     def forbidden(*args, **kwargs):
         raise AssertionError('occlusion discovery projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.region_sample.RegionSample.__init__', forbidden)
-    monkeypatch.setattr('vectormark.drawing_adapter.bind_region_inputs', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.region_sample.RegionSample.__init__', forbidden)
+    monkeypatch.setattr('vectoreyes.drawing_adapter.bind_region_inputs', forbidden)
     result = detect_occlusion_regions(state, no_symmetry=no_symmetry)
     assert len(result.state.drawing.regions) == 1
     branch = result.state.drawing.regions[0]
@@ -35,16 +35,16 @@ def test_occlusion_discovery_uses_retained_evidence_without_sampling_scene(monke
     assert record.proposal_ids == tuple(sorted(region.id for region in regions))
     assert len(record.intent.action.children) == 3
     assert canonical_input_revision(state) == before
-    monkeypatch.setattr('vectormark.occlusion_detection.reconstruct_scene', forbidden)
+    monkeypatch.setattr('vectoreyes.occlusion_detection.reconstruct_scene', forbidden)
     replayed = replay_automatic_batches(state, result.batches)
     assert canonical_input_revision(replayed) == canonical_input_revision(result.state)
     assert replayed.region_evidence == result.state.region_evidence
 
 
 def test_occlusion_discovery_preserves_numeric_selection_and_layering():
-    from vectormark.drawing_proposals import detect_occlusion_regions
-    from vectormark.refinement.automatic_replay import select_refinements_with_intent
-    from vectormark.refinement.passes.occlusion import occlusion_pass
+    from vectoreyes.drawing_proposals import detect_occlusion_regions
+    from vectoreyes.refinement.automatic_replay import select_refinements_with_intent
+    from vectoreyes.refinement.passes.occlusion import occlusion_pass
     regions, masks, state = fixture()
     expected = select_refinements_with_intent(regions, masks, [occlusion_pass])
     expected_state = capture_replay_state(expected.objects, state.drawing.canvas)
@@ -54,7 +54,7 @@ def test_occlusion_discovery_preserves_numeric_selection_and_layering():
 
 
 def test_occlusion_proposals_can_be_targeted_at_any_consumed_material():
-    from vectormark.drawing_proposals import detect_occlusion_regions
+    from vectoreyes.drawing_proposals import detect_occlusion_regions
     _regions, _masks, state = fixture()
     for region in state.drawing.regions:
         result = detect_occlusion_regions(state, target_id=region.id)
@@ -63,7 +63,7 @@ def test_occlusion_proposals_can_be_targeted_at_any_consumed_material():
 
 
 def test_single_region_does_not_propose_occlusion():
-    from vectormark.drawing_proposals import detect_occlusion_regions
+    from vectoreyes.drawing_proposals import detect_occlusion_regions
     _regions, _masks, state = fixture()
     drawing = replace(state.drawing, regions=state.drawing.regions[:1])
     result = detect_occlusion_regions(replace(state, drawing=drawing))
@@ -73,8 +73,8 @@ def test_single_region_does_not_propose_occlusion():
 
 @pytest.mark.parametrize('tiled', [False, True])
 def test_retained_coverage_decoding_keeps_coordinates_and_read_only_values(tiled):
-    from vectormark.replay_state import decode_region_coverage
-    from vectormark.types import CoverageField
+    from vectoreyes.replay_state import decode_region_coverage
+    from vectoreyes.types import CoverageField
     values = np.arange(6, dtype=float).reshape(2, 3) / 6
     info = {'coverage': values.tobytes(), 'coverage_dtype': values.dtype.str,
         'coverage_shape': values.shape, 'coverage_origin': (7, 8) if tiled else None,
@@ -90,7 +90,7 @@ def test_retained_coverage_decoding_keeps_coordinates_and_read_only_values(tiled
 
 
 def test_occlusion_numeric_inputs_are_detached_before_discovery(monkeypatch):
-    from vectormark.occlusion_detection import OcclusionDetectionInput, discover_occlusion_intents
+    from vectoreyes.occlusion_detection import OcclusionDetectionInput, discover_occlusion_intents
     raster = np.ones((24, 24), dtype=bool)
     coverage = np.ones((24, 24), dtype=float)
     def mutate(regions, axis, shape_hw):
@@ -99,8 +99,8 @@ def test_occlusion_numeric_inputs_are_detached_before_discovery(monkeypatch):
             region.mask[:] = False
             region.coverage[:] = 0
         return [], regions
-    monkeypatch.setattr('vectormark.occlusion_detection.reconstruct_scene', mutate)
-    monkeypatch.setattr('vectormark.occlusion_detection.detect_axis',
+    monkeypatch.setattr('vectoreyes.occlusion_detection.reconstruct_scene', mutate)
+    monkeypatch.setattr('vectoreyes.occlusion_detection.detect_axis',
         lambda *_: pytest.fail('no_symmetry must not run axis detection'))
     assert not discover_occlusion_intents(tuple(OcclusionDetectionInput(i, raster, '#112233', 0, coverage)
         for i in (1, 2)), shape_hw=raster.shape, next_id=3, no_symmetry=True)
@@ -108,8 +108,8 @@ def test_occlusion_numeric_inputs_are_detached_before_discovery(monkeypatch):
 
 
 def test_occlusion_discovery_preserves_scoped_identity_and_replay():
-    from vectormark.drawing_proposals import detect_occlusion_regions
-    from vectormark.refinement.region_sample import RegionSample
+    from vectoreyes.drawing_proposals import detect_occlusion_regions
+    from vectoreyes.refinement.region_sample import RegionSample
     regions, _masks, _state = fixture()
     state = capture_replay_state(tuple(RegionSample.branch(id=i, drawing_id=f'parent{i}', children=regions)
         for i in (10, 20)), Canvas(360, 240))
@@ -122,8 +122,8 @@ def test_occlusion_discovery_preserves_scoped_identity_and_replay():
 
 
 def test_occlusion_selection_rejects_excess_error_without_publishing():
-    from vectormark.drawing_proposals import discover_occlusion_proposals, select_canonical_pass
-    from vectormark.quality import GeometryPolicy
+    from vectoreyes.drawing_proposals import discover_occlusion_proposals, select_canonical_pass
+    from vectoreyes.quality import GeometryPolicy
     _regions, _masks, state = fixture()
     proposals = tuple(replace(item, geometry_policy=GeometryPolicy(max_boundary_error_px=0))
         for item in discover_occlusion_proposals(state))
@@ -135,8 +135,8 @@ def test_occlusion_selection_rejects_excess_error_without_publishing():
 
 
 def test_occlusion_cannot_retire_a_live_clone_source():
-    from vectormark.drawing_proposals import discover_occlusion_proposals
-    from vectormark.path_geometry import CloneGeometry, AffineTransform
+    from vectoreyes.drawing_proposals import discover_occlusion_proposals
+    from vectoreyes.path_geometry import CloneGeometry, AffineTransform
     _regions, _masks, state = fixture()
     source = state.drawing.regions[0]
     clone = replace(state.drawing.regions[1], geometry=CloneGeometry(source.id, (AffineTransform(),)))
@@ -145,8 +145,8 @@ def test_occlusion_cannot_retire_a_live_clone_source():
 
 
 def test_shared_discovery_keeps_annulus_and_cavity_source_dependencies():
-    from vectormark.occlusion_detection import OcclusionDetectionInput, discover_occlusion_intents
-    from vectormark.refinement.automatic_replay import AnnulusPrimitive, CompletedOcclusionPrimitive, RetainedOcclusionSource
+    from vectoreyes.occlusion_detection import OcclusionDetectionInput, discover_occlusion_intents
+    from vectoreyes.refinement.automatic_replay import AnnulusPrimitive, CompletedOcclusionPrimitive, RetainedOcclusionSource
     yy, xx = np.ogrid[:160, :200]
     d2 = (xx-70)**2 + (yy-70)**2
     occluder = (xx-135)**2 + (yy-70)**2 <= 38**2

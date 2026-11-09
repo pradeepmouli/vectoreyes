@@ -18,8 +18,8 @@ if str(_REPO) not in sys.path:
 import numpy as np
 from PIL import Image
 
-from vectormark.pipeline import _segment_image, Options
-from vectormark.score import rank_candidates
+from vectoreyes.pipeline import _segment_image, Options
+from vectoreyes.score import rank_candidates
 from tests._candidates import generate_candidates
 
 CORPUS = Path(__file__).resolve().parent.parent / "scratch" / "real-logos"

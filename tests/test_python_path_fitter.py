@@ -3,11 +3,11 @@ import math
 import numpy as np
 import pytest
 
-import vectormark.fit as fit
-import vectormark.python_path_fitter as path_fitter
-from vectormark.corner_ownership import directed_corner_ownership
-from vectormark.drawing_engine import FitPathRequest, PathFitOptions
-from vectormark.path_geometry import (
+import vectoreyes.fit as fit
+import vectoreyes.python_path_fitter as path_fitter
+from vectoreyes.corner_ownership import directed_corner_ownership
+from vectoreyes.drawing_engine import FitPathRequest, PathFitOptions
+from vectoreyes.path_geometry import (
     ClosedPath,
     CornerAnchor,
     InflectionAnchor,
@@ -15,7 +15,7 @@ from vectormark.path_geometry import (
     MoveCommand,
     PathGeometry,
 )
-from vectormark.python_path_fitter import PythonPathFitter
+from vectoreyes.python_path_fitter import PythonPathFitter
 
 
 def _geometry(points, anchors=()):

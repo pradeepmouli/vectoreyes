@@ -1,17 +1,17 @@
 import pytest
 
-from vectormark.drawing import DrawingRegion
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import PathGeometryWithCutouts, parse_svg_paths
+from vectoreyes.drawing import DrawingRegion
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import PathGeometryWithCutouts, parse_svg_paths
 
 
 def test_working_normalizer_uses_canonical_publication(monkeypatch):
     import numpy as np
-    import vectormark.drawing_topology as publication
-    from vectormark.candidate import FlatFill as WorkingFill
-    from vectormark.fit import Shape
-    from vectormark.refinement.topology_binding import normalize_working_topology
-    from vectormark.refinement.region_sample import RegionSample
+    import vectoreyes.drawing_topology as publication
+    from vectoreyes.candidate import FlatFill as WorkingFill
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.topology_binding import normalize_working_topology
+    from vectoreyes.refinement.region_sample import RegionSample
     source = RegionSample.from_shape(id=1, shape=Shape('path', {
         'd': 'M0 0 L4 0 L4 4 L0 4 Z M8 0 L12 0 L12 4 L8 4 Z'}),
         fill=WorkingFill('#123456'), z=0, raster=np.ones((16, 16), dtype=bool), drawing_id='r1')
@@ -28,7 +28,7 @@ def test_working_normalizer_uses_canonical_publication(monkeypatch):
 
 @pytest.mark.parametrize('hole_first', [False, True])
 def test_canonical_path_publication_preserves_path_ownership_and_region_metadata(hole_first):
-    from vectormark.drawing_topology import publish_region_paths
+    from vectoreyes.drawing_topology import publish_region_paths
     outer = 'M0 0 L8 0 L8 8 L0 8 Z'
     hole = 'M2 2 L4 2 L4 4 L2 4 Z'
     other = 'M10 0 L14 0 L14 4 L10 4 Z'
@@ -51,7 +51,7 @@ def test_canonical_path_publication_preserves_path_ownership_and_region_metadata
 
 
 def test_canonical_publication_retires_redundant_paths_without_renumbering():
-    from vectormark.drawing_topology import publish_region_paths
+    from vectoreyes.drawing_topology import publish_region_paths
     paths = parse_svg_paths('M0 0 L8 0 L8 8 L0 8 Z M2 2 L4 2 L4 4 L2 4 Z M10 0 L14 0 L14 4 L10 4 Z', region_id='r1')
     region = DrawingRegion('r1', paths[0])
     first = publish_region_paths(region, paths, fill_rule='nonzero')
@@ -64,7 +64,7 @@ def test_canonical_publication_retires_redundant_paths_without_renumbering():
 
 @pytest.mark.parametrize('order', [('r1.p0', 'r1.p0'), ('absent',)])
 def test_canonical_publication_rejects_invalid_original_path_slots(order):
-    from vectormark.drawing_topology import publish_region_paths
+    from vectoreyes.drawing_topology import publish_region_paths
     paths = parse_svg_paths('M0 0 L4 0 L4 4 L0 4 Z', region_id='r1')
     region = DrawingRegion('r1', paths[0])
     with pytest.raises(ValueError, match='component path order'):
@@ -72,8 +72,8 @@ def test_canonical_publication_rejects_invalid_original_path_slots(order):
 
 
 def test_canonical_publication_keeps_unresolved_geometry_explicit():
-    from vectormark.drawing_topology import publish_region_paths
-    from vectormark.path_geometry import CompoundPathGeometry
+    from vectoreyes.drawing_topology import publish_region_paths
+    from vectoreyes.path_geometry import CompoundPathGeometry
     paths = parse_svg_paths('M0 0 L4 0 L4 4 L0 4 Z M2 2 L6 2 L6 6 L2 6 Z', region_id='r1')
     region = DrawingRegion('r1', paths[0])
     with pytest.raises(ValueError, match='overlapping'):

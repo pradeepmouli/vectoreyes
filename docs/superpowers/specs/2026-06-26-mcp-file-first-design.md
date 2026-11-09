@@ -1,15 +1,15 @@
-# File-First Image Handoff for the vectormark MCP Server — Design
+# File-First Image Handoff for the vectoreyes MCP Server — Design
 
 **Status:** approved (brainstorming)
 **Date:** 2026-06-26
-**Area:** `src/vectormark/mcp_server.py` + new `src/vectormark/mcp_image.py`; `docs/mcp.md`.
+**Area:** `src/vectoreyes/mcp_server.py` + new `src/vectoreyes/mcp_image.py`; `docs/mcp.md`.
 
 ## Goal
 
 Replace the base64-first MCP API with a **file/artifact-first** one optimized for
 ChatGPT-generated images, user uploads, and future design-app handoffs. The server
 accepts an image *reference*, resolves it to bytes server-side, preprocesses it, runs
-the vectormark pipeline, and returns SVG + diagnostics + an optional preview. The
+the vectoreyes pipeline, and returns SVG + diagnostics + an optional preview. The
 assistant does no base64 encoding, downsampling, or quantization.
 
 ## Why file-first (now viable)
@@ -110,7 +110,7 @@ Pillow-based, fidelity-preserving:
   alpha) to the content bounding box.
 - `max_size_px`: downscale (high-quality `LANCZOS`) only if the larger side exceeds it;
   never upscale.
-- `quantize`: only if requested (default off) — vectormark does its own palette
+- `quantize`: only if requested (default off) — vectoreyes does its own palette
   extraction, so pre-quantizing is usually harmful.
 `ProcessedMeta` records `{width, height, cropped, resized, transparent, quantized}`.
 
@@ -118,11 +118,11 @@ Pillow-based, fidelity-preserving:
 
 In-process Python API — no shell-out, no temp SVG roundtrip:
 ```python
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 svg = idealize(processed_array, options=Options(max_colors=colors, flatten=..., ...))
 ```
 The CLI flags exist too, but the in-process call is the same pipeline, faster, and avoids
-a subprocess. (The spec's optional `/tmp/vectormark/<id>/` temp layout is not needed for
+a subprocess. (The spec's optional `/tmp/vectoreyes/<id>/` temp layout is not needed for
 the in-process path; it would only matter for a future shell-out worker.)
 
 ## Diagnostics
@@ -131,7 +131,7 @@ Returned as structured JSON:
 ```
 { input:   { source_kind, mime_type, bytes, sha256, original_width, original_height },
   processed:{ width, height, cropped, resized, transparent, quantized },
-  vectormark:{ colors, flatten, no_symmetry, epsilon, max_error },
+  vectoreyes:{ colors, flatten, no_symmetry, epsilon, max_error },
   output:  { svg_bytes, element_count, has_defs, has_paths, has_primitives, has_symmetry },
   warnings: [] }
 ```
@@ -142,7 +142,7 @@ upscaled-not, mime sniff differed from declared).
 ## Structured errors
 
 Raised as MCP tool errors carrying `error_code`:
-`IMAGE_UNRESOLVABLE`, `UNSUPPORTED_IMAGE_TYPE`, `IMAGE_TOO_LARGE`, `VECTORMARK_FAILED`
+`IMAGE_UNRESOLVABLE`, `UNSUPPORTED_IMAGE_TYPE`, `IMAGE_TOO_LARGE`, `VECTOREYES_FAILED`
 (with `stderr`/message), plus `URL_NOT_ALLOWED` for an SSRF-blocked `url`.
 
 ## Limits (module constants)
@@ -170,10 +170,10 @@ arbitrary host read/write is introduced over the network.
 
 ## File structure
 
-- **New** `src/vectormark/mcp_image.py` — `resolve_image`, `preprocess_image`, the limits,
+- **New** `src/vectoreyes/mcp_image.py` — `resolve_image`, `preprocess_image`, the limits,
   the error types, and the diagnostics builder. Pure, no MCP/FastMCP imports → unit-testable
   without a server.
-- **Modify** `src/vectormark/mcp_server.py` — the `idealize_logo` tool (file-first, fileParams
+- **Modify** `src/vectoreyes/mcp_server.py` — the `idealize_logo` tool (file-first, fileParams
   meta), `render_idealized_logo({result})`, demote `idealize_logo_data` to a deprecated
   fallback. Keep the widget resource + transport/`main` unchanged.
 - **Modify** `docs/mcp.md` — file-first flow as primary; base64 documented as fallback.

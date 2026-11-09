@@ -1,13 +1,13 @@
 # Plan evaluation reports
 
-`python -m vectormark.evaluation --help` exposes the script-first review loop.
+`python -m vectoreyes.evaluation --help` exposes the script-first review loop.
 Use the existing MCP endpoint; the runner does not start, stop or replace it.
 Install the server and scoring extras for MCP client and PNG rendering support.
 
 ```sh
-python -m vectormark.evaluation trace source.png output/run --options options.json
-python -m vectormark.evaluation refine output/run plan.json --hypothesis "One curve per supported side"
-python -m vectormark.evaluation report output/run
+python -m vectoreyes.evaluation trace source.png output/run --options options.json
+python -m vectoreyes.evaluation refine output/run plan.json --hypothesis "One curve per supported side"
+python -m vectoreyes.evaluation report output/run
 ```
 
 Open `output/run/index.html`: a clean artwork handoff leads into Review / Edit.
@@ -56,7 +56,7 @@ independent shape/fill verdicts. No version is accepted automatically. Use
 `capture` retries artifact retrieval for a known saved response without another
 mutation. `reconcile` saves the live version manifest after unknown execution.
 
-See the packaged [evaluation reference](../src/vectormark/assets/skills/designer-reconstruction/references/evaluation-loop.md)
+See the packaged [evaluation reference](../src/vectoreyes/assets/skills/designer-reconstruction/references/evaluation-loop.md)
 for concrete commands and lifecycle limits, and the
 [design specification](superpowers/specs/2026-10-14-plan-evaluation-report-design.md)
 for the review model. Artifact generation and interactive display use the same
@@ -74,6 +74,51 @@ It packages the existing reconstruction skill; it does not duplicate the
 engine or require the in-chat widget.
 
 ## Source-supported boundary detail
+
+### Constant-width band preflight
+
+`DrawingEngine.detect_band(BandRequest(...))` assesses two explicitly scoped,
+corner-excluded original material-polyline spans. It uses supported tangent
+directions, normal intersections, monotonic correspondence and width stability;
+it does not infer plan addresses or modify a drawing. Reversed boundary order
+and rotation do not change the intended measurement.
+
+`reconstruct_band` proposes one cubic centerline plus a constant normal width
+and paired cubic approximations of its analytic offsets. An explicit width can
+bypass automatic width/tangent admission, but cannot bypass source-distance
+checks. `source_errors` conservatively bounds both the returned cubics and the
+analytic offsets against the supplied source spans. It includes the certified
+offset approximation error, certified cubic-to-polyline linearization error,
+and the directed polyline distance upper bound. Verification precision is at
+most one percent of the fit budget, capped at 0.005px; these errors are added,
+not averaged. Certification has an explicit work limit and rejects singular
+or folded offsets. Consumers must retain full control precision or account
+for serialization error separately.
+
+The numeric result remains **preflight only**. The separate `set_band` plan
+operation and off-by-default `refinement_passes.bands` stage provide publication
+after exact retained corner/command/source binding and topology checks. Normal correspondence can fail
+at corner endpoints even when the interior is a supported constant-width band;
+an interior-only acceptance must not be presented as a full-span edit.
+No existing trace/refinement default is changed by these diagnostic operations.
+
+`DrawingEngine.join_band(whole_source_request, offsets, endpoints=...)` can
+propose short cubic transitions from a certified interior to all four retained
+endpoints. These joins match the interior tangents and keep the declared
+endpoints exactly fixed. Their complete edges are checked independently against
+the unchanged original material polylines; endpoint declarations never redefine
+the source reference. The constant-width certificate covers only the interior,
+not the corner transitions. The numeric result remains `preflight_only`;
+`set_band` joins and publishes both complete sides atomically, retains exact
+source/feature receipts, and rejects new component/hole topology or overlaps.
+It searches bounded source-arc transition extents and ranks complete-edge
+source error. Its independent source budget defaults to 1.5px even when trace
+fitting used 2px. Published fits reserve the six-decimal SVG rounding bound.
+Missing or ambiguous original-source context is a diagnostic skip, never a
+fit against current reconstructed curves. Source-less legacy numerical pipeline
+inputs cannot perform this stage; use the retained drawing engine/MCP path.
+
+### Boundary detail contract
 
 `DrawingEngine.assess_boundary_detail(BoundaryDetailRequest(...))` is a
 diagnostic-only operation for one explicitly paired, region-local closed
@@ -101,7 +146,7 @@ paired by list position. Root trace regions already assembled from material
 regions remain valid: the retained root polyline is their reference.
 
 Live MCP clients can retrieve the same JSON via
-`get_drawing_artifact(drawing_id, version, artifact="boundary_detail")`.
+`vectoreyes_get_drawing_artifact(drawing_id, version, artifact="boundary_detail")`.
 `structuredContent.boundary_detail` holds the data, with no widget or image
 content. `region_ids` optionally restricts the selected targets. The operation
 is on demand and does not run automatically during trace/refine.

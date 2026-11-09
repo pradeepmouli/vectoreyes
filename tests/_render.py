@@ -9,7 +9,7 @@ import resvg_py
 from PIL import Image
 from skimage.metrics import structural_similarity
 
-from vectormark.color import mean_delta_e  # re-exported; single source of truth
+from vectoreyes.color import mean_delta_e  # re-exported; single source of truth
 
 
 def render_svg(svg: str, width: int, height: int) -> np.ndarray:

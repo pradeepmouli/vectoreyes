@@ -1,17 +1,17 @@
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.automatic_replay import (
     CompletedOcclusionPrimitive,
     IntersectionLens,
     PassInputRegionRef,
     ReconstructOcclusionOperation,
     SimplifyLineletOperation,
 )
-from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.path_geometry import CirclePrimitive, PrimitiveGeometry
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.path_geometry import CirclePrimitive, PrimitiveGeometry
 
 
 class Resolver:
@@ -23,8 +23,8 @@ class Resolver:
 
 
 def test_engine_simplification_applies_recorded_settings_and_preserves_covering_region():
-    from vectormark.drawing_adapter import bind_path_input
-    from vectormark.refinement.automatic_replay import apply_simplification_choice
+    from vectoreyes.drawing_adapter import bind_path_input
+    from vectoreyes.refinement.automatic_replay import apply_simplification_choice
 
     d = (
         "M247 417.5 Q241.23 417.72 237.5 413 L237.5 405 L242 400.5 "
@@ -56,8 +56,8 @@ def test_engine_simplification_applies_recorded_settings_and_preserves_covering_
 
 
 def test_engine_simplification_rejects_an_inapplicable_recorded_operation():
-    from vectormark.drawing_adapter import bind_path_input
-    from vectormark.refinement.automatic_replay import apply_simplification_choice
+    from vectoreyes.drawing_adapter import bind_path_input
+    from vectoreyes.refinement.automatic_replay import apply_simplification_choice
 
     target = RegionSample(
         1, Shape("rect", {"x": 0, "y": 0, "w": 1, "h": 1}), FlatFill("#123456")
@@ -73,7 +73,7 @@ def test_engine_simplification_rejects_an_inapplicable_recorded_operation():
 
 
 def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
-    from vectormark.refinement.automatic_replay import apply_occlusion_choice
+    from vectoreyes.refinement.automatic_replay import apply_occlusion_choice
 
     sources = [
         RegionSample(
@@ -129,7 +129,7 @@ def test_engine_occlusion_materializes_recorded_circles_and_their_lens():
 
 
 def test_engine_occlusion_rejects_missing_dependency_before_resolving_sources():
-    from vectormark.refinement.automatic_replay import apply_occlusion_choice
+    from vectoreyes.refinement.automatic_replay import apply_occlusion_choice
 
     ref = PassInputRegionRef("", "", (1,))
     action = ReconstructOcclusionOperation(

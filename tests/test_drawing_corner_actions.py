@@ -4,9 +4,9 @@ import sys
 
 import pytest
 
-from vectormark.corner_recipe import AddCorner, CornerRecipeExecutor
-from vectormark.drawing_engine import PathFitOptions
-from vectormark.path_geometry import CornerAnchor, geometry_from_svg_d
+from vectoreyes.corner_recipe import AddCorner, CornerRecipeExecutor
+from vectoreyes.drawing_engine import PathFitOptions
+from vectoreyes.path_geometry import CornerAnchor, geometry_from_svg_d
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -23,7 +23,7 @@ def fixture(cutout=False):
 
 @pytest.mark.parametrize('cutout', [False, True])
 def test_corner_region_action_refits_one_path_and_preserves_region_values(cutout):
-    from vectormark.drawing_corner_actions import apply_region_corner_recipe
+    from vectoreyes.drawing_corner_actions import apply_region_corner_recipe
     region, path, source, recipe, *_ = fixture(cutout)
     direct = CornerRecipeExecutor().replay(recipe, source)
     updated, replay = apply_region_corner_recipe(region, path_id=path.path.id, recipe=recipe, evidence=source)
@@ -39,7 +39,7 @@ def test_corner_region_action_refits_one_path_and_preserves_region_values(cutout
 
 
 def test_corner_action_rejects_stale_path_before_fitting():
-    from vectormark.drawing_corner_actions import apply_region_corner_recipe
+    from vectoreyes.drawing_corner_actions import apply_region_corner_recipe
     region, _, source, recipe, *_ = fixture()
     class ForbiddenExecutor:
         def replay(self, *args):
@@ -55,7 +55,7 @@ def annotated_path():
 
 
 def test_annotation_rebinding_keeps_new_coordinates_and_exact_old_features():
-    from vectormark.drawing_corner_actions import rebind_corner_annotations
+    from vectoreyes.drawing_corner_actions import rebind_corner_annotations
     annotated = annotated_path()
     parsed = geometry_from_svg_d('M0 0 L11 0 L10 10 L0 10 Z', region_id='r1')
     result = rebind_corner_annotations(parsed, annotated)
@@ -70,16 +70,16 @@ def test_annotation_rebinding_keeps_new_coordinates_and_exact_old_features():
     ('M0 0 L10 0 L10 10 L5 10 L0 10 Z', 'r1', 'command topology'),
 ])
 def test_annotation_rebinding_rejects_changed_ownership(d, region_id, reason):
-    from vectormark.drawing_corner_actions import rebind_corner_annotations
+    from vectoreyes.drawing_corner_actions import rebind_corner_annotations
     with pytest.raises(ValueError, match=reason):
         rebind_corner_annotations(geometry_from_svg_d(d, region_id=region_id), annotated_path())
 
 
 def test_source_bound_replay_routes_through_canonical_region_action(monkeypatch):
-    from vectormark import drawing_corner_actions
-    from vectormark.drawing import DrawingRegion
-    from vectormark.drawing_recipe import VersionPathSelection
-    from vectormark.drawing_replay import extend_recipe_with_corner_edits, propose_effective_recipe
+    from vectoreyes import drawing_corner_actions
+    from vectoreyes.drawing import DrawingRegion
+    from vectoreyes.drawing_recipe import VersionPathSelection
+    from vectoreyes.drawing_replay import extend_recipe_with_corner_edits, propose_effective_recipe
     region, path, source, _, base, paint, evidence = fixture()
     source_command = source.source.path.commands[0].id
     displayed = path.path.commands[0].id

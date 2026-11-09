@@ -1,5 +1,5 @@
 import numpy as np
-from vectormark._fitcurve import cubic_inflects, fit_cubic_beziers, fit_quadratic_beziers, qbezier
+from vectoreyes._fitcurve import cubic_inflects, fit_cubic_beziers, fit_quadratic_beziers, qbezier
 
 
 def test_fits_quarter_circle_within_tolerance():

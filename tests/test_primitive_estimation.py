@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from vectormark.fit import Shape, recognize_primitive
-from vectormark.primitive_fitting import _polygon_exterior_points
-from vectormark.refinement.region_sample import to_polygon
+from vectoreyes.fit import Shape, recognize_primitive
+from vectoreyes.primitive_fitting import _polygon_exterior_points
+from vectoreyes.refinement.region_sample import to_polygon
 
 
 def _ellipse_points():
@@ -38,7 +38,7 @@ def test_complex_modulo_estimator_failure_is_reported_and_rejected(monkeypatch, 
         angle = np.complex128(0)
         angle %= np.pi
 
-    monkeypatch.setattr("vectormark.fit.EllipseModel.from_estimate", complex_modulo)
+    monkeypatch.setattr("vectoreyes.fit.EllipseModel.from_estimate", complex_modulo)
 
     assert recognize_primitive(_ellipse_points(), epsilon=0.1) is None
     rejection = next(record for record in caplog.records if getattr(record, "primitive", None) == "ellipse")
@@ -58,7 +58,7 @@ def test_valid_ellipse_candidate_still_recognized():
     {"center": (30, 30), "axis_lengths": (20, 10), "theta": 1j},
 ])
 def test_invalid_ellipse_parameters_are_rejected(monkeypatch, caplog, params):
-    monkeypatch.setattr("vectormark.fit.EllipseModel.from_estimate", lambda _points: SimpleNamespace(**params))
+    monkeypatch.setattr("vectoreyes.fit.EllipseModel.from_estimate", lambda _points: SimpleNamespace(**params))
 
     assert recognize_primitive(_ellipse_points(), epsilon=0.1) is None
 
@@ -70,6 +70,6 @@ def test_unrelated_estimator_type_error_is_not_hidden(monkeypatch):
     def fail(_points):
         raise TypeError("unexpected estimator failure")
 
-    monkeypatch.setattr("vectormark.fit.EllipseModel.from_estimate", fail)
+    monkeypatch.setattr("vectoreyes.fit.EllipseModel.from_estimate", fail)
     with pytest.raises(TypeError, match="unexpected estimator failure"):
         recognize_primitive(_ellipse_points(), epsilon=0.1)

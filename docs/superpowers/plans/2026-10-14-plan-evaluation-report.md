@@ -26,13 +26,13 @@
 
 ## Files and interfaces
 
-- `src/vectormark/evaluation/models.py`: strict run/trial/view/verdict models and explicit promotion.
-- `src/vectormark/evaluation/bundle.py`: atomic JSON and hashed artifact persistence; immutable trial requests/results.
-- `src/vectormark/evaluation/inspection.py`: public response geometry/features/source evidence to inspection records; derived counts labeled.
-- `src/vectormark/evaluation/views.py`: shared view specifications, neutral SVG and annotated SVG/PNG crop exports.
-- `src/vectormark/evaluation/client.py`: public MCP capture and trial orchestration, preserving all failures.
-- `src/vectormark/evaluation/report.py` and `assets/evaluation/*`: static offline handoff/inspector from saved bundle, no server dependency.
-- `src/vectormark/evaluation/__main__.py`: script CLI for trace/refine/review/render/view and serve.
+- `src/vectoreyes/evaluation/models.py`: strict run/trial/view/verdict models and explicit promotion.
+- `src/vectoreyes/evaluation/bundle.py`: atomic JSON and hashed artifact persistence; immutable trial requests/results.
+- `src/vectoreyes/evaluation/inspection.py`: public response geometry/features/source evidence to inspection records; derived counts labeled.
+- `src/vectoreyes/evaluation/views.py`: shared view specifications, neutral SVG and annotated SVG/PNG crop exports.
+- `src/vectoreyes/evaluation/client.py`: public MCP capture and trial orchestration, preserving all failures.
+- `src/vectoreyes/evaluation/report.py` and `assets/evaluation/*`: static offline handoff/inspector from saved bundle, no server dependency.
+- `src/vectoreyes/evaluation/__main__.py`: script CLI for trace/refine/review/render/view and serve.
 - Packaged reconstruction skill/reference and docs: verified commands and status boundaries.
 
 ### Task 1: Trial records and persistent bundle
@@ -52,7 +52,7 @@ Consumes public response/report, raw_trace, plan replay metadata and exported SV
 
 ### Task 3: Scripted MCP loop
 
-Consumes Tasks1–2; produces `trace_run`, `refine_trial`, `capture_version` async operations and `python -m vectormark.evaluation` CLI.
+Consumes Tasks1–2; produces `trace_run`, `refine_trial`, `capture_version` async operations and `python -m vectoreyes.evaluation` CLI.
 - [ ] RED temporary checks for request saved before failure; response saved on success; partial artifact failure retained; no retries.
 - [ ] Discover live tool schemas; trace PNG via base64. Explicit options disable cropping/downscaling unless requested and record normalized source canvas. Capture all version artifacts through existing endpoints.
 - [ ] Refine only exact plans matching run drawing/base. Capture schema/fit/replay/transport errors with null candidate until outcome is known; reconcile manifest after unknown outcome.

@@ -1,6 +1,21 @@
 import skia
 
-from vectormark.skia_geometry import SkPath, path_to_svg_string_faithful
+from vectoreyes.skia_geometry import SkPath, path_to_svg_string_faithful
+
+
+def test_native_copy_preserves_precision_and_is_detached():
+    native = skia.Path()
+    native.moveTo(0, 0)
+    native.cubicTo(1.234567, 2.345678, 3.456789, 4.567891, 5, 6)
+    native.close()
+    wrapped = SkPath.from_skia(native)
+
+    copied = wrapped.to_skia()
+
+    assert copied == native
+    copied.reset()
+    assert not wrapped.is_empty
+    assert wrapped.to_skia() == native
 
 
 def test_path_to_svg_string_faithful_decomposes_conic_with_requested_pow2():

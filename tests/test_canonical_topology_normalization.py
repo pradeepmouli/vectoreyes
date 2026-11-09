@@ -2,9 +2,9 @@ from dataclasses import replace
 
 import pytest
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import (
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import (
     AffineTransform, CloneGeometry, CompoundPathGeometry, CornerAnchor,
     PathGeometryWithCutouts, parse_svg_paths,
 )
@@ -23,7 +23,7 @@ def source_region():
 
 
 def test_canonical_normalization_splits_components_without_refitting_commands_or_holes():
-    from vectormark.drawing_topology import normalize_drawing_topology
+    from vectoreyes.drawing_topology import normalize_drawing_topology
 
     source, paths = source_region()
     drawing = Drawing('drawing', Canvas(80, 80), (source,))
@@ -44,7 +44,7 @@ def test_canonical_normalization_splits_components_without_refitting_commands_or
     (AffineTransform(1, 0, 0, 1, 40, 0), AffineTransform(1, 0, 0, 1, 60, 0)),
 ])
 def test_canonical_normalization_expands_forward_clones_and_preserves_their_paint(transforms):
-    from vectormark.drawing_topology import normalize_drawing_topology
+    from vectoreyes.drawing_topology import normalize_drawing_topology
 
     source, _ = source_region()
     clone = DrawingRegion('copy', CloneGeometry('r1', transforms), FlatFill('#abcdef'), z=9)
@@ -58,7 +58,7 @@ def test_canonical_normalization_expands_forward_clones_and_preserves_their_pain
 
 
 def test_canonical_normalization_is_idempotent_and_keeps_unchanged_values():
-    from vectormark.drawing_topology import normalize_drawing_topology
+    from vectoreyes.drawing_topology import normalize_drawing_topology
 
     source, _ = source_region()
     result = normalize_drawing_topology(Drawing('drawing', Canvas(80, 80), (source,)))
@@ -67,7 +67,7 @@ def test_canonical_normalization_is_idempotent_and_keeps_unchanged_values():
 
 
 def test_canonical_normalization_rejects_cycles_before_publishing_partial_output():
-    from vectormark.drawing_topology import normalize_drawing_topology
+    from vectoreyes.drawing_topology import normalize_drawing_topology
 
     source, _ = source_region()
     first = DrawingRegion('a', CloneGeometry('b', (AffineTransform(),)))
@@ -80,7 +80,7 @@ def test_canonical_normalization_rejects_cycles_before_publishing_partial_output
 
 
 def test_canonical_normalization_requires_explicit_external_dependency_permission():
-    from vectormark.drawing_topology import normalize_drawing_topology
+    from vectoreyes.drawing_topology import normalize_drawing_topology
 
     clone = DrawingRegion('copy', CloneGeometry('outside', (AffineTransform(),)))
     drawing = Drawing('drawing', Canvas(80, 80), (clone,))
@@ -91,11 +91,11 @@ def test_canonical_normalization_requires_explicit_external_dependency_permissio
 
 
 def test_working_publication_expands_multi_transform_clone_over_selected_components():
-    from vectormark.candidate import FlatFill as WorkingFill
-    from vectormark.refinement.topology_binding import normalize_working_topology
-    from vectormark.fit import Shape
-    from vectormark.refinement.region_sample import RegionSample
-    from vectormark.skia_geometry import unary_union
+    from vectoreyes.candidate import FlatFill as WorkingFill
+    from vectoreyes.refinement.topology_binding import normalize_working_topology
+    from vectoreyes.fit import Shape
+    from vectoreyes.refinement.region_sample import RegionSample
+    from vectoreyes.skia_geometry import unary_union
 
     source, _ = source_region()
     working = RegionSample(1, Shape('path', {'d': source.geometry.to_svg_d(), 'fill_rule': 'evenodd'}),

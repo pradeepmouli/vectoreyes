@@ -2,12 +2,12 @@ from dataclasses import replace
 
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing import DrawingRegion
-from vectormark.fit import Shape
-from vectormark.refinement.passes.smooth import smooth_pass
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import (
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing import DrawingRegion
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.passes.smooth import smooth_pass
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import (
     CornerAnchor, PathGeometryWithCutouts, parse_svg_paths,
 )
 
@@ -32,7 +32,7 @@ def test_smoothing_publishes_updated_canonical_cache_not_only_svg_text():
 
 
 def test_canonical_smoothing_retains_custom_command_ids_and_anchors():
-    from vectormark.drawing_smoothing import smooth_region
+    from vectoreyes.drawing_smoothing import smooth_region
 
     (geometry,) = parse_svg_paths(D, region_id="r7")
     commands = tuple(replace(command, id=f"custom-{index}")
@@ -57,7 +57,7 @@ def test_canonical_smoothing_retains_custom_command_ids_and_anchors():
 
 
 def test_canonical_smoothing_keeps_cutout_membership_and_unmodified_paths():
-    from vectormark.drawing_smoothing import smooth_region
+    from vectoreyes.drawing_smoothing import smooth_region
 
     outer, hole = parse_svg_paths(D + " M8 2 L12 2 L10 4 Z", region_id="r7")
     geometry = PathGeometryWithCutouts(outer, (hole,))
@@ -72,8 +72,8 @@ def test_canonical_smoothing_keeps_cutout_membership_and_unmodified_paths():
 
 
 def test_smoothing_replay_retains_published_canonical_geometry():
-    from vectormark.refinement.automatic_replay import replay_batches
-    from vectormark.refinement.framework import select_refinements_with_intent
+    from vectoreyes.refinement.automatic_replay import replay_batches
+    from vectoreyes.refinement.framework import select_refinements_with_intent
 
     (geometry,) = parse_svg_paths(D, region_id="r7")
     shape = Shape("path", {"d": D, "canonical_path_geometry": geometry})

@@ -1,7 +1,7 @@
 from tests.test_canonical_geometry_proposals import proposal_case
 from tests.test_drawing_corner_store_replay import _source_store
-from vectormark.drawing_replay import _path_record_for_display, _source_command_for_display
-from vectormark.replay_state import ReplayState
+from vectoreyes.drawing_replay import _path_record_for_display, _source_command_for_display
+from vectoreyes.replay_state import ReplayState
 
 
 def test_path_remove_proposal_uses_commands_without_original_shape_observations():
@@ -32,11 +32,11 @@ def test_correspondence_lookup_needs_only_canonical_commands_and_source_ancestry
 
 
 def test_corner_recipe_publishes_canonical_state_and_retains_source_observations():
-    from vectormark.corner_recipe import CornerRecipeExecutor
-    from vectormark.drawing_engine import PathFitOptions
-    from vectormark.drawing_recipe import ApplyCornerRecipeOperation
-    from vectormark.drawing_replay import _execute_corner_recipe
-    from vectormark.replay_identity import canonical_input_revision
+    from vectoreyes.corner_recipe import CornerRecipeExecutor
+    from vectoreyes.drawing_engine import PathFitOptions
+    from vectoreyes.drawing_recipe import ApplyCornerRecipeOperation
+    from vectoreyes.drawing_replay import _execute_corner_recipe
+    from vectoreyes.replay_identity import canonical_input_revision
 
     _, base, _, evidence = _source_store()
     state = ReplayState(evidence.drawing, evidence.shape_metadata, evidence.region_evidence)

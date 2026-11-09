@@ -1,14 +1,15 @@
 from dataclasses import replace
+from math import cos, sin
 
 import pytest
 
-from vectormark.drawing import Canvas
-from vectormark.drawing_automatic import replay_automatic_batches
-from vectormark.drawing_proposals import detect_symmetry_regions, discover_symmetry_proposals, select_canonical_pass
-from vectormark.fit import Shape
-from vectormark.path_geometry import CloneGeometry
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.refinement.replay_binding import capture_replay_state
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_automatic import replay_automatic_batches
+from vectoreyes.drawing_proposals import detect_symmetry_regions, discover_symmetry_proposals, select_canonical_pass
+from vectoreyes.fit import Shape
+from vectoreyes.path_geometry import CloneGeometry
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.refinement.replay_binding import capture_replay_state
 from tests.test_canonical_structural_replay import leaf
 from tests.test_canonical_symmetry_discovery import ellipse_path
 
@@ -16,8 +17,8 @@ from tests.test_canonical_symmetry_discovery import ellipse_path
 def forest():
     source = leaf(11, Shape('path', {'d': ellipse_path().to_svg_d()}), '#112233')
     parent = RegionSample.branch(id=10, drawing_id='parent', children=(source,))
-    from vectormark.drawing_fill import FlatFill
-    from vectormark.refinement.gate import rasterize
+    from vectoreyes.drawing_fill import FlatFill
+    from vectoreyes.refinement.gate import rasterize
     footprint = ellipse_path().affine_transform((1, 0, 0, 1, 100, 0))
     clone = RegionSample(2, Shape('use', {'href_obj_id': 11, 'href_region_path': (10, 11),
         'transform': (1, 0, 0, 1, 100, 0)}), FlatFill('#abcdef'), drawing_id='r2',
@@ -29,7 +30,7 @@ def test_nested_source_and_external_clone_publish_as_one_root_transaction(monkey
     state = forest()
     def forbidden(*args, **kwargs):
         raise AssertionError('cross-scope transaction projected a sampling scene')
-    monkeypatch.setattr('vectormark.refinement.region_sample.RegionSample.__init__', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.region_sample.RegionSample.__init__', forbidden)
     result = detect_symmetry_regions(state)
     records = [record for batch in result.batches for record in batch.operations
         if getattr(record.intent.action, 'owner_roots', ())]
@@ -45,18 +46,25 @@ def test_nested_source_and_external_clone_publish_as_one_root_transaction(monkey
     assert isinstance(instance.geometry, CloneGeometry)
     assert instance.geometry.transforms == state.drawing.region('r2').geometry.transforms
     assert instance.fill == state.drawing.region('r2').fill
-    monkeypatch.setattr('vectormark.symmetry_detection._best_self_reconstruction', forbidden)
+    monkeypatch.setattr('vectoreyes.symmetry_detection._best_self_reconstruction', forbidden)
     replayed = replay_automatic_batches(state, result.batches)
     assert replayed.drawing == result.state.drawing
     assert replayed.region_evidence == result.state.region_evidence
 
 
 def test_rejected_cross_scope_fit_changes_neither_owner_nor_clone():
-    from vectormark.quality import GeometryPolicy
+    from vectoreyes.quality import GeometryPolicy
     state = forest()
     proposals = tuple(proposal for proposal in discover_symmetry_proposals(state)
         if getattr(proposal.intent.action, 'owner_roots', ()))
     assert proposals
+    # Exact retained symmetry now passes a zero-error gate. Deliberately offset
+    # the selected axis so this test still exercises atomic rejection.
+    proposals = tuple(replace(proposal, intent=replace(proposal.intent,
+        action=replace(proposal.intent.action, axis=(proposal.intent.action.axis[0],
+            proposal.intent.action.axis[1] - sin(proposal.intent.action.axis[0]) * 0.5,
+            proposal.intent.action.axis[2] + cos(proposal.intent.action.axis[0]) * 0.5))))
+        for proposal in proposals)
     strict = GeometryPolicy(max_boundary_error_px=0, max_perimeter_residual_error_px=0,
         max_relative_area_error=0, preserve_topology=True)
     result = select_canonical_pass(state, tuple(replace(proposal, geometry_policy=strict)
@@ -83,8 +91,8 @@ def test_cross_scope_receipt_cannot_omit_a_dependent_owner(omitted):
 
 
 def test_cross_scope_root_id_cannot_shadow_the_nested_source():
-    from vectormark.drawing import DrawingRegion
-    from vectormark.path_geometry import geometry_from_svg_d
+    from vectoreyes.drawing import DrawingRegion
+    from vectoreyes.path_geometry import geometry_from_svg_d
     state = forest()
     unrelated = DrawingRegion('r11', geometry_from_svg_d('M200 0 L210 0 L210 10 L200 10 Z', region_id='r11'))
     info = {**state.region_evidence['r2'], 'id': 11, 'ancestry': (11,)}

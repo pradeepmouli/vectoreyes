@@ -16,7 +16,7 @@ class CustomBuildHook(BuildHookInterface):
 
         root = Path(self.root)
         source_root = root / "src"
-        package_root = source_root / "vectormark"
+        package_root = source_root / "vectoreyes"
         sources = sorted(package_root.rglob("*.pyx"))
         if version != "editable":
             sources.extend(
@@ -28,14 +28,14 @@ class CustomBuildHook(BuildHookInterface):
                   and "evaluation" not in path.relative_to(package_root).parts
             )
         compile_args = ["-O3", "-ffp-contract=off"] if os.name != "nt" else ["/O2", "/fp:precise"]
-        with TemporaryDirectory(prefix="vectormark-native-") as temporary:
+        with TemporaryDirectory(prefix="vectoreyes-native-") as temporary:
             extensions = cythonize(
                 [Extension(".".join(path.relative_to(source_root).with_suffix("").parts),
                            [str(path)], extra_compile_args=compile_args) for path in sources],
                 build_dir=str(Path(temporary) / "cython"),
                 compiler_directives={"language_level": 3, "embedsignature": True, "binding": True},
             )
-            distribution = Distribution({"name": "vectormark", "ext_modules": extensions})
+            distribution = Distribution({"name": "vectoreyes", "ext_modules": extensions})
             command = build_ext(distribution)
             command.ensure_finalized()
             command.parallel = min(4, os.cpu_count() or 1)

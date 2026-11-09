@@ -1,7 +1,7 @@
 import pytest
 
-from vectormark.refinement.automatic_replay import NamedRegionOutput, OperationOutputRegionRef, ReplayBatch
-from vectormark.replay_inputs import ReplayInputResolver
+from vectoreyes.refinement.automatic_replay import NamedRegionOutput, OperationOutputRegionRef, ReplayBatch
+from vectoreyes.replay_inputs import ReplayInputResolver
 
 
 def test_failed_output_transaction_does_not_leave_earlier_outputs_registered():

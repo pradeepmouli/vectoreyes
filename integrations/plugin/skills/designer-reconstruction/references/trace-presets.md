@@ -1,7 +1,11 @@
 # Trace starting-point presets
 
-Pass one of these objects as `trace_drawing.options`. They are examples, not
-literal preset names accepted by the server. Inspect source, v0, selected pass revisions,
+Select `vectoreyes_trace_drawing.options.preset`: `black-and-white`, `flat-logo`,
+`gradient-artwork`, or `conservative`, in the order below. The server applies
+the corresponding bundle before defaults; explicitly supplied options override
+the bundle. The UI selector updates its controls, and responses record all
+effective options. The JSON bundles below remain useful as explicit overrides.
+Inspect source, v0, selected pass revisions,
 region map, and difference before accepting a result. Input must be PNG.
 
 ## Black-and-white artwork / cutting-file baseline
@@ -120,3 +124,12 @@ Do not lower palette/detail settings merely to fit a transport response.
 Record the actual error and use [the direct fallback](direct-fallback.md) when
 local execution is available. `DRAWING_NOT_FOUND` instead indicates expired or
 unavailable state; a reconnect alone does not invalidate a retained drawing.
+
+Drawing responses use `structuredContent` as the authoritative data; text is a
+short receipt. If `delivery.reports_deferred` is true, fetch `artifact="report"`
+for the version under review before constructing a plan. An artifact response
+with `chunk` is not a complete export: concatenate base64-decoded `chunk.data`
+bytes in offset order, requesting `next_offset` with identical arguments until
+null; verify `total_bytes` and `sha256`, then parse the UTF-8 JSON as the complete
+MCP result. The evaluation script and widget handle this automatically. Do not
+reduce artwork detail or report success for an incomplete download.

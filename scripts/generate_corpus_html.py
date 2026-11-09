@@ -7,9 +7,9 @@ Run:
 from __future__ import annotations
 
 from dataclasses import asdict as _trace_asdict
-from vectormark.drawing_render import trace_summary as _canonical_trace
-from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
-from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
+from vectoreyes.drawing_render import trace_summary as _canonical_trace
+from vectoreyes.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectoreyes.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 import argparse
 import base64
 import copyreg
@@ -31,12 +31,12 @@ from typing import Any, Literal
 import numpy as np
 from PIL import Image
 
-from vectormark import Options, idealize
-from vectormark.drawing_refine import auto_refine, stitch_regions
-from vectormark.refinement.assembly_binding import assemble_working_roots
-from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
-from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
-from vectormark.pipeline import _flatten_on_white
+from vectoreyes import Options, idealize
+from vectoreyes.drawing_refine import auto_refine, stitch_regions
+from vectoreyes.refinement.assembly_binding import assemble_working_roots
+from vectoreyes.mcp_image import DEFAULT_MAX_SIZE_PX
+from vectoreyes.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
+from vectoreyes.pipeline import _flatten_on_white
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
@@ -130,7 +130,7 @@ def _download_source(url: str, destination: Path, *, refresh: bool = False) -> P
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp = destination.with_suffix(destination.suffix + ".tmp")
-    request = urllib.request.Request(url, headers={"User-Agent": "vectormark-corpus/1.0"})
+    request = urllib.request.Request(url, headers={"User-Agent": "vectoreyes-corpus/1.0"})
     with urllib.request.urlopen(request, timeout=30) as response:
         tmp.write_bytes(response.read())
     tmp.replace(destination)
@@ -330,7 +330,7 @@ def _load_cached_trace(path: Path, *, trace_options: dict[str, object]):
 
 
 def _load_or_create_trace(cache_path: Path, image: np.ndarray, options: Options):
-    from vectormark.refinement.trace import trace_regions
+    from vectoreyes.refinement.trace import trace_regions
 
     trace_options = _trace_options(options)
     payload = _load_cached_trace(cache_path, trace_options=trace_options)
@@ -361,12 +361,12 @@ def _idealize_refinement_with_trace_cache(
     entry: CorpusEntry,
     cache_dir: Path,
 ):
-    from vectormark.emit import render_svg_doc
+    from vectoreyes.emit import render_svg_doc
     from dataclasses import replace
-    from vectormark.drawing import Canvas
-    from vectormark.refinement.replay_binding import capture_trace_replay_state, working_regions_from_state
-    from vectormark.drawing_refinement import refine_canonical_drawing
-    from vectormark.pipeline import (
+    from vectoreyes.drawing import Canvas
+    from vectoreyes.refinement.replay_binding import capture_trace_replay_state, working_regions_from_state
+    from vectoreyes.drawing_refinement import refine_canonical_drawing
+    from vectoreyes.pipeline import (
         _condition_input,
         _refinement_report,
         _prefer_refinement_svg,
@@ -653,9 +653,9 @@ def _write_trace_auto_debug_report(
         if pass_report is not None
     )
     (debug_dir / "index.html").write_text(f'''<!doctype html>
-<meta charset="utf-8"><title>VectorMark trace-auto debug</title>
+<meta charset="utf-8"><title>vectorEyes trace-auto debug</title>
 <style>body{{font:14px/1.45 system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}.artifact{{display:block}}object,img{{display:block;width:100%;aspect-ratio:1;background:#fff;border:0}}.artifact object{{pointer-events:none}}details{{margin-top:12px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
-<h1>VectorMark trace-auto debug</h1><p><a href="{html.escape(report_name)}">trace report and effective options</a></p><main>{cards}</main>{details}''')
+<h1>vectorEyes trace-auto debug</h1><p><a href="{html.escape(report_name)}">trace report and effective options</a></p><main>{cards}</main>{details}''')
 
 
 def _safe_filename(entry: CorpusEntry) -> str:
@@ -1063,7 +1063,7 @@ def _html_document(cards: list[str]) -> str:
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>vectormark SVG corpus</title>
+  <title>vectoreyes SVG corpus</title>
   <style>
     body {{
       margin: 24px;
@@ -1145,7 +1145,7 @@ def _html_document(cards: list[str]) -> str:
   </style>
 </head>
 <body>
-  <h1>vectormark SVG corpus</h1>
+  <h1>vectoreyes SVG corpus</h1>
   <main class="grid">{''.join(cards)}
   </main>
 </body>
@@ -1154,7 +1154,7 @@ def _html_document(cards: list[str]) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate the vectormark SVG corpus gallery.")
+    parser = argparse.ArgumentParser(description="Generate the vectoreyes SVG corpus gallery.")
     parser.add_argument("--output", type=Path, default=DEFAULT_CORPUS_OUTPUT)
     parser.add_argument(
         "--source-manifest",

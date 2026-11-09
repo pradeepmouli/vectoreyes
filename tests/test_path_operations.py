@@ -3,10 +3,10 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import ActionSettings, UpdateGeometryAction
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import CornerAnchor, PathGeometry, geometry_from_svg_d
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import ActionSettings, UpdateGeometryAction
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import CornerAnchor, PathGeometry, geometry_from_svg_d
 
 
 def fixture():
@@ -26,7 +26,7 @@ def fixture():
       {'op': 'snap', 'target': 'r1.p0.c2', 'reference': 'r1.p0.c1'}], (30, 20)),
 ])
 def test_direct_actions_execute_in_order_and_read_current_references(ops, expected):
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
 
     drawing = fixture()
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': ops})
@@ -37,7 +37,7 @@ def test_direct_actions_execute_in_order_and_read_current_references(ops, expect
 
 
 def test_ordered_action_rebinds_original_command_after_removal():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
 
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': [
         {'op': 'remove', 'target': 'r1.p0.c1'},
@@ -51,7 +51,7 @@ def test_ordered_action_rebinds_original_command_after_removal():
 
 
 def test_ordered_action_cannot_retarget_a_retired_reference_by_ordinal():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
 
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': [
         {'op': 'remove', 'target': 'r1.p0.c1'},
@@ -72,7 +72,7 @@ def test_ordered_action_cannot_retarget_a_retired_reference_by_ordinal():
      'transform': {'a': 1, 'b': 0, 'c': 0, 'd': 1, 'tx': 0, 'ty': 0}},
 ])
 def test_canonical_path_operations_preserve_region_and_receipts(op):
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     original = drawing.region('r1')
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': [op]})
@@ -100,7 +100,7 @@ def test_canonical_path_operations_preserve_region_and_receipts(op):
 
 
 def test_canonical_between_is_end_to_end_and_rebinds_untouched_corner():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1',
         'ops': [{'op': 'fit', 'between': ['r1.p0.c0', 'r1.p0.c3'], 'type': 'cubic'}]})
@@ -114,7 +114,7 @@ def test_canonical_between_is_end_to_end_and_rebinds_untouched_corner():
 
 
 def test_canonical_fit_reports_missing_exact_source_span():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1',
         'ops': [{'op': 'fit', 'target': 'r1.p0.c1', 'type': 'line'}]})
@@ -124,7 +124,7 @@ def test_canonical_fit_reports_missing_exact_source_span():
 
 
 def test_canonical_fit_retains_directional_acceptance_diagnostics():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1',
         'ops': [{'op': 'fit', 'target': 'r1.p0.c1', 'type': 'line'}]})
@@ -139,7 +139,7 @@ def test_canonical_fit_retains_directional_acceptance_diagnostics():
 
 
 def test_adjacent_between_equals_single_target_fit():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     results = []
     for selection in ({'target': 'r1.p0.c1'}, {'between': ['r1.p0.c0', 'r1.p0.c1']}):
@@ -152,8 +152,8 @@ def test_adjacent_between_equals_single_target_fit():
 
 
 def test_cutout_edit_preserves_original_path_addresses_and_source_text_identity():
-    from vectormark.path_operations import apply_region_path_operations
-    from vectormark.path_geometry import PathGeometryWithCutouts
+    from vectoreyes.path_operations import apply_region_path_operations
+    from vectoreyes.path_geometry import PathGeometryWithCutouts
     d = 'M2 2 L4 2 L4 4 L2 4 Z M0 0 L10 0 L10 10 L0 10 Z'
     geometry = geometry_from_svg_d(d, region_id='r1', fill_rule='evenodd')
     region = DrawingRegion('r1', geometry)
@@ -170,7 +170,7 @@ def test_cutout_edit_preserves_original_path_addresses_and_source_text_identity(
 
 
 def test_command_lineage_composes_across_direct_stages():
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     settings = ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive')
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1',
@@ -186,7 +186,7 @@ def test_command_lineage_composes_across_direct_stages():
 
 
 def test_numeric_command_rows_do_not_round_canonical_controls():
-    from vectormark.path_operations import _command_stream
+    from vectoreyes.path_operations import _command_stream
     geometry = geometry_from_svg_d('M0 0 Q1.123456789 2.987654321 4 0 L4 4 L0 4 Z', region_id='r1')
     assert _command_stream(geometry)[1].values[:2] == (1.123456789, 2.987654321)
 
@@ -198,7 +198,7 @@ def test_numeric_command_rows_do_not_round_canonical_controls():
     [{'op': 'fit', 'target': 'r1.p0.c1', 'type': 'keep'}, {'op': 'break', 'target': 'r1.p0.c1'}],
 ])
 def test_unimplemented_path_operations_never_report_silent_success(ops):
-    from vectormark.path_operations import apply_region_path_operations
+    from vectoreyes.path_operations import apply_region_path_operations
     drawing = fixture()
     action = UpdateGeometryAction.model_validate({'op': 'update_geometry', 'target': 'r1', 'ops': ops})
     with pytest.raises(ValueError, match='not implemented'):

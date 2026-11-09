@@ -4,9 +4,9 @@ flat-square-stays-flat over-accept regression."""
 import numpy as np
 import pytest
 
-from vectormark.candidate import LinearGradientFill, RadialGradientFill
-from vectormark.types import Region
-from vectormark.score import rank_candidates
+from vectoreyes.candidate import LinearGradientFill, RadialGradientFill
+from vectoreyes.types import Region
+from vectoreyes.score import rank_candidates
 from tests._candidates import generate_candidates
 
 

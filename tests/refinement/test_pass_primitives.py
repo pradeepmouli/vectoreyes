@@ -1,13 +1,13 @@
 import numpy as np
 
-from vectormark.skia_geometry import SkPath
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.trace import trace_regions
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.refinement.passes.primitives import primitives_pass
-from vectormark.pipeline import Options
+from vectoreyes.skia_geometry import SkPath
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.trace import trace_regions
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.refinement.passes.primitives import primitives_pass
+from vectoreyes.pipeline import Options
 
 
 def _disk(h, w, cy, cx, r):

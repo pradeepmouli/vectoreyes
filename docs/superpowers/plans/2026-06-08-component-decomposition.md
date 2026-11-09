@@ -17,16 +17,16 @@
 - [ ] **Confirm branch + baseline**
 
 ```bash
-cd /Users/pmouli/GitHub.nosync/active/py/vectormark
+cd /Users/pmouli/GitHub.nosync/active/py/vectoreyes
 git branch --show-current      # expect: feat/components
 .venv/bin/python -m pytest -q   # baseline: expect "215 passed"
 ```
 
 ## File Structure
 
-- **Create** `src/vectormark/components.py` — `decompose_components(regions, shape)` + private gutter helpers. One responsibility: partition regions into spatially-separated components. Imports only numpy + `.types.Region`.
+- **Create** `src/vectoreyes/components.py` — `decompose_components(regions, shape)` + private gutter helpers. One responsibility: partition regions into spatially-separated components. Imports only numpy + `.types.Region`.
 - **Create** `tests/test_components.py` — unit tests for the decomposition.
-- **Modify** `src/vectormark/pipeline.py` — `_render_body` loops over components; import `decompose_components`.
+- **Modify** `src/vectoreyes/pipeline.py` — `_render_body` loops over components; import `decompose_components`.
 - **Modify** `tests/test_pipeline.py` — per-component symmetry, multi-blob gradient, continuous-`sN`, parity tests.
 
 ---
@@ -34,7 +34,7 @@ git branch --show-current      # expect: feat/components
 ### Task 1: `components.py` — recursive X-Y cut decomposition
 
 **Files:**
-- Create: `src/vectormark/components.py`
+- Create: `src/vectoreyes/components.py`
 - Test: `tests/test_components.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -44,8 +44,8 @@ Create `tests/test_components.py`:
 ```python
 import numpy as np
 
-from vectormark.types import Region
-from vectormark.components import decompose_components
+from vectoreyes.types import Region
+from vectoreyes.components import decompose_components
 
 
 def _rect_region(rid, r0, r1, c0, c1, h, w, hexc="#222222"):
@@ -120,11 +120,11 @@ def test_partition_is_clean_no_loss_no_duplication():
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/python -m pytest tests/test_components.py -q`
-Expected: FAIL with `ModuleNotFoundError: No module named 'vectormark.components'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'vectoreyes.components'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/vectormark/components.py`:
+Create `src/vectoreyes/components.py`:
 
 ```python
 """Gutter-based component decomposition (slice 5). Recursive X-Y cut: split a mark on
@@ -244,7 +244,7 @@ Expected: PASS (6 passed)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/components.py tests/test_components.py
+git add src/vectoreyes/components.py tests/test_components.py
 git commit -m "feat(components): gutter-based recursive X-Y cut decomposition (slice 5)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -255,7 +255,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: Wire decomposition into `_render_body` + integration tests
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py` (`_render_body` lines ~210-231; add import)
+- Modify: `src/vectoreyes/pipeline.py` (`_render_body` lines ~210-231; add import)
 - Test: `tests/test_pipeline.py`
 
 The current `_render_body` (lines ~210-231) computes one mark-wide `axis`/`corner_radius` and runs `reconstruct_scene`/`detect_gradients`/`classify_regions`/`build_candidates` over all `regions`, then a single emit loop over `cands`. Wrap the analysis in a per-component loop that accumulates into `cands`; leave the emit loop unchanged.
@@ -304,7 +304,7 @@ def test_per_component_vertical_symmetry_emits_mirror_use():
     # no vertical mirror, so the pre-slice-5 mark-wide axis is None and the left pair is
     # NOT deduped (no <use>). Per component, the left component's local axis (col 30)
     # makes the two squares a mirror pair -> one element + a <use> mirror.
-    from vectormark.symmetry import detect_axis
+    from vectoreyes.symmetry import detect_axis
     h, w = 70, 170
     img = np.full((h, w, 3), 255, np.uint8)
     img[20:50, 10:25] = (20, 40, 80)       # left-of-pair
@@ -374,7 +374,7 @@ Expected: all PASS, **including `tests/test_candidate_byte_identical.py`** with 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_pipeline.py
+git add src/vectoreyes/pipeline.py tests/test_pipeline.py
 git commit -m "feat(pipeline): per-component analysis via gutter decomposition (slice 5)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

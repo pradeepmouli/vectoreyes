@@ -2,13 +2,13 @@
 
 **Date:** 2026-06-06
 **Purpose:** Survey of existing raster-tracing and raster-to-font tools and the specific
-algorithms inside them, scored for what vectormark could leverage. vectormark is a
+algorithms inside them, scored for what vectoreyes could leverage. vectoreyes is a
 **deterministic** flat-color raster→SVG **idealizer** (numpy/scipy/scikit-image/shapely):
 it segments colored regions, then per region either snaps to an ideal primitive
 (circle/ellipse/rect/convex polygon/annulus) or fits a smooth outline (lines + Béziers,
 corner detection, even-odd holes), plus symmetry and occlusion reconstruction.
 
-**License is load-bearing.** vectormark is MIT; GPL/CPL code is disqualifying for code reuse.
+**License is load-bearing.** vectoreyes is MIT; GPL/CPL code is disqualifying for code reuse.
 As a general rule an algorithm/idea is not protected by copyright (only the specific source
 is), so a GPL tool's *math* can typically be reimplemented clean-room while its *code* cannot
 be copied — but this is a rule of thumb, not legal advice: patents can cover techniques, and
@@ -17,27 +17,27 @@ relying on any single algorithm.
 
 ## Foundational positioning: idealize vs. reproduce
 
-Font autotracers and vectormark share a **bottom layer** (raster region → clean outline:
+Font autotracers and vectoreyes share a **bottom layer** (raster region → clean outline:
 contour follow → corner detect → Bézier fit → even-odd counters), but diverge on intent:
 
 - **Autotracers reproduce.** A glyph's bowl carries hand-tuned optical corrections (overshoot,
   stroke modulation, ink traps). Regularizing it to a primitive would *destroy* the typeface,
   so font tools deliberately never snap to primitives, never enforce symmetry.
-- **vectormark idealizes.** A logo's circle is *meant* to be a perfect circle drawn imperfectly;
+- **vectoreyes idealizes.** A logo's circle is *meant* to be a perfect circle drawn imperfectly;
   recognizing that and snapping to `<circle>` is the win.
 
-Consequence: vectormark's distinctive layers — primitive recognition, symmetry detection, and
+Consequence: vectoreyes's distinctive layers — primitive recognition, symmetry detection, and
 especially **occlusion reconstruction** (recovering hidden geometry) — have **no font-world
 analog** (glyphs are tuned imperfections to preserve, and glyphs don't occlude each other).
 Confirmed: **no permissive open tracer** does primitive-snapping or symmetry; only closed-source
-(Vectorizer.AI) and ML (StarVector) do. vectormark's idealization layer has no off-the-shelf OSS
+(Vectorizer.AI) and ML (StarVector) do. vectoreyes's idealization layer has no off-the-shelf OSS
 equivalent. A font is also "define a glyph once, reference by codepoint" with **composite glyphs**
-(é = e + ´ with a transform) — exactly vectormark's `<use>` mirror for symmetry; the generalization
+(é = e + ´ with a transform) — exactly vectoreyes's `<use>` mirror for symmetry; the generalization
 is **motif detection** (n-fold rotational symmetry = one motif + k rotated `<use>` refs).
 
 ## Verdict table
 
-| Candidate | License | vectormark target | Action |
+| Candidate | License | vectoreyes target | Action |
 | --- | --- | --- | --- |
 | **Taubin / Halíř–Flusser** low-bias circle/ellipse fit | free (math) | `occlusion._fit_circle`, `complete_annulus`; `fit.recognize_primitive` | **Consider** — partial-arc fits in occlusion are bias-prone |
 | **`volkerp/fitCurves`** (Schneider cubic) | **MIT** | `_fitcurve.fit_quadratic_beziers` | Evaluate vs current quadratic fitter |
@@ -61,7 +61,7 @@ clean-room. Pipeline:
    non-local, immune to staircase artifacts. **This is strictly better than RDP/VW for raster input.**
 3. **Vertex adjustment.** Per edge fit a least-squares line (covariance eigenvector); place each
    vertex at the intersection of its two adjacent fit lines, clamped to the unit square.
-   *(vectormark's `complete_polygon` independently uses exactly this — TLS line per edge, intersect
+   *(vectoreyes's `complete_polygon` independently uses exactly this — TLS line per edge, intersect
    adjacent lines — so the approach is validated. The clamp is the one guard we omit.)*
 4. **Corner detection + smoothing.** α = 4γ/3; corner iff α > αmax (default 1) → two segments,
    else a Bézier. Uniquely favors corners by **both sharp angle and long segment**. The constant
@@ -96,7 +96,7 @@ error and recurse (large error near an endpoint naturally forces a G¹ corner).
 
 - Graphics Gems `FitCurves.c` — permissive (public-domain-ish), MIT-compatible.
 - **`volkerp/fitCurves` — Python/NumPy, MIT** — small, auditable, directly vendorable. **This is the
-  natural "smooth outline fallback" engine** if vectormark's current quadratic fitter
+  natural "smooth outline fallback" engine** if vectoreyes's current quadratic fitter
   (`_fitcurve.fit_quadratic_beziers`) ever needs upgrading; cubics fit with fewer segments.
 
 Potrace's α=β single-parameter family is a simpler/faster alternative producing compact convex
@@ -104,10 +104,10 @@ segments by construction. Direct bezigon optimization (arXiv 1602.01913) is rese
 
 ## 3. Polyline simplification & corner detection
 
-- **RDP** (distance tolerance) — already used in vectormark (`contour.rdp`). Fast; can leave spikes.
+- **RDP** (distance tolerance) — already used in vectoreyes (`contour.rdp`). Fast; can leave spikes.
 - **Visvalingam–Whyatt** (triangle-area tolerance) — perceptually smoother, ~3.5× slower. (BSD impls
   in `shapely.simplify`, `urschrei/simplification`.)
-- **Corner detection:** angle threshold (autotrace/VTracer; vectormark's `contour.corner_indices`
+- **Corner detection:** angle threshold (autotrace/VTracer; vectoreyes's `contour.corner_indices`
   uses a 40° threshold) → potrace's α-test (angle **and** length; clean-room) → Curvature Scale Space
   (robust but heavy; reserve). For raster staircase boundaries, potrace's optimal-polygon beats RDP/VW.
 
@@ -118,7 +118,7 @@ No raster-to-font tool contributes a novel core tracer — they all **wrap potra
 - **FontForge** (GPL-3.0): "Import → trace" shells out to potrace (preferred) or autotrace, then adds
   font-grade post-steps worth borrowing **conceptually**: **Simplify**, **Round to int** (em-grid
   quantization), autohinting, and **Correct Direction** (winding normalization: PostScript wants
-  clockwise outers / non-zero, TrueType counter-clockwise). vectormark gets winding via shapely's
+  clockwise outers / non-zero, TrueType counter-clockwise). vectoreyes gets winding via shapely's
   `orient()` (BSD) — relevant to emitting correct `fill-rule` and hole orientation (cf. the annulus
   even-odd work).
 - **mftrace** (GPL): METAFONT → bitmap → potrace/autotrace → Type1. Orchestration only.
@@ -138,7 +138,7 @@ Net: raster-to-font adds **no new tracing algorithm**, but surfaces three font-g
   the numerically stable reformulation to prefer; Taubin/HyperLS lower-bias variants. skimage
   `measure.EllipseModel` (BSD) already available.
 - **Rect / convex polygon / annulus:** no tracer provides these — build deterministically with
-  shapely (`minimum_rotated_rectangle`, polygon-with-holes) + skimage + numpy (vectormark already does).
+  shapely (`minimum_rotated_rectangle`, polygon-with-holes) + skimage + numpy (vectoreyes already does).
 
 **Bias note (highest practical relevance):** occlusion completers fit circles to *partial arcs*
 (occluded disks/rings) — precisely where Kåsa/algebraic bias toward small arcs bites. **Taubin /

@@ -2,8 +2,8 @@ import math
 
 import numpy as np
 
-from vectormark.quality import GeometryPolicy, assess_geometry, symmetric_boundary_distance
-from vectormark.skia_geometry import SkPath
+from vectoreyes.quality import GeometryPolicy, assess_geometry, symmetric_boundary_distance
+from vectoreyes.skia_geometry import SkPath
 
 
 def test_geometry_policy_limits_are_conjunctive_and_typed():

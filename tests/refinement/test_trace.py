@@ -1,8 +1,8 @@
 import numpy as np
 
-from vectormark.candidate import LinearGradientFill, RadialGradientFill
-from vectormark.refinement.trace import trace_regions
-from vectormark.pipeline import Options, _segment_image
+from vectoreyes.candidate import LinearGradientFill, RadialGradientFill
+from vectoreyes.refinement.trace import trace_regions
+from vectoreyes.pipeline import Options, _segment_image
 
 
 def _disk(h, w, cy, cx, r):

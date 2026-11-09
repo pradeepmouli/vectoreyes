@@ -1,11 +1,11 @@
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_fill import (
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_fill import (
     GradientStop,
     LinearGradientFill,
     RadialGradientFill,
 )
-from vectormark.drawing_render import render_drawing
-from vectormark.path_geometry import (
+from vectoreyes.drawing_render import render_drawing
+from vectoreyes.path_geometry import (
     AffineTransform,
     CloneGeometry,
     PathGeometryWithSymmetry,

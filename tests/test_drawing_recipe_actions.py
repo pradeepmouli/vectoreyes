@@ -8,56 +8,56 @@ from types import SimpleNamespace
 from PIL import Image, ImageDraw
 import pytest
 
-import vectormark.mcp_server as mcp_server_module
+import vectoreyes.mcp_server as mcp_server_module
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_actions import ActionSettings, DrawingPlan
-from vectormark.drawing_adapter import drawing_from_region_samples
-from vectormark.drawing_engine import RasterImage
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_actions import ActionSettings, DrawingPlan
+from vectoreyes.drawing_adapter import drawing_from_region_samples
+from vectoreyes.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.refinement.replay_binding import capture_replay_state
-from vectormark.refinement.assembly_binding import working_regions_from_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.refinement.replay_binding import capture_replay_state
+from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe,
     RecipeOperation,
     build_paint_evidence,
 )
-from vectormark.drawing_replay import (
+from vectoreyes.drawing_replay import (
     _path_replay_records,
     _source_command_for_display,
     extend_recipe_with_plan,
     raster_pixels,
     propose_effective_recipe,
 )
-from vectormark.drawing_refine import refine
-from vectormark.refinement.paint_binding import refill_changed_regions_from_source
-from vectormark.drawing_render import drawing_summary
-from vectormark.drawing_state import DrawingStore
-from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
-from vectormark.fit import Shape
-from vectormark.mcp_server import (
+from vectoreyes.drawing_refine import refine
+from vectoreyes.refinement.paint_binding import refill_changed_regions_from_source
+from vectoreyes.drawing_render import drawing_summary
+from vectoreyes.drawing_state import DrawingStore
+from vectoreyes.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
+from vectoreyes.fit import Shape
+from vectoreyes.mcp_server import (
     ImageRef,
     TraceDrawingOptions,
     get_drawing_artifact,
     refine_drawing,
     trace_drawing,
 )
-from vectormark.refinement.automatic_replay import (
+from vectoreyes.refinement.automatic_replay import (
     ApplySeamConstraintsOperation,
     AxisSeamConstraint,
     PathOpsUnderlapConstraint,
     ReplayBatch,
 )
-from vectormark.corner_diagnostics import path_corner_diagnostics
-from vectormark.refinement.framework import select_refinements_with_intent
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.passes.compound import split_compound_pass
-from vectormark.refinement.passes.seams import seams_pass
-from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.path_fit_evidence import automatic_fit_evidence
-from vectormark.path_geometry import CloneGeometry
-from vectormark.skia_geometry import SkPath
+from vectoreyes.corner_diagnostics import path_corner_diagnostics
+from vectoreyes.refinement.framework import select_refinements_with_intent
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.passes.compound import split_compound_pass
+from vectoreyes.refinement.passes.seams import seams_pass
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.path_fit_evidence import automatic_fit_evidence
+from vectoreyes.path_geometry import CloneGeometry
+from vectoreyes.skia_geometry import SkPath
 
 
 def _data_uri(image: Image.Image) -> str:
@@ -114,7 +114,7 @@ def _trace(uri: str):
 def _refine(ctx, traced, ops):
     result = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": "v0",
             "ops": ops,
@@ -244,7 +244,7 @@ def _sequential_update_drawing(drawing_id, evidence, paint, plan):
     action = plan.ops[0]
     for nested in action.ops:
         stage = DrawingPlan(
-            version="vectormark.plan.v1",
+            version="vectoreyes.plan.v1",
             drawing_id=drawing_id,
             base_version=plan.base_version,
             settings=plan.settings,
@@ -314,7 +314,7 @@ def test_single_region_public_action_replays_from_retained_evidence(
     if action["op"] == "detect_primitives":
         assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
         monkeypatch.setattr(
-            "vectormark.refinement.passes.primitives.recognize_primitive_geometry",
+            "vectoreyes.refinement.passes.primitives.recognize_primitive_geometry",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("primitive detection ran during recipe replay")
             ),
@@ -322,7 +322,7 @@ def test_single_region_public_action_replays_from_retained_evidence(
     if action["op"] == "detect_symmetry":
         assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
         monkeypatch.setattr(
-            "vectormark.symmetry_detection._best_self_reconstruction",
+            "vectoreyes.symmetry_detection._best_self_reconstruction",
             lambda *_args, **_kwargs: (_ for _ in ()).throw(
                 AssertionError("symmetry selection ran during recipe replay")
             ),
@@ -423,7 +423,7 @@ def test_public_clone_chain_flattens_to_concrete_source_and_renders_all_artifact
     )
     second = refine_drawing(
         {
-            "version": "vectormark.plan.v1",
+            "version": "vectoreyes.plan.v1",
             "drawing_id": traced["drawing_id"],
             "base_version": first["version"],
             "ops": [{
@@ -479,7 +479,7 @@ def test_public_clone_cycle_is_rejected_without_publishing_a_child():
     with pytest.raises(Exception, match="cyclic retained clone reference"):
         refine_drawing(
             {
-                "version": "vectormark.plan.v1",
+                "version": "vectoreyes.plan.v1",
                 "drawing_id": traced["drawing_id"],
                 "base_version": first["version"],
                 "ops": [{
@@ -503,7 +503,7 @@ def test_detect_clones_replays_accepted_concrete_action_without_detection(monkey
     )
     assert any(batch.operations for batch in version.effective_recipe.automatic_batches)
     monkeypatch.setattr(
-        "vectormark.clone_detection.find_clone_matches",
+        "vectoreyes.clone_detection.find_clone_matches",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("clone detection ran during recipe replay")
         ),
@@ -531,7 +531,7 @@ def test_stitch_replays_accepted_constraints_without_pair_discovery(monkeypatch)
     )
     evidence, paint, base = _direct_recipe_fixture(regions, width=120, height=80)
     plan = DrawingPlan.model_validate({
-        "version": "vectormark.plan.v1",
+        "version": "vectoreyes.plan.v1",
         "drawing_id": "drw_stitch",
         "base_version": "v0",
         "ops": [{"op": "stitch", "targets": ["r1", "r2"]}],
@@ -545,7 +545,7 @@ def test_stitch_replays_accepted_constraints_without_pair_discovery(monkeypatch)
         drawing_id="drw_stitch", evidence=evidence, paint=paint, recipe=recipe
     ).drawing
     monkeypatch.setattr(
-            "vectormark.seam_detection._candidate_for_pair",
+            "vectoreyes.seam_detection._candidate_for_pair",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("seam pair discovery ran during recipe replay")
         ),
@@ -671,7 +671,7 @@ def test_axis_seam_report_keeps_exactly_mapped_command_boundaries_editable():
         assert all(command["corner_boundary"]["editable"] for command in commands[1:])
 
 
-def test_seam_cubic_cleanup_hides_replaced_command_but_keeps_exact_following_line():
+def test_seam_endpoint_edit_preserves_cubic_and_following_line_correspondence():
     left, left_path = _retained_path_region(
         1,
         "r1",
@@ -719,8 +719,8 @@ def test_seam_cubic_cleanup_hides_replaced_command_but_keeps_exact_following_lin
     }
     source_cubic = left_path.fit.source.path.commands[1].id
     source_following_line = left_path.fit.source.path.commands[2].id
-    assert not any(source_id == source_cubic for source_id, _ in exact_pairs)
-    assert (source_following_line, "r1.p0.c3") in exact_pairs
+    assert (source_cubic, "r1.p0.c1") in exact_pairs
+    assert (source_following_line, "r1.p0.c2") in exact_pairs
 
     left_summary = next(
         target
@@ -733,8 +733,8 @@ def test_seam_cubic_cleanup_hides_replaced_command_but_keeps_exact_following_lin
         command["id"]: command["corner_boundary"]["editable"]
         for command in left_summary["geometry"]["commands"]
     }
-    assert editable["r1.p0.c1"] is False
-    assert editable["r1.p0.c3"] is True
+    assert editable["r1.p0.c1"] is True
+    assert editable["r1.p0.c2"] is True
 
 
 def test_topology_receipt_keeps_surviving_paths_editable_after_owner_remap():
@@ -855,7 +855,7 @@ def test_update_geometry_preserves_cleanup_positions_repetitions_and_settings():
     )
     evidence, paint, base = _direct_recipe_fixture((source,), width=300, height=460)
     plan = DrawingPlan.model_validate({
-        "version": "vectormark.plan.v1",
+        "version": "vectoreyes.plan.v1",
         "drawing_id": "drw_order",
         "base_version": "v0",
         "ops": [{
@@ -995,7 +995,7 @@ def test_nested_path_action_replay_binds_every_command_reference(
     )
     evidence, paint, base = _direct_recipe_fixture((source,), width=12, height=12)
     plan = DrawingPlan.model_validate({
-        "version": "vectormark.plan.v1",
+        "version": "vectoreyes.plan.v1",
         "drawing_id": "drw_nested",
         "base_version": "v0",
         "ops": [{
@@ -1005,9 +1005,9 @@ def test_nested_path_action_replay_binds_every_command_reference(
         }],
     })
     if any(item["op"] in {"break", "reverse", "mirror"} for item in path_actions):
-        from vectormark.drawing_replay import bind_recipe_operation
-        from vectormark.refinement.replay_binding import capture_replay_state
-        from vectormark.drawing import Canvas
+        from vectoreyes.drawing_replay import bind_recipe_operation
+        from vectoreyes.refinement.replay_binding import capture_replay_state
+        from vectoreyes.drawing import Canvas
 
         operation = bind_recipe_operation(
             operation_id="reserved-path-binding", action=plan.ops[0],
@@ -1071,7 +1071,7 @@ def test_public_corner_normalization_replays_retained_declaration_without_detect
     )
     evidence, paint, base = _direct_recipe_fixture((source,), width=24, height=16)
     plan = DrawingPlan.model_validate({
-        "version": "vectormark.plan.v1",
+        "version": "vectoreyes.plan.v1",
         "drawing_id": "drw_normalize",
         "base_version": "v0",
         "ops": [{
@@ -1086,7 +1086,7 @@ def test_public_corner_normalization_replays_retained_declaration_without_detect
     assert len(recipe.automatic_batches) == 1
     assert recipe.automatic_batches[0].operations
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detection ran during recipe replay")
         ),

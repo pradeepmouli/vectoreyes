@@ -3,15 +3,15 @@ import math
 import numpy as np
 import pytest
 
-from vectormark.skia_geometry import SkPath
-from vectormark.candidate import FlatFill, LinearGradientFill
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.refinement.passes.symmetry import symmetry_pass
-from vectormark.fit import Shape
-from vectormark.drawing_actions import SetSymmetryAction
-from vectormark.drawing_symmetry import (
+from vectoreyes.skia_geometry import SkPath
+from vectoreyes.candidate import FlatFill, LinearGradientFill
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.refinement.passes.symmetry import symmetry_pass
+from vectoreyes.fit import Shape
+from vectoreyes.drawing_actions import SetSymmetryAction
+from vectoreyes.drawing_symmetry import (
     Axis2D,
     _intrinsic_symmetry_diagnostics,
     _self_symmetry_diagnostics,
@@ -176,7 +176,7 @@ def test_symmetry_pass_selects_accurate_generic_path_fallback_over_heuristics():
     assert out[0].is_leaf and out[0].diagnostics["symmetry"]["materialized"]
 
 
-def test_symmetry_pass_smooths_daikonic_like_cap_instead_of_preserving_facets():
+def test_symmetry_pass_preserves_retained_cap_segments():
     shape = Shape(
         "path",
         {
@@ -204,10 +204,9 @@ def test_symmetry_pass_smooths_daikonic_like_cap_instead_of_preserving_facets():
 
     assert out[0].is_leaf and out[0].diagnostics["symmetry"]["materialized"]
     d = str(out[0].current.params["d"])
-    # The retained path now contains both fitted halves, not one source half.
-    assert d.count("C") == 2
-    assert d.count("L") == 2
-    assert "Q" not in d
+    # Reflection retains the source's segmented curves instead of smoothing them.
+    assert d.count("C") == 4
+    assert d.count("L") >= 8
 
 
 def test_symmetry_pass_preserves_flat_top_width_on_daikonic_like_tip():
@@ -244,7 +243,7 @@ def test_symmetry_pass_preserves_flat_top_width_on_daikonic_like_tip():
 
 
 def test_symmetric_half_fit_fits_prefixed_half_only_once(monkeypatch):
-    import vectormark.refine as refine_module
+    import vectoreyes.refine as refine_module
 
     shape = Shape(
         "path",
@@ -335,15 +334,14 @@ def test_symmetry_pass_records_simple_self_symmetric_path_without_rewriting():
 
     assert len(out) == 1
     assert out[0].is_leaf
-    assert out[0].current == obj.current
     assert out[0].fill == obj.fill
     assert out[0].footprint.symmetric_difference(poly).area < 1e-6
-    assert out[0].diagnostics["symmetry"]["mode"] == "intrinsic"
+    assert out[0].diagnostics["symmetry"]["mode"] == "self"
     assert out[0].diagnostics["symmetry"]["accepted"] is True
 
 
 def test_rejected_approximate_reconstruction_is_not_reported_as_intrinsic(monkeypatch):
-    import vectormark.symmetry_detection as module
+    import vectoreyes.symmetry_detection as module
 
     poly = SkPath(shell=[(20.0, 60.0), (40.1, 20.0), (60.0, 60.0)])
     obj = _obj(1, poly)

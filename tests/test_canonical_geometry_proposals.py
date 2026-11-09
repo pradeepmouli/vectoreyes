@@ -4,13 +4,13 @@ import numpy as np
 import pytest
 
 from tests.test_canonical_recipe_replay import inputs
-from vectormark.drawing import DrawingRegion
-from vectormark.drawing_actions import DrawingPlan
-from vectormark.drawing_fill import FlatFill
-from vectormark.drawing_replay import _propose_public_operation, bind_recipe_operation
-from vectormark.geometry_native import region_path
-from vectormark.path_geometry import PathGeometry, PrimitiveGeometry, geometry_from_svg_d
-from vectormark.replay_state import ReplayState
+from vectoreyes.drawing import DrawingRegion
+from vectoreyes.drawing_actions import DrawingPlan
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.drawing_replay import _propose_public_operation, bind_recipe_operation
+from vectoreyes.geometry_native import region_path
+from vectoreyes.path_geometry import PathGeometry, PrimitiveGeometry, geometry_from_svg_d
+from vectoreyes.replay_state import ReplayState
 
 
 def proposal_case(op, *, second=False):
@@ -26,7 +26,7 @@ def proposal_case(op, *, second=False):
         drawing = replace(drawing, regions=(*drawing.regions, region))
         observations['r2'] = {**observations['r1'], 'id': 2, 'ancestry': (2,)}
     state = ReplayState(drawing, {'r1': {'obsolete_fit_receipt': 'old'}}, observations)
-    action = DrawingPlan.model_validate({'version': 'vectormark.plan.v1',
+    action = DrawingPlan.model_validate({'version': 'vectoreyes.plan.v1',
         'drawing_id': 'test', 'base_version': 'v0', 'ops': [op]}).ops[0]
     operation = bind_recipe_operation(operation_id='geometry', action=action,
         settings=recipe.settings, evidence_revision=evidence.revision, state=state)
@@ -88,7 +88,7 @@ def test_geometry_proposal_does_not_treat_an_empty_symmetry_observation_as_a_rel
     branch = DrawingRegion('r1', None, children=(leaf,), diagnostics={'symmetry': None})
     state = ReplayState(replace(evidence.drawing, regions=(branch,)), {},
         {'r1': {'ancestry': (1,)}, 'r1-1': {'ancestry': (1, 1)}})
-    action = DrawingPlan.model_validate({'version': 'vectormark.plan.v1',
+    action = DrawingPlan.model_validate({'version': 'vectoreyes.plan.v1',
         'drawing_id': 'test', 'base_version': 'v0', 'ops': [
             {'op': 'align', 'target': 'r1-1', 'reference': 'r1', 'axes': ['x']}]}).ops[0]
     operation = bind_recipe_operation(operation_id='align', action=action,

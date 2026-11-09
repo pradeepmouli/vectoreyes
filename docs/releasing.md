@@ -1,6 +1,6 @@
-# Releasing vectormark to PyPI
+# Releasing vectoreyes to PyPI
 
-vectormark publishes via **PyPI Trusted Publishing** (OIDC) — GitHub Actions
+The release workflow uses **PyPI Trusted Publishing** (OIDC) — GitHub Actions
 proves the workflow's identity to PyPI directly, so there is **no API token** in
 this repository. The release workflow lives at `.github/workflows/release.yml`
 and runs on any `v*` tag.
@@ -14,9 +14,9 @@ your PyPI account to this repo.
    *pending publisher* (PyPI lets you pre-register a project that does not exist
    yet):
    - Log in to <https://pypi.org> → **Account → Publishing → Add a pending publisher**.
-   - **PyPI Project Name:** `vectormark`
+   - **PyPI Project Name:** `vectoreyes`
    - **Owner:** `pradeepmouli`
-   - **Repository name:** `vectormark`
+   - **Repository name:** `vectoreyes`
    - **Workflow name:** `release.yml`
    - **Environment name:** `pypi`
 2. In this GitHub repo: **Settings → Environments → New environment** → name it
@@ -48,7 +48,7 @@ uv build                 # -> platform/Python-specific wheel + .tar.gz
 uvx twine check dist/*   # validate metadata renders on PyPI
 ```
 
-VectorMark wheels compile the drawing engine, tracer, fitter, and optimizer with
+vectorEyes wheels compile the drawing engine, tracer, fitter, and optimizer with
 Cython, including the boundary-distance kernel. CLI and MCP entry points, MCP
 image resolution, and package initializers remain Python. Wheels are specific
 to the build Python and platform. Source builds require a C compiler;
@@ -65,7 +65,7 @@ as in editable mode. Native compilation can change runtime type enforcement,
 so source-mode tests alone are not a release gate.
 
 The built MCP App HTML is required when building a distribution. Hatch includes
-it at `vectormark/assets/mcp-app.html` in the wheel and retains the frontend
+it at `vectoreyes/assets/mcp-app.html` in the wheel and retains the frontend
 source and built HTML in the source distribution. Missing HTML fails the build;
 rebuild it after frontend changes. End users do not need Node.js.
 

@@ -1,11 +1,11 @@
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_actions import AssignCloneAction
-from vectormark.drawing_relationships import assign_clone
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_actions import AssignCloneAction
+from vectoreyes.drawing_relationships import assign_clone
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 def leaf(identity, x, color):
@@ -14,7 +14,7 @@ def leaf(identity, x, color):
 
 
 def test_bound_clone_preserves_scoped_identity_and_independent_observations():
-    from vectormark.drawing_adapter import bind_region_inputs
+    from vectoreyes.drawing_adapter import bind_region_inputs
     source, target = leaf(1, 0, '#112233'), leaf(1, 8, '#ABCDEF')
     bound = bind_region_inputs({'source': source, 'target': target},
         paths={'source': (10, 1), 'target': (20, 1)})
@@ -32,14 +32,14 @@ def test_bound_clone_preserves_scoped_identity_and_independent_observations():
 
 
 def test_binding_rejects_aliasing_one_scoped_region_as_source_and_target():
-    from vectormark.drawing_adapter import bind_region_inputs
+    from vectoreyes.drawing_adapter import bind_region_inputs
     source = leaf(1, 0, '#112233')
     with pytest.raises(ValueError, match='same scoped region'):
         bind_region_inputs({'source': source, 'target': source})
 
 
 def test_binding_retains_selected_symbolic_dependency_for_cycle_validation():
-    from vectormark.drawing_adapter import bind_region_inputs
+    from vectoreyes.drawing_adapter import bind_region_inputs
     source, target = leaf(1, 0, '#112233'), leaf(2, 8, '#ABCDEF')
     source = source.with_current(Shape('use', {'href_obj_id': 2,
         'transform': (1, 0, 0, 1, -8, 0)}), footprint=source.footprint)
@@ -50,7 +50,7 @@ def test_binding_retains_selected_symbolic_dependency_for_cycle_validation():
 
 
 def test_resolver_binds_named_output_descendant_without_shadowing_input():
-    from vectormark.refinement.automatic_replay import (
+    from vectoreyes.refinement.automatic_replay import (
         NamedRegionOutput, OperationOutputRegionRef, PassInputRegionRef, ReplayBatch, RegionResolver,
     )
     source, target = leaf(1, 0, '#112233'), leaf(1, 8, '#ABCDEF')
@@ -72,7 +72,7 @@ def test_resolver_binds_named_output_descendant_without_shadowing_input():
 
 
 def test_bound_baked_copy_uses_selected_transform_without_replacing_target_paint():
-    from vectormark.drawing_adapter import bind_region_inputs
+    from vectoreyes.drawing_adapter import bind_region_inputs
     source, target = leaf(1, 0, '#112233'), leaf(2, 8, '#ABCDEF')
     bound = bind_region_inputs({'source': source, 'target': target})
     selected = assign_clone(bound.drawing, AssignCloneAction(op='assign_clone',
@@ -86,8 +86,8 @@ def test_bound_baked_copy_uses_selected_transform_without_replacing_target_paint
 
 @pytest.mark.parametrize('refresh', [False, True])
 def test_bound_clone_refresh_preserves_metadata_and_exact_scoped_reference(refresh):
-    from vectormark.drawing_adapter import bind_region_inputs
-    from vectormark.refinement.automatic_replay import apply_clone_reference_update
+    from vectoreyes.drawing_adapter import bind_region_inputs
+    from vectoreyes.refinement.automatic_replay import apply_clone_reference_update
     source, target = leaf(1, 2, '#112233'), leaf(2, 8, '#ABCDEF')
     clone = target.with_current(Shape('use', {'href_obj_id': 5,
         'href_region_path': (5,), 'transform': (1, 0, 0, 1, 8, 0), 'note': 'retained'}),

@@ -5,26 +5,26 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill as LegacyFlatFill
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_engine import RasterImage
-from vectormark.drawing_fill import FlatFill
+from vectoreyes.candidate import FlatFill as LegacyFlatFill
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_engine import RasterImage
+from vectoreyes.drawing_fill import FlatFill
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.refinement.assembly_binding import working_regions_from_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe,
     ReplayRecord,
     build_paint_evidence,
     drawing_revision,
     snapshot_geometry_evidence,
     )
-from vectormark.drawing_state import DrawingNotFound, DrawingStore, VersionCandidate
-from vectormark.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_fit_evidence import FittedRun, automatic_fit_evidence
-from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.drawing_state import DrawingNotFound, DrawingStore, VersionCandidate
+from vectoreyes.drawing_trace import RootPathEvidence, TraceOptions, TraceResult
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_fit_evidence import FittedRun, automatic_fit_evidence
+from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
 def _source() -> RasterImage:

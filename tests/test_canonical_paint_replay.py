@@ -2,9 +2,9 @@ from dataclasses import replace
 
 import numpy as np
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import geometry_from_svg_d
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import geometry_from_svg_d
 
 
 def leaf(identity, d, color='#00ff00', **kwargs):
@@ -13,7 +13,7 @@ def leaf(identity, d, color='#00ff00', **kwargs):
 
 
 def test_source_paint_uses_visible_surface_not_occluded_underlying_pixels():
-    from vectormark.drawing_paint import refill_drawing_from_source
+    from vectoreyes.drawing_paint import refill_drawing_from_source
 
     rgb = np.full((24, 24, 3), [255, 0, 0], np.uint8)
     rgb[:, 12:] = [0, 0, 255]
@@ -29,7 +29,7 @@ def test_source_paint_uses_visible_surface_not_occluded_underlying_pixels():
 
 
 def test_changed_paint_preserves_unmodified_fill_and_refits_new_coverage():
-    from vectormark.drawing_paint import refill_drawing_from_source
+    from vectoreyes.drawing_paint import refill_drawing_from_source
 
     rgb = np.full((24, 24, 3), [255, 0, 0], np.uint8)
     rgb[:, 12:] = [0, 0, 255]
@@ -47,7 +47,7 @@ def test_changed_paint_preserves_unmodified_fill_and_refits_new_coverage():
 
 
 def test_retained_material_coverage_excludes_different_paint_inside_the_footprint():
-    from vectormark.drawing_paint import refill_drawing_from_source
+    from vectoreyes.drawing_paint import refill_drawing_from_source
 
     rgb = np.full((24, 24, 3), [0, 0, 255], np.uint8)
     rgb[7:17, 7:17] = [255, 0, 0]

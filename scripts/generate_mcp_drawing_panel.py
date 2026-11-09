@@ -13,8 +13,8 @@ Example:
 
 from __future__ import annotations
 
-from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
-from vectormark.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
+from vectoreyes.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectoreyes.drawing_render import render_drawing as _canonical_render, render_labeled_drawing as _canonical_labels
 import argparse
 import base64
 from collections.abc import Mapping
@@ -28,18 +28,18 @@ import numpy as np
 import resvg_py
 from PIL import Image, ImageDraw, ImageFont
 
-from vectormark._fitcurve import cubic_inflects
-from vectormark.contour import region_contours
-from vectormark.drawing_adapter import drawing_from_region_samples
-from vectormark.drawing_render import render_path_map
-from vectormark.drawing_refine import auto_refine, stitch_regions
-from vectormark.refinement.assembly_binding import assemble_working_roots
-from vectormark.emit import render_svg_doc, resolve_fill
-from vectormark.fit import _fmt
-from vectormark.mcp_image import DEFAULT_MAX_SIZE_PX
-from vectormark.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
-from vectormark.corner_diagnostics import path_corner_diagnostics
-from vectormark.path_sampling import _parse_subpaths
+from vectoreyes._fitcurve import cubic_inflects
+from vectoreyes.contour import region_contours
+from vectoreyes.drawing_adapter import drawing_from_region_samples
+from vectoreyes.drawing_render import render_path_map
+from vectoreyes.drawing_refine import auto_refine, stitch_regions
+from vectoreyes.refinement.assembly_binding import assemble_working_roots
+from vectoreyes.emit import render_svg_doc, resolve_fill
+from vectoreyes.fit import _fmt
+from vectoreyes.mcp_image import DEFAULT_MAX_SIZE_PX
+from vectoreyes.mcp_server import ImageRef, TraceDrawingOptions, _trace_result
+from vectoreyes.corner_diagnostics import path_corner_diagnostics
+from vectoreyes.path_sampling import _parse_subpaths
 
 
 def _parse_args() -> argparse.Namespace:
@@ -264,7 +264,7 @@ def _stage_parameters(
     corner_normalize: bool,
 ) -> dict[str, object]:
     """Expose only the controls that govern the named diagnostic stage."""
-    from vectormark.fit import FIT_REFERENCE_CANVAS_EXTENT, MIN_PROTECTED_POLYLINE_LINE_LENGTH
+    from vectoreyes.fit import FIT_REFERENCE_CANVAS_EXTENT, MIN_PROTECTED_POLYLINE_LINE_LENGTH
 
     options = trace.options
     trace_fit = {
@@ -338,9 +338,9 @@ def _write_pass_index(
         for name, label, filename, svg, report in snapshots
     )
     output.write_text(f'''<!doctype html>
-<title>VectorMark MCP refinement pass review</title>
+<title>vectorEyes MCP refinement pass review</title>
 <style>body{{font-family:system-ui;margin:24px}}main{{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px}}article{{border:1px solid #ddd;padding:12px}}h2{{font-size:16px;margin:0 0 8px}}.artifact{{display:block}}object{{width:100%;aspect-ratio:1;background:#fff;pointer-events:none}}summary{{cursor:pointer;font-size:13px}}pre{{overflow:auto;background:#f6f7f9;padding:8px;font-size:12px}}</style>
-<h1>VectorMark MCP refinement pass review</h1><main>{cards}</main>''')
+<h1>vectorEyes MCP refinement pass review</h1><main>{cards}</main>''')
 
 
 def _trace_stage_svg(trace, stage: str, *, geometry: bool = False) -> str:

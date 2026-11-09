@@ -2,14 +2,14 @@ import math
 
 import pytest
 
-from vectormark.drawing import DrawingRegion
-from vectormark.drawing_fill import FlatFill
-from vectormark.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
-from vectormark.skia_geometry import SkPath
+from vectoreyes.drawing import DrawingRegion
+from vectoreyes.drawing_fill import FlatFill
+from vectoreyes.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
+from vectoreyes.skia_geometry import SkPath
 
 
 def test_self_symmetry_reconstructs_canonical_region_without_changing_paint_or_source():
-    from vectormark.drawing_symmetry import Axis2D, reconstruct_self_symmetry
+    from vectoreyes.drawing_symmetry import Axis2D, set_symmetry
 
     points = [(48 + 20 * math.cos(t * math.tau / 32),
         48 + 30 * math.sin(t * math.tau / 32)) for t in range(32)]
@@ -17,9 +17,8 @@ def test_self_symmetry_reconstructs_canonical_region_without_changing_paint_or_s
     source = DrawingRegion(id='r1', geometry=geometry_from_svg_d(d, region_id='r1'),
         fill=FlatFill('#123456'), source_region_ids=('source',))
 
-    result = reconstruct_self_symmetry(source, SkPath.from_svg_d(d),
-        axis=Axis2D(math.pi / 2, 48, 48), residual=0, fit_kind='symmetric_half',
-        side='left', corner_radius=0, epsilon=1, max_error=1, cubic=False)
+    result = set_symmetry(source, SkPath.from_svg_d(d),
+        axis=Axis2D(math.pi / 2, 48, 48), residual=0, side='positive')
 
     assert result.id == source.id
     assert result.fill == source.fill
@@ -29,7 +28,7 @@ def test_self_symmetry_reconstructs_canonical_region_without_changing_paint_or_s
 
 
 def test_canonical_symmetry_union_preserves_hole_and_rejects_mixed_paint():
-    from vectormark.drawing_symmetry import union_symmetric_regions
+    from vectoreyes.drawing_symmetry import union_symmetric_regions
 
     ring = SkPath.from_svg_d('M0 0 L20 0 L20 20 L0 20 Z M5 5 L5 15 L15 15 L15 5 Z')
     child = DrawingRegion(id='r1-a', geometry=geometry_from_svg_d(ring.to_svg_d(),
@@ -48,9 +47,9 @@ def test_canonical_symmetry_union_preserves_hole_and_rejects_mixed_paint():
 
 
 def test_materialized_disconnected_symmetry_union_renders_as_real_components():
-    from vectormark.drawing import Drawing, Canvas
-    from vectormark.drawing_render import render_drawing
-    from vectormark.drawing_symmetry import union_symmetric_regions
+    from vectoreyes.drawing import Drawing, Canvas
+    from vectoreyes.drawing_render import render_drawing
+    from vectoreyes.drawing_symmetry import union_symmetric_regions
 
     first = SkPath.from_svg_d('M0 0 L10 0 L10 10 L0 10 Z')
     second = first.affine_transform((1, 0, 0, 1, 20, 0))

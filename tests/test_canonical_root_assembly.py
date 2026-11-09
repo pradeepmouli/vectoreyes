@@ -3,16 +3,16 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.drawing import Drawing
-from vectormark.drawing_engine import RasterImage
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
+from vectoreyes.drawing import Drawing
+from vectoreyes.drawing_engine import RasterImage
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions
 
 
 @pytest.mark.parametrize('with_rgb', [False, True])
 def test_root_assembly_publishes_canonical_paths_and_detached_source_observations(with_rgb):
-    from vectormark.drawing_assembly import assemble_drawing_roots
-    from vectormark.drawing_recipe import build_geometry_evidence
-    from vectormark.path_topology import component_paths
+    from vectoreyes.drawing_assembly import assemble_drawing_roots
+    from vectoreyes.drawing_recipe import build_geometry_evidence
+    from vectoreyes.path_topology import component_paths
 
     rgb = np.full((32, 48, 3), 255, np.uint8)
     rgb[5:25, 4:20] = (200, 30, 40)
@@ -42,9 +42,9 @@ def test_root_assembly_publishes_canonical_paths_and_detached_source_observation
 
 
 def test_canonical_evidence_snapshot_is_detached_without_working_publication():
-    from vectormark.drawing import Canvas, DrawingRegion
-    from vectormark.drawing_recipe import build_geometry_evidence
-    from vectormark.path_geometry import geometry_from_svg_d
+    from vectoreyes.drawing import Canvas, DrawingRegion
+    from vectoreyes.drawing_recipe import build_geometry_evidence
+    from vectoreyes.path_geometry import geometry_from_svg_d
 
     geometry = geometry_from_svg_d('M1 1 L6 1 L6 6 L1 6 Z', region_id='r1')
     rgb = np.zeros((8, 8, 3), np.uint8)

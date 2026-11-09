@@ -4,12 +4,12 @@ import pytest
 
 from tests.test_canonical_structural_replay import committed, leaf
 from tests.test_canonical_multi_replay import forbid_working_execution
-from vectormark.drawing import Canvas
-from vectormark.fit import Shape
-from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
-from vectormark.refinement.automatic_replay import FitPrimitiveOperation, PassInputRegionRef
-from vectormark.refinement.replay_binding import capture_replay_state
-from vectormark.replay_identity import canonical_input_revision
+from vectoreyes.drawing import Canvas
+from vectoreyes.fit import Shape
+from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.refinement.automatic_replay import FitPrimitiveOperation, PassInputRegionRef
+from vectoreyes.refinement.replay_binding import capture_replay_state
+from vectoreyes.replay_identity import canonical_input_revision
 
 
 def fixture():
@@ -20,7 +20,7 @@ def fixture():
 
 
 def test_prepared_canonical_choices_do_not_mutate_their_pass_snapshot(monkeypatch):
-    from vectormark.drawing_automatic import AutomaticBatchApplication
+    from vectoreyes.drawing_automatic import AutomaticBatchApplication
     state, batch = fixture()
     revision = canonical_input_revision(state)
     forbid_working_execution(monkeypatch)
@@ -33,13 +33,13 @@ def test_prepared_canonical_choices_do_not_mutate_their_pass_snapshot(monkeypatc
 
 
 def test_accept_installs_the_prepared_selection_without_executing_it_again(monkeypatch):
-    from vectormark.drawing_automatic import AutomaticBatchApplication
+    from vectoreyes.drawing_automatic import AutomaticBatchApplication
     state, batch = fixture()
     context = AutomaticBatchApplication(state, batch)
     selected = context.prepare(batch.entries[0].intent)
     def unavailable(*args, **kwargs):
         raise AssertionError('selection execution must not repeat at acceptance')
-    monkeypatch.setattr('vectormark.drawing_automatic._select_regions', unavailable)
+    monkeypatch.setattr('vectoreyes.drawing_automatic._select_regions', unavailable)
     context.accept(batch.entries[0], selected)
     result = context.finish()
     assert result.drawing.region('r1').geometry.primitive.width == 5
@@ -48,7 +48,7 @@ def test_accept_installs_the_prepared_selection_without_executing_it_again(monke
 
 
 def test_rejected_assessment_cannot_publish_a_prepared_selection():
-    from vectormark.drawing_automatic import AutomaticBatchApplication
+    from vectoreyes.drawing_automatic import AutomaticBatchApplication
     state, batch = fixture()
     context = AutomaticBatchApplication(state, batch)
     record = batch.entries[0]
@@ -60,7 +60,7 @@ def test_rejected_assessment_cannot_publish_a_prepared_selection():
 
 
 def test_prepared_outputs_cannot_be_attached_to_different_intent():
-    from vectormark.drawing_automatic import AutomaticBatchApplication
+    from vectoreyes.drawing_automatic import AutomaticBatchApplication
     state, batch = fixture()
     context = AutomaticBatchApplication(state, batch)
     record = batch.entries[0]

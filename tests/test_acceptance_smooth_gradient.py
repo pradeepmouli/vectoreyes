@@ -6,8 +6,8 @@ colour-step merge + per-component fill."""
 
 import numpy as np
 
-from vectormark import Options, idealize
-from vectormark.color import mean_delta_e
+from vectoreyes import Options, idealize
+from vectoreyes.color import mean_delta_e
 from tests._render import render_svg
 
 
@@ -58,7 +58,7 @@ def _rotate_img(img, deg):
 
 
 def test_bake_gradient_geometry_linear_and_radial():
-    from vectormark.pipeline import _bake_gradient_geometry
+    from vectoreyes.pipeline import _bake_gradient_geometry
     # 90° rotation about origin as an SVG affine (a,b,c,d,e,f): (x,y) -> (-y, x)
     bake = (0.0, 1.0, -1.0, 0.0, 0.0, 0.0)
     lin = _bake_gradient_geometry({"x1": 10.0, "y1": 0.0, "x2": 20.0, "y2": 0.0}, "linear", bake)

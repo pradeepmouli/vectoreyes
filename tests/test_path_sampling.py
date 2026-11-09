@@ -7,7 +7,7 @@ import pytest
     ("A2 2 0 0 1 4 0", (2, -2)),
 ])
 def test_geometry_sampling_keeps_curve_samples_and_open_closure_policy(command, midpoint):
-    from vectormark.path_sampling import _parse_subpaths, _sample_subpath
+    from vectoreyes.path_sampling import _parse_subpaths, _sample_subpath
 
     (tokens,) = _parse_subpaths(f"M0 0 {command} Z")
     points = _sample_subpath(tokens, samples=3)
@@ -19,7 +19,7 @@ def test_geometry_sampling_keeps_curve_samples_and_open_closure_policy(command, 
 
 
 def test_geometry_sampling_preserves_disconnected_source_order_and_precision():
-    from vectormark.path_sampling import _parse_subpaths
+    from vectoreyes.path_sampling import _parse_subpaths
 
     paths = _parse_subpaths("M1e-3 2.123456 L3 4 Z M8 9 L10 11 Z")
 

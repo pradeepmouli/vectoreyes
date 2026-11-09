@@ -10,8 +10,8 @@ import pytest
 from PIL import Image
 from scipy import ndimage
 
-from vectormark import Options, idealize
-from vectormark.color import mean_delta_e
+from vectoreyes import Options, idealize
+from vectoreyes.color import mean_delta_e
 from tests._render import disk, paint, render_svg, ssim
 from tests.test_acceptance_annulus import _ring
 from tests.test_acceptance_occlusion import _synthetic_mastercard

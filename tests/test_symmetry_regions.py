@@ -1,12 +1,12 @@
 import numpy as np
 from PIL import Image
-from vectormark.symmetry import Axis2D, _perimeter, reflection_off_count
-from vectormark.symmetry import region_is_self_symmetric, regions_mirror_pair, K_BAND
-from vectormark.symmetry import propose_axes
-from vectormark.symmetry import cluster_axes, AxisProposal
-from vectormark.symmetry import detect_symmetry_groups, sym_off_ratio, _threshold_to_off_ratio
-from vectormark.types import Region
-from vectormark.pipeline import idealize, Options
+from vectoreyes.symmetry import Axis2D, _perimeter, reflection_off_count
+from vectoreyes.symmetry import region_is_self_symmetric, regions_mirror_pair, K_BAND
+from vectoreyes.symmetry import propose_axes
+from vectoreyes.symmetry import cluster_axes, AxisProposal
+from vectoreyes.symmetry import detect_symmetry_groups, sym_off_ratio, _threshold_to_off_ratio
+from vectoreyes.types import Region
+from vectoreyes.pipeline import idealize, Options
 from scipy import ndimage as ndi
 
 def _disk(h, w, cy, cx, r):

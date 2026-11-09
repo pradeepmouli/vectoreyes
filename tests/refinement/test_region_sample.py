@@ -1,10 +1,10 @@
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.occlusion import intersection_lens_d
-from vectormark.skia_geometry import SkPath
-from vectormark.refinement.region_sample import RegionSample, flatten_points, leaves, to_polygon
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.occlusion import intersection_lens_d
+from vectoreyes.skia_geometry import SkPath
+from vectoreyes.refinement.region_sample import RegionSample, flatten_points, leaves, to_polygon
 
 
 def test_to_polygon_circle_area_matches():

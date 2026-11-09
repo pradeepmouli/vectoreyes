@@ -1,14 +1,14 @@
 import numpy as np
 import pytest
 
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.path_geometry import AffineTransform, CloneGeometry, PrimitiveGeometry, RectanglePrimitive, geometry_from_svg_d
-from vectormark.replay_state import ReplayState
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.path_geometry import AffineTransform, CloneGeometry, PrimitiveGeometry, RectanglePrimitive, geometry_from_svg_d
+from vectoreyes.replay_state import ReplayState
 
 
 @pytest.mark.parametrize('kind', ['rectangle', 'cutout', 'clone'])
 def test_replacement_raster_uses_retained_geometry_without_sampling_observations(kind, monkeypatch):
-    from vectormark.drawing_automatic import _replacement_raster
+    from vectoreyes.drawing_automatic import _replacement_raster
     source = DrawingRegion('source', PrimitiveGeometry(RectanglePrimitive((1, 2), 4, 4)))
     if kind == 'rectangle':
         target = source
@@ -21,8 +21,8 @@ def test_replacement_raster_uses_retained_geometry_without_sampling_observations
     state = ReplayState(Drawing('raster', Canvas(9, 8), roots), {}, {})
     def forbidden(*args, **kwargs):
         raise AssertionError('canonical rasterization projected a sampling shape')
-    monkeypatch.setattr('vectormark.drawing_adapter.current_shape_for_region', forbidden)
-    monkeypatch.setattr('vectormark.refinement.region_sample.to_polygon', forbidden)
+    monkeypatch.setattr('vectoreyes.drawing_adapter.current_shape_for_region', forbidden)
+    monkeypatch.setattr('vectoreyes.refinement.region_sample.to_polygon', forbidden)
     actual = _replacement_raster(state, target, (8, 9))
     expected = np.zeros((8, 9), dtype=bool)
     # The existing rasterizer includes samples on integer boundary coordinates.

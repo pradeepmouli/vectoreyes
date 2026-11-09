@@ -4,7 +4,7 @@
 
 **Goal:** Replace `_fit_region`'s hand-tuned geometry priority cascade with generate-all-candidates → score → pick (via the slice-3 scorer), so the simplest geometry that renders a region faithfully wins.
 
-**Architecture:** New `src/vectormark/selector.py` (`generate_geometry_candidates` collects exactly the cascade's fitters; `select_geometry` scores them and returns the winner). `pipeline.build_candidates` calls `select_geometry` instead of `_fit_region` (which is deleted). `score.render_delta_e` gains bbox-cropped rendering for speed. First output-changing slice — gated by the full acceptance suite (parity) plus a before/after corpus eval script.
+**Architecture:** New `src/vectoreyes/selector.py` (`generate_geometry_candidates` collects exactly the cascade's fitters; `select_geometry` scores them and returns the winner). `pipeline.build_candidates` calls `select_geometry` instead of `_fit_region` (which is deleted). `score.render_delta_e` gains bbox-cropped rendering for speed. First output-changing slice — gated by the full acceptance suite (parity) plus a before/after corpus eval script.
 
 **Tech Stack:** Python, numpy, resvg (already a runtime dep), the slice-3 scorer, pytest.
 
@@ -15,7 +15,7 @@
 
 ## Background the implementer needs
 
-`_fit_region(region, opt, axis, corner_radius) -> Shape | None` (`src/vectormark/pipeline.py:110`) is a priority cascade: holed→symmetric/faithful path; single-contour→`recognize_primitive` (axis-snapped) → *if axis*: `rounded_trapezoid_fit`→`symmetric_polygon_fit`→`half_ellipse_cap_fit`→`symmetric_fit` → `recognize_polygon` → `fit_path`. It returns the **first** non-None.
+`_fit_region(region, opt, axis, corner_radius) -> Shape | None` (`src/vectoreyes/pipeline.py:110`) is a priority cascade: holed→symmetric/faithful path; single-contour→`recognize_primitive` (axis-snapped) → *if axis*: `rounded_trapezoid_fit`→`symmetric_polygon_fit`→`half_ellipse_cap_fit`→`symmetric_fit` → `recognize_polygon` → `fit_path`. It returns the **first** non-None.
 
 `build_candidates(reconstructed, straddlers, pairs, loners, gradient_fills, opt, axis, corner_radius)` (`pipeline.py:203`) calls `_fit_region` twice: line ~232 for regions (`fit_axis` = axis for straddlers, None for pairs/loners) and line ~244 for gradient footprints (axis None). It does NOT currently receive the source image.
 
@@ -57,8 +57,8 @@ _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from vectormark import Options, idealize
-from vectormark.color import mean_delta_e
+from vectoreyes import Options, idealize
+from vectoreyes.color import mean_delta_e
 from tests._render import render_svg, ssim
 
 CORPUS = _REPO / "scratch" / "real-logos"
@@ -132,7 +132,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 2: bbox rendering in `score.render_delta_e`
 
 **Files:**
-- Modify: `src/vectormark/score.py` (`render_delta_e`)
+- Modify: `src/vectoreyes/score.py` (`render_delta_e`)
 - Test: `tests/test_score.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -159,7 +159,7 @@ def test_render_delta_e_bbox_matches_full_canvas():
 Run: `.venv/bin/pytest tests/test_score.py::test_render_delta_e_bbox_matches_full_canvas -v`
 Expected: FAIL — `render_delta_e() got an unexpected keyword argument 'bbox'`.
 
-- [ ] **Step 3: Update `render_delta_e` in `src/vectormark/score.py`**
+- [ ] **Step 3: Update `render_delta_e` in `src/vectoreyes/score.py`**
 
 Replace the existing `render_delta_e` with:
 
@@ -198,7 +198,7 @@ Expected: all pass (existing score tests + the new bbox test).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/score.py tests/test_score.py
+git add src/vectoreyes/score.py tests/test_score.py
 git commit -m "feat(score): optional bbox crop in render_delta_e
 
 Compare candidate render to source within the region bbox instead of the whole
@@ -214,7 +214,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 3: `generate_geometry_candidates`
 
 **Files:**
-- Create: `src/vectormark/selector.py`
+- Create: `src/vectoreyes/selector.py`
 - Test: `tests/test_selector.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -224,9 +224,9 @@ Create `tests/test_selector.py`:
 ```python
 import numpy as np
 
-from vectormark.pipeline import Options
-from vectormark.types import Axis, Region
-from vectormark.selector import generate_geometry_candidates
+from vectoreyes.pipeline import Options
+from vectoreyes.types import Axis, Region
+from vectoreyes.selector import generate_geometry_candidates
 
 
 def _disk(cx, cy, r, h, w):
@@ -271,9 +271,9 @@ def test_straddler_excludes_nonsymmetric_when_symmetric_exists():
 - [ ] **Step 2: Run it, verify FAIL**
 
 Run: `.venv/bin/pytest tests/test_selector.py -v`
-Expected: FAIL — `No module named 'vectormark.selector'`.
+Expected: FAIL — `No module named 'vectoreyes.selector'`.
 
-- [ ] **Step 3: Create `src/vectormark/selector.py`**
+- [ ] **Step 3: Create `src/vectoreyes/selector.py`**
 
 ```python
 """Geometry candidate generation + scored selection (slice 4a). Replaces
@@ -380,7 +380,7 @@ Expected: pass. If the straddler test's assertion is awkward, simplify it to: `a
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/selector.py tests/test_selector.py
+git add src/vectoreyes/selector.py tests/test_selector.py
 git commit -m "feat(selector): generate_geometry_candidates
 
 Collect all of the cascade's geometry fitters (non-None) in priority order, so
@@ -395,7 +395,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 4: `select_geometry`
 
 **Files:**
-- Modify: `src/vectormark/selector.py`
+- Modify: `src/vectoreyes/selector.py`
 - Test: `tests/test_selector.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -403,7 +403,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 Append to `tests/test_selector.py`:
 
 ```python
-from vectormark.selector import select_geometry
+from vectoreyes.selector import select_geometry
 
 
 def test_select_picks_circle_for_clean_disk():
@@ -433,7 +433,7 @@ def test_select_returns_none_when_no_contour():
 Run: `.venv/bin/pytest tests/test_selector.py::test_select_picks_circle_for_clean_disk -v`
 Expected: FAIL — `select_geometry` not defined.
 
-- [ ] **Step 3: Add `select_geometry` to `src/vectormark/selector.py`**
+- [ ] **Step 3: Add `select_geometry` to `src/vectoreyes/selector.py`**
 
 ```python
 def _region_bbox(mask: np.ndarray, margin: int = 2) -> tuple[int, int, int, int] | None:
@@ -467,7 +467,7 @@ Note: `rank_candidates` does not yet take a bbox; it calls `render_delta_e` with
 
 - [ ] **Step 3b: Thread bbox through `rank_candidates`**
 
-In `src/vectormark/score.py`, update `rank_candidates` to accept and forward an optional bbox:
+In `src/vectoreyes/score.py`, update `rank_candidates` to accept and forward an optional bbox:
 
 ```python
 def rank_candidates(
@@ -490,7 +490,7 @@ Expected: all pass (selector tests + score tests incl. the bbox test, which stil
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/selector.py src/vectormark/score.py tests/test_selector.py
+git add src/vectoreyes/selector.py src/vectoreyes/score.py tests/test_selector.py
 git commit -m "feat(selector): select_geometry (scored geometry pick)
 
 Score the generated candidates (simplest faithful geometry wins via the
@@ -506,13 +506,13 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 5: Wire into the pipeline + delete `_fit_region` + `Options.fidelity_tol` (PARITY GATE)
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py`
+- Modify: `src/vectoreyes/pipeline.py`
 
 This is the output-changing integration. **The full acceptance suite is the parity gate.**
 
 - [ ] **Step 1: Add `fidelity_tol` to `Options`**
 
-In `src/vectormark/pipeline.py`, the `Options` dataclass, add a field (after `corner_radius`):
+In `src/vectoreyes/pipeline.py`, the `Options` dataclass, add a field (after `corner_radius`):
 
 ```python
     fidelity_tol: float = 0.06        # selector's render-ΔE gate (slice 4a)
@@ -538,7 +538,7 @@ In `pipeline.py`:
 
 - [ ] **Step 3: Delete `_fit_region` and `_snap_to_axis` from `pipeline.py`**
 
-Remove the `_fit_region` function (`pipeline.py:110-170`) and the `_snap_to_axis` function (it now lives in `selector.py`). Run `rg "_fit_region|_snap_to_axis" src/vectormark/` to confirm no remaining references in `src/` outside `selector.py`.
+Remove the `_fit_region` function (`pipeline.py:110-170`) and the `_snap_to_axis` function (it now lives in `selector.py`). Run `rg "_fit_region|_snap_to_axis" src/vectoreyes/` to confirm no remaining references in `src/` outside `selector.py`.
 
 - [ ] **Step 4: Run the FULL acceptance suite — the parity gate**
 
@@ -556,7 +556,7 @@ Expected: mean render-ΔE does **not** regress (equal or lower). Element-count r
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py
+git add src/vectoreyes/pipeline.py
 git commit -m "feat(selector): wire scored geometry selection into idealize
 
 Replace _fit_region's priority cascade with select_geometry (generate -> score

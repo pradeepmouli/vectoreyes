@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from vectormark.path_geometry import CornerAnchor, InflectionAnchor, parse_svg_paths
+from vectoreyes.path_geometry import CornerAnchor, InflectionAnchor, parse_svg_paths
 
 
 def _path():
@@ -17,7 +17,7 @@ def _span(name="p0.corner0", entry=0, exit=2, commands=(1, 2), subpath=0):
 
 
 def test_prefit_binding_uses_actual_sparse_command_ids_without_mutating_inputs():
-    from vectormark.corner_provenance import bind_prefit_corner_anchors
+    from vectoreyes.corner_provenance import bind_prefit_corner_anchors
 
     path = _path()
     path = replace(path, path=replace(path.path, commands=tuple(
@@ -39,7 +39,7 @@ def test_prefit_binding_uses_actual_sparse_command_ids_without_mutating_inputs()
     ("retain_first", ("r1.p0.corner0",), 1), ("reject_all", (), 2),
 ])
 def test_prefit_binding_keeps_overlap_policy_explicit(policy, kept, rejected):
-    from vectormark.corner_provenance import bind_prefit_corner_anchors
+    from vectoreyes.corner_provenance import bind_prefit_corner_anchors
 
     result, skipped, bindings = bind_prefit_corner_anchors({0: _path()},
         (_span(), _span("p0.corner1", 1, 3, (2, 3))), overlap_policy=policy)
@@ -50,7 +50,7 @@ def test_prefit_binding_keeps_overlap_policy_explicit(policy, kept, rejected):
 
 
 def test_prefit_binding_preserves_other_features_and_untouched_paths():
-    from vectormark.corner_provenance import bind_prefit_corner_anchors
+    from vectoreyes.corner_provenance import bind_prefit_corner_anchors
 
     path = _path()
     inflection = InflectionAnchor("r1.p0.inflection", (path.path.commands[3].id,))
@@ -69,7 +69,7 @@ def test_prefit_binding_preserves_other_features_and_untouched_paths():
     dict(commands=(1,)), dict(radius=-1), dict(subpath=4), dict(corner_id=""),
 ])
 def test_prefit_binding_skips_invalid_declarations(change):
-    from vectormark.corner_provenance import bind_prefit_corner_anchors
+    from vectoreyes.corner_provenance import bind_prefit_corner_anchors
 
     path = _path()
     result, skipped, bindings = bind_prefit_corner_anchors({0: path},
@@ -80,7 +80,7 @@ def test_prefit_binding_skips_invalid_declarations(change):
 
 
 def test_prefit_binding_keeps_source_subpath_separate_from_path_address():
-    from vectormark.corner_provenance import bind_prefit_corner_anchors
+    from vectoreyes.corner_provenance import bind_prefit_corner_anchors
 
     path = parse_svg_paths("M0 0 L5 0 L5 5 L0 5 Z", region_id="r2", path_ids=("r2.p7",))[0]
     source = _span("p3.point", entry=1, exit=1, commands=(), subpath=3)
@@ -91,9 +91,9 @@ def test_prefit_binding_keeps_source_subpath_separate_from_path_address():
 
 
 def test_drawing_publication_and_normalization_share_prefit_binder(monkeypatch):
-    import vectormark.corner_provenance as provenance
-    from vectormark.corner_provenance import ingress_prefit_corners
-    from vectormark.corner_diagnostics import normalize_corners_path_d, path_corner_diagnostics
+    import vectoreyes.corner_provenance as provenance
+    from vectoreyes.corner_provenance import ingress_prefit_corners
+    from vectoreyes.corner_diagnostics import normalize_corners_path_d, path_corner_diagnostics
 
     calls = []
     execute = provenance.bind_prefit_corner_anchors

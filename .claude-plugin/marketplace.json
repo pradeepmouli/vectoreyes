@@ -1,16 +1,16 @@
 {
-  "name": "vectormark",
+  "name": "vectoreyes",
   "owner": {
     "name": "Pradeep Mouli",
     "url": "https://github.com/pradeepmouli"
   },
   "metadata": {
-    "description": "Plugins for vectormark, the deterministic raster-logo to SVG idealizer.",
+    "description": "Plugins for vectorEyes, the deterministic raster-logo to SVG idealizer.",
     "version": "0.2.1"
   },
   "plugins": [
     {
-      "name": "vectormark",
+      "name": "vectoreyes",
       "description": "Source-grounded SVG reconstruction, plan refinement, and separate shape/fill evaluation.",
       "version": "0.2.1",
       "author": {

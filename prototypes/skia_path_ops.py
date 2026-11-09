@@ -2,7 +2,7 @@
 """Spike: skia-python for SVG path operations (Simplify, Op, OpBuilder).
 
 Demonstrates the three key path-operation primitives from skia-python and shows
-where each fits into the vectormark pipeline today.
+where each fits into the vectoreyes pipeline today.
 
 Run:
     pip install skia-python          # or: uv pip install skia-python
@@ -27,7 +27,7 @@ import skia
 # ---------------------------------------------------------------------------
 # SVG path ↔ skia.Path conversion helpers
 # ---------------------------------------------------------------------------
-# Supported commands: M L Q C Z  (no A/arc — vectormark paths don't emit them
+# Supported commands: M L Q C Z  (no A/arc — vectoreyes paths don't emit them
 # via the normal fit path, but the round-trip helpers cope with everything the
 # pipeline produces)
 
@@ -43,14 +43,14 @@ _CLOSE = 5
 
 
 def _fmt(v: float) -> str:
-    """Format a float the same way vectormark.fit._fmt does."""
+    """Format a float the same way vectoreyes.fit._fmt does."""
     return f"{v:.2f}".rstrip("0").rstrip(".")
 
 
 def svg_d_to_skia(d: str, *, fill_type: skia.PathFillType = skia.PathFillType.kWinding) -> skia.Path:
     """Parse an SVG path ``d`` string into a :class:`skia.Path`.
 
-    Supports the subset of path commands that vectormark emits: M, L, Q, C, Z.
+    Supports the subset of path commands that vectoreyes emits: M, L, Q, C, Z.
     """
     path = skia.Path()
     path.setFillType(fill_type)
@@ -111,7 +111,7 @@ def skia_to_svg_d(path: skia.Path) -> str:
 
 # ---------------------------------------------------------------------------
 # Helper: circle path d using cubic-Bézier approximation (four quarter arcs)
-# — identical to what vectormark.emit._ellipse_path_d produces.
+# — identical to what vectoreyes.emit._ellipse_path_d produces.
 # ---------------------------------------------------------------------------
 
 _KAPPA = 0.5522847498
@@ -136,7 +136,7 @@ def _circle_d(cx: float, cy: float, r: float) -> str:
 # This is the Skia equivalent of Shapely's Polygon(...).buffer(0) but operates
 # directly on Bézier path data — no rasterisation, no polygon approximation.
 #
-# Pipeline fit: the output of vectormark's fit_path / refine passes can produce
+# Pipeline fit: the output of vectoreyes's fit_path / refine passes can produce
 # compound paths (fill rule: evenodd) where two same-winding sub-paths overlap
 # near a symmetry axis.  Simplify resolves them to a single clean contour.
 
@@ -162,7 +162,7 @@ def demo_simplify() -> None:
     print(f"  fill type: {simplified.getFillType()}")
 
     # 1b: Annulus path — two concentric circles with even-odd fill.
-    # vectormark.emit._annulus_path_d produces exactly this.
+    # vectoreyes.emit._annulus_path_d produces exactly this.
     d_annulus = _circle_d(60, 60, 50) + " " + _circle_d(60, 60, 25)
     p_ann = svg_d_to_skia(d_annulus, fill_type=skia.PathFillType.kEvenOdd)
     s_ann = skia.Simplify(p_ann)
@@ -248,7 +248,7 @@ def demo_op() -> None:
 #     gradient bands that meet at the axis) their filled shapes can be unioned
 #     into a single path, eliminating a layer and any seam rendering artefact.
 #   • Replaces the current Shapely-based unary_union + contour-extraction path
-#     in vectormark.optimizer.passes.simplify.
+#     in vectoreyes.optimizer.passes.simplify.
 
 def demo_op_builder() -> None:
     print("\n" + "=" * 60)
@@ -351,25 +351,25 @@ def demo_integration_notes() -> None:
 Where skia-python path ops could replace or augment the current stack
 ----------------------------------------------------------------------
 
-A. vectormark.optimizer.passes.simplify — path simplification pass
+A. vectoreyes.optimizer.passes.simplify — path simplification pass
    Current: samples the contour → fits quadratic/cubic Béziers → Shapely
             Polygon to validate.
    Skia:    skia.Simplify(path) on the path-d directly, no rasterisation.
             Works on cubic Bézier data; Shapely approximates with polygons.
 
-B. vectormark.emit._annulus_path_d — compound paths with even-odd fill rule
+B. vectoreyes.emit._annulus_path_d — compound paths with even-odd fill rule
    Current: emits outer + inner circle sub-paths and relies on fill rule
             evenodd in the SVG renderer.
    Skia:    Op(outer, inner, kDifference_PathOp) produces a winding-safe
             two-contour path without needing fill-rule — compatible with
             any renderer including ones that ignore fill-rule.
 
-C. vectormark.optimizer.passes.compound — split_compound_pass
+C. vectoreyes.optimizer.passes.compound — split_compound_pass
    Current: splits a multi-subpath shape using Shapely for area/footprint.
    Skia:    Op could punch precise Bézier holes into the parent path before
             splitting, giving exact boolean geometry vs polygon approximation.
 
-D. vectormark.optimizer.passes.seams — future region merging
+D. vectoreyes.optimizer.passes.seams — future region merging
    Current: uses mask-level union (numpy boolean arrays).
    Skia:    OpBuilder.add(path, kUnion_PathOp) + resolve() for a multi-region
             union at the Bézier level — avoids re-tracing after union.

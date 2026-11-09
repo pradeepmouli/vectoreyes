@@ -1,13 +1,13 @@
 from dataclasses import replace
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import CornerAnchor, CompoundPathGeometry, parse_svg_paths
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import CornerAnchor, CompoundPathGeometry, parse_svg_paths
 
 
 def test_component_publication_preserves_sparse_canonical_command_identity():
-    from vectormark.refinement.topology_binding import normalize_working_topology
+    from vectoreyes.refinement.topology_binding import normalize_working_topology
 
     d = 'M0 0 L10 0 L10 10 L0 10 Z M20 0 L30 0 L30 10 L20 10 Z'
     paths = parse_svg_paths(d, region_id='r1')

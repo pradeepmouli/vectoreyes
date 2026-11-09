@@ -4,23 +4,23 @@ from dataclasses import replace
 
 import numpy as np
 
-from vectormark.drawing import Canvas
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_adapter import drawing_from_region_samples
-from vectormark.drawing_engine import RasterImage
+from vectoreyes.drawing import Canvas
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_adapter import drawing_from_region_samples
+from vectoreyes.drawing_engine import RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.refinement.assembly_binding import working_regions_from_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe,
     build_paint_evidence,
     )
-from vectormark.drawing_replay import propose_effective_recipe
-from vectormark.drawing_trace import TraceOptions, TraceResult
-from vectormark.refinement.automatic_replay import FitPrimitiveOperation
-from vectormark.refinement.framework import select_refinements_with_intent
-from vectormark.refinement.passes.primitives import primitives_pass
-from vectormark.refinement.trace import trace_regions
-from vectormark.pipeline import Options
+from vectoreyes.drawing_replay import propose_effective_recipe
+from vectoreyes.drawing_trace import TraceOptions, TraceResult
+from vectoreyes.refinement.automatic_replay import FitPrimitiveOperation
+from vectoreyes.refinement.framework import select_refinements_with_intent
+from vectoreyes.refinement.passes.primitives import primitives_pass
+from vectoreyes.refinement.trace import trace_regions
+from vectoreyes.pipeline import Options
 
 
 def _disk_image() -> np.ndarray:
@@ -71,7 +71,7 @@ def test_effective_auto_recipe_replays_from_evidence_without_detector(monkeypatc
     )
 
     monkeypatch.setattr(
-        "vectormark.refinement.passes.primitives.recognize_primitive_geometry",
+        "vectoreyes.refinement.passes.primitives.recognize_primitive_geometry",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("semantic primitive detector ran during replay")
         ),

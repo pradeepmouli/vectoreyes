@@ -4,21 +4,21 @@ import math
 import numpy as np
 from PIL import Image
 
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
-from vectormark.emit import shape_to_path_d
-from vectormark.fit import Shape
-from vectormark.refinement.framework import select_refinements
-from vectormark.refinement.gate import rasterize
-from vectormark.refinement.passes.compound import split_compound_pass
-from vectormark.refinement.passes.primitives import primitives_pass
-import vectormark.occlusion_detection as occlusion_module
-import vectormark.refinement.passes.primitives as primitives_module
-from vectormark.refinement.region_sample import RegionSample, to_polygon
-from vectormark.refinement.trace import _trace_shape_from_contours
-from vectormark.pipeline import Options, _refinement_passes, _refinement_report, _prefer_refinement_svg, _render_refinement_body, idealize
-import vectormark.pipeline as pipeline_module
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.emit import shape_to_path_d
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.framework import select_refinements
+from vectoreyes.refinement.gate import rasterize
+from vectoreyes.refinement.passes.compound import split_compound_pass
+from vectoreyes.refinement.passes.primitives import primitives_pass
+import vectoreyes.occlusion_detection as occlusion_module
+import vectoreyes.refinement.passes.primitives as primitives_module
+from vectoreyes.refinement.region_sample import RegionSample, to_polygon
+from vectoreyes.refinement.trace import _trace_shape_from_contours
+from vectoreyes.pipeline import Options, _refinement_passes, _refinement_report, _prefer_refinement_svg, _render_refinement_body, idealize
+import vectoreyes.pipeline as pipeline_module
 from tests._render import render_svg
-from vectormark.emit import render_svg_doc
+from vectoreyes.emit import render_svg_doc
 
 
 def _painted_on(regions, background, width=140, height=140):
@@ -466,7 +466,7 @@ def test_refinement_combines_self_symmetry_branch_on_final_output():
         diagnostics={"symmetry": {"accepted": True, "mode": "self"}},
     )
 
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
     retained = materialize_self_symmetry((branch,))
     assert retained[0].is_leaf
     body, _defs = _render_refinement_body(retained)
@@ -503,7 +503,7 @@ def test_refinement_self_symmetry_uses_union_footprints_not_drifting_fitted_halv
         diagnostics={"symmetry": {"accepted": True, "mode": "self"}},
     )
 
-    from vectormark.refinement.symmetry_materialize import materialize_self_symmetry
+    from vectoreyes.refinement.symmetry_materialize import materialize_self_symmetry
     retained = materialize_self_symmetry((branch,))
     assert retained[0].is_leaf
     body, _defs = _render_refinement_body(retained)
@@ -513,7 +513,8 @@ def test_refinement_self_symmetry_uses_union_footprints_not_drifting_fitted_halv
     assert emitted.symmetric_difference(branch.footprint).area < 1e-6
 
 
-def test_refinement_self_symmetry_fit_uses_configured_epsilon_for_smooth_tip():
+def test_refinement_self_symmetry_preserves_retained_quadratic_tip():
+    from vectoreyes.refinement.passes.symmetry import symmetry_pass
     shape = Shape(
         "path",
         {
@@ -531,7 +532,7 @@ def test_refinement_self_symmetry_fit_uses_configured_epsilon_for_smooth_tip():
     out = select_refinements(
         [region],
         {region.id: rasterize(region.footprint, (420, 420))},
-        _refinement_passes(Options(refinement=True, epsilon=1.0, max_error=1.0)),
+        [symmetry_pass],
     )
 
     body, _defs = _render_refinement_body(out)

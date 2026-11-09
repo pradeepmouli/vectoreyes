@@ -17,7 +17,7 @@
 - [ ] **Create the branch**
 
 ```bash
-cd /Users/pmouli/GitHub.nosync/active/py/vectormark
+cd /Users/pmouli/GitHub.nosync/active/py/vectoreyes
 git checkout master && git pull --ff-only
 git checkout -b feat/manual-selection
 .venv/bin/python -m pytest -q   # baseline: expect "197 passed"
@@ -25,11 +25,11 @@ git checkout -b feat/manual-selection
 
 ## File Structure
 
-- **Create** `src/vectormark/selection.py` — user-facing config: strategy vocabulary constants, `ElementSelection`, `SelectionPolicy`, `validate_strategies`. Imports nothing from the pipeline (no cycle).
+- **Create** `src/vectoreyes/selection.py` — user-facing config: strategy vocabulary constants, `ElementSelection`, `SelectionPolicy`, `validate_strategies`. Imports nothing from the pipeline (no cycle).
 - **Create** `tests/test_selection.py` — unit tests for the policy + the 3-stage `select_geometry` behavior.
-- **Modify** `src/vectormark/candidate.py` — add `Candidate.strategy: str | None = None`.
-- **Modify** `src/vectormark/selector.py` — add `GeomCandidate`, label generation, rewrite `select_geometry` to the 3-stage pipeline.
-- **Modify** `src/vectormark/pipeline.py` — add `Options.selection`, thread `sN` addressing in `build_candidates`.
+- **Modify** `src/vectoreyes/candidate.py` — add `Candidate.strategy: str | None = None`.
+- **Modify** `src/vectoreyes/selector.py` — add `GeomCandidate`, label generation, rewrite `select_geometry` to the 3-stage pipeline.
+- **Modify** `src/vectoreyes/pipeline.py` — add `Options.selection`, thread `sN` addressing in `build_candidates`.
 - **Modify** `tests/test_selector.py` — update for the `GeomCandidate` return type.
 - **Modify** `tests/test_pipeline.py` — parity + override + restriction integration tests.
 
@@ -38,7 +38,7 @@ git checkout -b feat/manual-selection
 ### Task 1: `selection.py` — vocabulary, policy types, validation
 
 **Files:**
-- Create: `src/vectormark/selection.py`
+- Create: `src/vectoreyes/selection.py`
 - Test: `tests/test_selection.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -48,7 +48,7 @@ Create `tests/test_selection.py`:
 ```python
 import pytest
 
-from vectormark.selection import (
+from vectoreyes.selection import (
     ElementSelection, SelectionPolicy, validate_strategies,
     KNOWN_STRATEGIES, PRIMITIVE, PATH, SYMMETRIC,
 )
@@ -87,11 +87,11 @@ def test_validate_rejects_unknown_force_label_even_when_allow_none():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/python -m pytest tests/test_selection.py -q`
-Expected: FAIL with `ModuleNotFoundError: No module named 'vectormark.selection'`
+Expected: FAIL with `ModuleNotFoundError: No module named 'vectoreyes.selection'`
 
 - [ ] **Step 3: Write the implementation**
 
-Create `src/vectormark/selection.py`:
+Create `src/vectoreyes/selection.py`:
 
 ```python
 """User-facing manual-selection policy (slice 4b). An agent/user restricts which
@@ -163,7 +163,7 @@ Expected: PASS (5 passed)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/selection.py tests/test_selection.py
+git add src/vectoreyes/selection.py tests/test_selection.py
 git commit -m "feat(selection): policy types + strategy vocabulary (slice 4b)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -174,7 +174,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: `Candidate.strategy` field
 
 **Files:**
-- Modify: `src/vectormark/candidate.py:35-47`
+- Modify: `src/vectoreyes/candidate.py:35-47`
 - Test: `tests/test_selection.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -182,8 +182,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 Append to `tests/test_selection.py`:
 
 ```python
-from vectormark.candidate import Candidate, FlatFill
-from vectormark.fit import Shape
+from vectoreyes.candidate import Candidate, FlatFill
+from vectoreyes.fit import Shape
 
 
 def test_candidate_strategy_defaults_none_and_is_settable():
@@ -201,7 +201,7 @@ Expected: FAIL with `TypeError: __init__() got an unexpected keyword argument 's
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/vectormark/candidate.py`, change the `Candidate` body (lines 44-47) to add the field and document it:
+In `src/vectoreyes/candidate.py`, change the `Candidate` body (lines 44-47) to add the field and document it:
 
 ```python
     geometry: Shape
@@ -226,7 +226,7 @@ Expected: both PASS (full suite still 198 passed — Task 1 added 5, Task 2 adde
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/candidate.py tests/test_selection.py
+git add src/vectoreyes/candidate.py tests/test_selection.py
 git commit -m "feat(candidate): optional strategy provenance field (slice 4b)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -237,7 +237,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 3: `GeomCandidate` + labeled generation (return-type change, behavior unchanged)
 
 **Files:**
-- Modify: `src/vectormark/selector.py:30-130`
+- Modify: `src/vectoreyes/selector.py:30-130`
 - Modify: `tests/test_selector.py` (update for new return type)
 - Test: `tests/test_selector.py`
 
@@ -319,7 +319,7 @@ Expected: FAIL — `AttributeError: 'Shape' object has no attribute 'shape'` (re
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/vectormark/selector.py`, add the import and the `GeomCandidate` dataclass after the existing imports (the file already imports `Shape`, `Candidate`, `FlatFill`, the fitters, `rank_candidates`, `Axis`, `Region`):
+In `src/vectoreyes/selector.py`, add the import and the `GeomCandidate` dataclass after the existing imports (the file already imports `Shape`, `Candidate`, `FlatFill`, the fitters, `rank_candidates`, `Axis`, `Region`):
 
 ```python
 from dataclasses import dataclass
@@ -436,7 +436,7 @@ Expected: both PASS (full suite all green — behavior identical, only the inter
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/selector.py tests/test_selector.py
+git add src/vectoreyes/selector.py tests/test_selector.py
 git commit -m "refactor(selector): label geometry candidates with producing strategy (slice 4b)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -447,7 +447,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 4: 3-stage `select_geometry` (validate → allow-filter → score → force)
 
 **Files:**
-- Modify: `src/vectormark/selector.py` (`select_geometry`)
+- Modify: `src/vectoreyes/selector.py` (`select_geometry`)
 - Test: `tests/test_selection.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -459,9 +459,9 @@ import warnings
 
 import numpy as np
 
-from vectormark.pipeline import Options
-from vectormark.types import Region
-from vectormark.selector import select_geometry, generate_geometry_candidates
+from vectoreyes.pipeline import Options
+from vectoreyes.types import Region
+from vectoreyes.selector import select_geometry, generate_geometry_candidates
 
 
 def _disk(cx, cy, r, h, w):
@@ -534,7 +534,7 @@ Expected: FAIL — `TypeError: select_geometry() got an unexpected keyword argum
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/vectormark/selector.py`, add `import warnings` at the top, then replace `select_geometry` with the 3-stage version:
+In `src/vectoreyes/selector.py`, add `import warnings` at the top, then replace `select_geometry` with the 3-stage version:
 
 ```python
 def select_geometry(
@@ -611,7 +611,7 @@ Expected: both PASS (the `element`-None default keeps every existing call green)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/selector.py tests/test_selection.py
+git add src/vectoreyes/selector.py tests/test_selection.py
 git commit -m "feat(selector): manual selection stages in select_geometry (slice 4b)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -622,7 +622,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 5: `Options.selection` + `sN` addressing in `build_candidates` + integration tests
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py:78-86` (Options), `src/vectormark/pipeline.py:132-184` (build_candidates)
+- Modify: `src/vectoreyes/pipeline.py:78-86` (Options), `src/vectoreyes/pipeline.py:132-184` (build_candidates)
 - Test: `tests/test_pipeline.py`
 
 - [ ] **Step 1: Write the failing tests**
@@ -639,7 +639,7 @@ def test_selection_none_is_byte_identical_to_default():
 
 
 def test_force_path_on_s0_emits_path_not_circle():
-    from vectormark.selection import SelectionPolicy, ElementSelection
+    from vectoreyes.selection import SelectionPolicy, ElementSelection
     h = w = 100
     img = np.full((h, w, 3), 255, np.uint8)
     yy, xx = np.ogrid[:h, :w]
@@ -652,7 +652,7 @@ def test_force_path_on_s0_emits_path_not_circle():
 
 
 def test_default_policy_restricts_all_elements():
-    from vectormark.selection import SelectionPolicy, ElementSelection
+    from vectoreyes.selection import SelectionPolicy, ElementSelection
     h = w = 100
     img = np.full((h, w, 3), 255, np.uint8)
     yy, xx = np.ogrid[:h, :w]
@@ -669,7 +669,7 @@ Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'se
 
 - [ ] **Step 3a: Add the Options field**
 
-In `src/vectormark/pipeline.py`, add to the `Options` dataclass (after `fidelity_tol`):
+In `src/vectoreyes/pipeline.py`, add to the `Options` dataclass (after `fidelity_tol`):
 
 ```python
     selection: "SelectionPolicy | None" = None  # manual candidate selection (slice 4b)
@@ -723,7 +723,7 @@ Expected: both PASS. The parity test proves `selection=None` is byte-identical; 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_pipeline.py
+git add src/vectoreyes/pipeline.py tests/test_pipeline.py
 git commit -m "feat(pipeline): thread SelectionPolicy with sN addressing (slice 4b)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

@@ -1,23 +1,23 @@
 """Topology truth must survive retained publication, not only SVG rendering."""
 
 from dataclasses import asdict as _trace_options
-from vectormark.drawing_render import trace_summary as _canonical_trace
-from vectormark.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
-from vectormark.drawing_render import render_drawing as _canonical_render
+from vectoreyes.drawing_render import trace_summary as _canonical_trace
+from vectoreyes.drawing_adapter import drawing_from_region_samples as _export_drawing, normalize_drawing_addresses as _export_addresses
+from vectoreyes.drawing_render import render_drawing as _canonical_render
 import numpy as np
 import pytest
 
-from vectormark import drawing_refine
-from vectormark.candidate import FlatFill
-from vectormark.drawing_plan import parse_plan
-from vectormark.drawing_trace import TraceOptions, TraceResult
-from vectormark.fit import Shape
-from vectormark.refinement.passes.compound import split_compound_pass
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
-from vectormark.path_geometry import parse_svg_paths, ArcCommand, CubicCommand
-from vectormark.path_topology import classify_filled_paths, component_paths
-from vectormark.refinement.topology_binding import normalize_working_topology
+from vectoreyes import drawing_refine
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_plan import parse_plan
+from vectoreyes.drawing_trace import TraceOptions, TraceResult
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.passes.compound import split_compound_pass
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import PathGeometryWithCutouts, geometry_from_svg_d
+from vectoreyes.path_geometry import parse_svg_paths, ArcCommand, CubicCommand
+from vectoreyes.path_topology import classify_filled_paths, component_paths
+from vectoreyes.refinement.topology_binding import normalize_working_topology
 
 
 OUTER = "M0 0 L12 0 L12 12 L0 12 Z"
@@ -38,11 +38,11 @@ def _trace():
 
 
 def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
-    from vectormark.drawing_engine import RasterImage
-    from vectormark.drawing_actions import ActionSettings
+    from vectoreyes.drawing_engine import RasterImage
+    from vectoreyes.drawing_actions import ActionSettings
     from tests._working_evidence import capture_working_geometry_evidence
-    from vectormark.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
-    from vectormark.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
+    from vectoreyes.drawing_recipe import EffectiveDrawingRecipe, build_paint_evidence
+    from vectoreyes.drawing_replay import extend_recipe_with_plan, propose_effective_recipe
 
     source = RasterImage(48, 24, 'rgb8', bytes([255]) * 48 * 24 * 3)
     root = _region('M0 0 L10 0 L10 10 L0 10 Z M2 2 L4 2 L4 4 L2 4 Z')
@@ -53,7 +53,7 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
     paint = build_paint_evidence(source)
     base = EffectiveDrawingRecipe(evidence.revision, evidence.engine_revision,
         ActionSettings(epsilon=1, max_error=2, fit_strategy='progressive'))
-    plan = parse_plan({'version': 'vectormark.plan.v1', 'drawing_id': 'drw_test', 'base_version': 'v0', 'ops': [
+    plan = parse_plan({'version': 'vectoreyes.plan.v1', 'drawing_id': 'drw_test', 'base_version': 'v0', 'ops': [
         {'op': 'update_geometry', 'target': 'r1', 'ops': [
             {'op': 'set_parallel', 'target': 'r1.p1.c1', 'reference': 'r2.p0.c1', 'distance': -2},
             {'op': 'snap', 'target': 'r1.p1.c2', 'reference': 'r2.p0.c2'},
@@ -62,7 +62,7 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
     ]})
     recipe = extend_recipe_with_plan(evidence=evidence, paint=paint, base_recipe=base, plan=plan).recipe
     replay = propose_effective_recipe(evidence=evidence, paint=paint, recipe=recipe, drawing_id='drw_test')
-    from vectormark.refinement.replay_binding import working_regions_from_state
+    from vectoreyes.refinement.replay_binding import working_regions_from_state
     actual = next(region for region in working_regions_from_state(replay) if region.drawing_id == 'r1')
     assert actual.is_branch and len(actual.children) == 2
     for child in actual.children:
@@ -72,7 +72,7 @@ def test_path_edit_can_move_cutout_outside_and_publish_component_local_caches():
 
 
 def test_redundant_path_retirement_projects_only_surviving_canonical_cache():
-    from vectormark.path_geometry import CompoundPathGeometry
+    from vectoreyes.path_geometry import CompoundPathGeometry
 
     paths = parse_svg_paths(f'{OUTER} {HOLE}', region_id='r1')
     cache = CompoundPathGeometry(paths, 'nonzero', 'retained input')
@@ -96,7 +96,7 @@ def test_hole_first_keeps_original_path_identity_but_corrects_topology():
 
 def test_manual_publication_creates_real_disconnected_children_and_retains_parent():
     source = _region(DISCONNECTED)
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing",
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drawing",
                        "base_version": "v0", "ops": []})
     result = drawing_refine.refine(_trace(), (source,), plan)
     assert result[0].is_branch
@@ -179,9 +179,9 @@ def test_single_path_command_contract_preserves_retraces_but_not_wrong_fill_rule
 
 
 def test_groups_are_reported_separately_and_typed_mcp_models_accept_them():
-    from vectormark.drawing_adapter import drawing_from_region_samples
-    from vectormark.drawing_render import render_drawing as render_canonical_drawing
-    from vectormark.mcp_server import DrawingReportOutput, TraceSummaryOutput
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.drawing_render import render_drawing as render_canonical_drawing
+    from vectoreyes.mcp_server import DrawingReportOutput, TraceSummaryOutput
     regions = normalize_working_topology((_region(DISCONNECTED),))
     drawing = drawing_from_region_samples(
         "drawing", width=48, height=24, regions=regions
@@ -200,10 +200,10 @@ def test_groups_are_reported_separately_and_typed_mcp_models_accept_them():
 
 
 def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
-    from vectormark.refinement.symmetry_materialize import index_region_paths, resolve_source_path
-    from vectormark.drawing_adapter import drawing_from_region_samples
-    from vectormark.path_geometry import CloneGeometry
-    from vectormark.candidate import LinearGradientFill
+    from vectoreyes.refinement.symmetry_materialize import index_region_paths, resolve_source_path
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.path_geometry import CloneGeometry
+    from vectoreyes.candidate import LinearGradientFill
     from tests._render import render_svg
     source = _region(DISCONNECTED)
     fill = LinearGradientFill({"x1": 0, "y1": 0, "x2": 20, "y2": 0}, [(0, "#ff0000"), (1, "#0000ff")])
@@ -233,12 +233,12 @@ def test_clone_expansion_preserves_exact_sources_paint_and_repeat_identity():
 
 
 def test_component_command_ids_drive_actual_manual_lookup_and_summary():
-    from vectormark.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
     result = normalize_working_topology((_region(DISCONNECTED),))
     summary = _canonical_trace(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result)), _trace_options((_trace()).options))
     assert summary["regions"][1]["geometry"]["commands"][1]["id"] == "r1.p1.c1"
     assert drawing_from_region_samples("drawing", width=48, height=24, regions=result).region("r1-2").geometry.path.commands[1].id == "r1.p1.c1"
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing", "base_version": "v0",
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drawing", "base_version": "v0",
                       "ops": [{"op": "update_geometry", "target": "r1-2", "ops": [
                           {"op": "align", "target": "r1.p1.c1", "reference": "r1.p0.c1", "axes": ["y"]},
                       ]}]})
@@ -248,8 +248,8 @@ def test_component_command_ids_drive_actual_manual_lookup_and_summary():
 
 
 def test_hole_first_prefit_corners_remain_owned_by_original_paths():
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
     d = f"{HOLE} {OUTER} M20 0 L24 0 L24 4 L20 4 Z"
     evidence = path_corner_diagnostics(d, declared_corners=((4, 4), (0, 0), (20, 0)))
     source = _region(d).with_diagnostics({"corners": evidence})
@@ -264,8 +264,8 @@ def test_hole_first_prefit_corners_remain_owned_by_original_paths():
 
 
 def test_nested_root_producer_diagnostics_keep_declarations_on_component_children():
-    from vectormark.corner_diagnostics import path_corner_diagnostics
-    from vectormark.drawing_adapter import drawing_from_region_samples
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.drawing_adapter import drawing_from_region_samples
     parts = (HOLE, OUTER, "M20 0 L24 0 L24 4 L20 4 Z")
     evidence = {"path": " ".join(parts), "subpaths": tuple(
         path_corner_diagnostics(d, declared_corners=(point,))
@@ -279,7 +279,7 @@ def test_nested_root_producer_diagnostics_keep_declarations_on_component_childre
 
 
 def test_redundant_nonzero_paths_and_features_are_explicitly_retired():
-    from vectormark.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
     d = f"{HOLE} {OUTER}"
     source = _region(d, fill_rule="nonzero").with_diagnostics({"corners": path_corner_diagnostics(d, declared_corners=((4, 4),))})
     result = normalize_working_topology((source,))[0]
@@ -291,7 +291,7 @@ def test_redundant_nonzero_paths_and_features_are_explicitly_retired():
 
 def test_root_publication_redistributes_actual_prefit_evidence_to_components():
     from dataclasses import replace
-    from vectormark.drawing_trace import TraceRegion, TracePath
+    from vectoreyes.drawing_trace import TraceRegion, TracePath
     contours = tuple(np.array(points, dtype=float) for points in (
         [(0, 0), (8, 0), (8, 8), (0, 8), (0, 0)],
         [(12, 0), (20, 0), (20, 8), (12, 8), (12, 0)],
@@ -301,7 +301,7 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
         contours=contours, trace_path=TracePath(DISCONNECTED, "evenodd", ()),
         effective_trace_level="pixel",
     ),))
-    from vectormark.refinement.assembly_binding import assemble_working_roots
+    from vectoreyes.refinement.assembly_binding import assemble_working_roots
     result = assemble_working_roots(trace)
     assert result.regions[0].is_branch
     records = result.trace.root_path_evidence
@@ -314,7 +314,7 @@ def test_root_publication_redistributes_actual_prefit_evidence_to_components():
 
 
 def test_auto_callback_and_stitch_publish_identical_target_trees():
-    from vectormark.refinement_settings import RefinementPasses
+    from vectoreyes.refinement_settings import RefinementPasses
     source = _region(DISCONNECTED)
     callbacks = []
     passes = RefinementPasses(**{name: name == 'split_compound' for name in RefinementPasses.model_fields})
@@ -328,7 +328,7 @@ def test_auto_callback_and_stitch_publish_identical_target_trees():
 
 
 def test_empty_plan_with_rgb_preserves_shared_gradient_without_refilling(monkeypatch):
-    from vectormark.candidate import LinearGradientFill
+    from vectoreyes.candidate import LinearGradientFill
     from tests._render import render_svg
     fill = LinearGradientFill({"x1": 0, "y1": 0, "x2": 20, "y2": 0}, [(0, "#ff0000"), (1, "#0000ff")])
     source = _region(DISCONNECTED).with_current(_region(DISCONNECTED).current, fill=fill)
@@ -338,14 +338,14 @@ def test_empty_plan_with_rgb_preserves_shared_gradient_without_refilling(monkeyp
               f'</linearGradient></defs><path d="{DISCONNECTED}" fill="url(#g)"/></svg>')
     def forbidden(*args, **kwargs):
         raise AssertionError("pure topology normalization refitted paint or geometry")
-    import vectormark.drawing_assembly as assembly
+    import vectoreyes.drawing_assembly as assembly
     monkeypatch.setattr(assembly, "fit_fill", forbidden)
-    import vectormark.paint_fitting as paint_fitting
+    import vectoreyes.paint_fitting as paint_fitting
     monkeypatch.setattr(paint_fitting, "fit_fill", forbidden)
     monkeypatch.setattr(paint_fitting, "fit_source_paint", forbidden)
-    import vectormark.path_fitting as fitting
+    import vectoreyes.path_fitting as fitting
     monkeypatch.setattr(fitting, "fit_raster_paths", forbidden)
-    plan = parse_plan({"version": "vectormark.plan.v1", "drawing_id": "drawing", "base_version": "v0", "ops": []})
+    plan = parse_plan({"version": "vectoreyes.plan.v1", "drawing_id": "drawing", "base_version": "v0", "ops": []})
     result = drawing_refine.refine(_trace(), (source,), plan, rgb=np.zeros((24, 48, 3), np.uint8))
     assert all(child.fill is fill for child in result[0].children)
     np.testing.assert_array_equal(render_svg(before, 48, 24), render_svg(_canonical_render(_export_drawing("export", width=(_trace()).width, height=(_trace()).height, regions=_export_addresses(result))).svg, 48, 24))
@@ -364,9 +364,9 @@ def test_component_holes_remain_transparent_on_contrasting_backgrounds():
 
 
 def test_snapshot_preserves_branch_original_and_detaches_its_params():
-    from vectormark.drawing_engine import RasterImage
+    from vectoreyes.drawing_engine import RasterImage
     from tests._working_evidence import capture_working_geometry_evidence
-    from vectormark.refinement.assembly_binding import working_regions_from_evidence
+    from vectoreyes.refinement.assembly_binding import working_regions_from_evidence
     source = _region(DISCONNECTED)
     normalized = normalize_working_topology((source,))
     evidence = capture_working_geometry_evidence(
@@ -382,7 +382,7 @@ def test_snapshot_preserves_branch_original_and_detaches_its_params():
 
 
 def test_retained_component_reports_recount_corner_and_command_aggregates():
-    from vectormark.corner_diagnostics import path_corner_diagnostics
+    from vectoreyes.corner_diagnostics import path_corner_diagnostics
     evidence = path_corner_diagnostics(DISCONNECTED, declared_corners=((0, 0), (12, 0)))
     source = _region(DISCONNECTED).with_diagnostics({"corners": evidence})
     result = normalize_working_topology((source,))

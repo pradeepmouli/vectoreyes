@@ -1,6 +1,6 @@
 import pytest
 
-from vectormark.proposal_validation import proposal_rejection_reason
+from vectoreyes.proposal_validation import proposal_rejection_reason
 
 
 @pytest.mark.parametrize('proposed,replacements,consumed,current,reason', [

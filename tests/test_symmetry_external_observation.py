@@ -1,12 +1,12 @@
 import numpy as np
 
-from vectormark.candidate import FlatFill
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 def test_symmetry_union_consumes_resolved_external_instance_without_local_source():
-    from vectormark.refinement.symmetry_materialize import union_self_symmetry
+    from vectoreyes.refinement.symmetry_materialize import union_self_symmetry
 
     outside = RegionSample(1, Shape('rect', {'x': 0, 'y': 0, 'w': 10, 'h': 10}), FlatFill('#123456'))
     transform = (1, 0, 0, 1, 20, 0)

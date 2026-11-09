@@ -7,24 +7,24 @@ import json
 import numpy as np
 import pytest
 
-from vectormark.candidate import FlatFill as LegacyFlatFill
-from vectormark.drawing import Canvas, Drawing, DrawingRegion
-from vectormark.drawing_actions import ActionSettings, DrawingPlan
-from vectormark.drawing_engine import RasterImage
-from vectormark.drawing_fill import FlatFill
+from vectoreyes.candidate import FlatFill as LegacyFlatFill
+from vectoreyes.drawing import Canvas, Drawing, DrawingRegion
+from vectoreyes.drawing_actions import ActionSettings, DrawingPlan
+from vectoreyes.drawing_engine import RasterImage
+from vectoreyes.drawing_fill import FlatFill
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.drawing_recipe import (
     EffectiveDrawingRecipe,
     ReplayRecord,
     build_paint_evidence,
     drawing_revision,
 )
-from vectormark.drawing_state import DrawingNotFound, DrawingStore, VersionCandidate
-from vectormark.drawing_trace import TraceOptions, TracePath, TraceRegion, TraceResult
-from vectormark.fit import Shape
-from vectormark.material_pretrace import GradientSupport, MaterialPretraceResult
-from vectormark.refinement.region_sample import RegionSample
-from vectormark.path_geometry import PrimitiveGeometry, RectanglePrimitive
+from vectoreyes.drawing_state import DrawingNotFound, DrawingStore, VersionCandidate
+from vectoreyes.drawing_trace import TraceOptions, TracePath, TraceRegion, TraceResult
+from vectoreyes.fit import Shape
+from vectoreyes.material_pretrace import GradientSupport, MaterialPretraceResult
+from vectoreyes.refinement.region_sample import RegionSample
+from vectoreyes.path_geometry import PrimitiveGeometry, RectanglePrimitive
 
 
 @dataclass
@@ -189,7 +189,7 @@ def test_store_retains_frozen_typed_plan_and_detached_evidence(fake_clock):
     store = DrawingStore(now=fake_clock)
     drawing_id, evidence, root = _create(store)
     plan = DrawingPlan.model_validate({
-        "version": "vectormark.plan.v1",
+        "version": "vectoreyes.plan.v1",
         "drawing_id": drawing_id,
         "base_version": "v0",
         "ops": [{

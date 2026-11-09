@@ -3,32 +3,32 @@ from dataclasses import replace
 import numpy as np
 import pytest
 
-from vectormark.corner_recipe import (
+from vectoreyes.corner_recipe import (
     AddCorner,
     CornerRecipeExecutor,
     RemoveCorner,
     ReplaceCorner,
 )
-from vectormark.drawing_actions import ActionSettings
-from vectormark.drawing_engine import PathFitOptions, RasterImage
+from vectoreyes.drawing_actions import ActionSettings
+from vectoreyes.drawing_engine import PathFitOptions, RasterImage
 from tests._working_evidence import capture_working_geometry_evidence
-from vectormark.drawing_recipe import (
+from vectoreyes.drawing_recipe import (
     ApplyCornerRecipeOperation,
     EffectiveDrawingRecipe,
     ResolveOriginalPaintOperation,
     VersionPathSelection,
     build_paint_evidence,
 )
-from vectormark.refinement.assembly_binding import assemble_working_roots
-from vectormark.refinement.replay_binding import replay_working_regions
-from vectormark.drawing_replay import (
+from vectoreyes.refinement.assembly_binding import assemble_working_roots
+from vectoreyes.refinement.replay_binding import replay_working_regions
+from vectoreyes.drawing_replay import (
     extend_recipe_with_corner_edits,
     propose_effective_recipe,
     )
-from vectormark.drawing_state import DrawingStore, VersionCandidate
-from vectormark.drawing_trace import PythonTraceEngine, TraceOptions
-from vectormark.refinement.automatic_replay import input_revision
-from vectormark.path_geometry import CornerAnchor, PathGeometry, PathGeometryWithCutouts
+from vectoreyes.drawing_state import DrawingStore, VersionCandidate
+from vectoreyes.drawing_trace import PythonTraceEngine, TraceOptions
+from vectoreyes.refinement.automatic_replay import input_revision
+from vectoreyes.path_geometry import CornerAnchor, PathGeometry, PathGeometryWithCutouts
 
 
 def _source_store(*, cutout: bool = False):
@@ -141,7 +141,7 @@ def test_add_then_remove_replays_like_never_added_sibling_and_preserves_branches
         edits=(RemoveCorner("agent.corner"),),
     )
     monkeypatch.setattr(
-        "vectormark.corner_diagnostics.path_corner_diagnostics",
+        "vectoreyes.corner_diagnostics.path_corner_diagnostics",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             AssertionError("corner detector ran during retained recipe replay")
         ),

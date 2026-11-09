@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add a `vectormark logo.png --variants` mode that idealizes a mark across an `epsilon × max_error` matrix and writes the variant SVGs + a JSON manifest + an annotated contact-sheet PNG.
+**Goal:** Add a `vectoreyes logo.png --variants` mode that idealizes a mark across an `epsilon × max_error` matrix and writes the variant SVGs + a JSON manifest + an annotated contact-sheet PNG.
 
-**Architecture:** A new self-contained `src/vectormark/variants.py` drives the matrix by calling the existing `idealize()` once per cell. A small, backward-compatible change adds `idealize(..., report=True)` returning an `IdealizeReport` (the fitter strategies the scorer chose) by reading the `Candidate.strategy` data the pipeline already produces but discards. A `--variants` CLI flag selects the mode.
+**Architecture:** A new self-contained `src/vectoreyes/variants.py` drives the matrix by calling the existing `idealize()` once per cell. A small, backward-compatible change adds `idealize(..., report=True)` returning an `IdealizeReport` (the fitter strategies the scorer chose) by reading the `Candidate.strategy` data the pipeline already produces but discards. A `--variants` CLI flag selects the mode.
 
-**Tech Stack:** numpy, Pillow, existing vectormark pipeline; `resvg-py` (optional `scoring` extra) for the contact sheet only.
+**Tech Stack:** numpy, Pillow, existing vectoreyes pipeline; `resvg-py` (optional `scoring` extra) for the contact sheet only.
 
 **Spec:** `docs/superpowers/specs/2026-06-10-variant-matrix-design.md`
 
@@ -14,9 +14,9 @@
 
 ## File Structure
 
-- **Create** `src/vectormark/variants.py` — matrix driver: `DEFAULT_EPSILONS`, `DEFAULT_MAX_ERRORS`, `Variant`, `generate_variants`, `write_variant_set`, `compose_contact_sheet`.
-- **Modify** `src/vectormark/pipeline.py` — add `IdealizeReport` + `_report_from_cands`; `_render_body` returns candidates; `_idealize_rectified` returns candidates; `idealize(..., report=False)`.
-- **Modify** `src/vectormark/cli.py` — `--variants`, `--out-dir`, `--epsilons`, `--max-errors`.
+- **Create** `src/vectoreyes/variants.py` — matrix driver: `DEFAULT_EPSILONS`, `DEFAULT_MAX_ERRORS`, `Variant`, `generate_variants`, `write_variant_set`, `compose_contact_sheet`.
+- **Modify** `src/vectoreyes/pipeline.py` — add `IdealizeReport` + `_report_from_cands`; `_render_body` returns candidates; `_idealize_rectified` returns candidates; `idealize(..., report=False)`.
+- **Modify** `src/vectoreyes/cli.py` — `--variants`, `--out-dir`, `--epsilons`, `--max-errors`.
 - **Test** `tests/test_pipeline_report.py`, `tests/test_variants.py`.
 
 ---
@@ -24,7 +24,7 @@
 ## Task 1: `idealize(..., report=True)` surfaces a strategy report
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py`
+- Modify: `src/vectoreyes/pipeline.py`
 - Test: `tests/test_pipeline_report.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -34,7 +34,7 @@
 import numpy as np
 from PIL import Image, ImageDraw
 
-from vectormark.pipeline import IdealizeReport, idealize
+from vectoreyes.pipeline import IdealizeReport, idealize
 
 
 def _disc(n=64):
@@ -71,7 +71,7 @@ Expected: FAIL — `ImportError: cannot import name 'IdealizeReport'` / `idealiz
 
 - [ ] **Step 3: Add `IdealizeReport` + `_report_from_cands` to `pipeline.py`**
 
-At the top of `src/vectormark/pipeline.py`, add to the imports:
+At the top of `src/vectoreyes/pipeline.py`, add to the imports:
 
 ```python
 import types
@@ -195,7 +195,7 @@ Expected: PASS — all report tests green, no regressions (the `report=False` de
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_pipeline_report.py
+git add src/vectoreyes/pipeline.py tests/test_pipeline_report.py
 git commit -m "feat(pipeline): idealize(report=True) surfaces fitter-strategy report"
 ```
 
@@ -204,7 +204,7 @@ git commit -m "feat(pipeline): idealize(report=True) surfaces fitter-strategy re
 ## Task 2: `generate_variants` over the matrix
 
 **Files:**
-- Create: `src/vectormark/variants.py`
+- Create: `src/vectoreyes/variants.py`
 - Test: `tests/test_variants.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -214,7 +214,7 @@ git commit -m "feat(pipeline): idealize(report=True) surfaces fitter-strategy re
 import numpy as np
 from PIL import Image, ImageDraw
 
-from vectormark.variants import (
+from vectoreyes.variants import (
     DEFAULT_EPSILONS, DEFAULT_MAX_ERRORS, Variant, generate_variants,
 )
 
@@ -256,12 +256,12 @@ def test_generate_variants_params_take_effect():
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run --extra dev pytest tests/test_variants.py -q`
-Expected: FAIL — `ModuleNotFoundError: No module named 'vectormark.variants'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'vectoreyes.variants'`.
 
 - [ ] **Step 3: Create `variants.py` with `generate_variants`**
 
 ```python
-# src/vectormark/variants.py
+# src/vectoreyes/variants.py
 """Whole-mark variant matrix: idealize one raster across an epsilon × max_error
 grid, for SVG export, a JSON manifest, and an annotated contact sheet."""
 
@@ -333,7 +333,7 @@ Expected: PASS — 3 tests green.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/variants.py tests/test_variants.py
+git add src/vectoreyes/variants.py tests/test_variants.py
 git commit -m "feat(variants): generate_variants over an epsilon x max_error grid"
 ```
 
@@ -342,7 +342,7 @@ git commit -m "feat(variants): generate_variants over an epsilon x max_error gri
 ## Task 3: `write_variant_set` — SVGs + manifest
 
 **Files:**
-- Modify: `src/vectormark/variants.py`
+- Modify: `src/vectoreyes/variants.py`
 - Test: `tests/test_variants.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -352,7 +352,7 @@ Append to `tests/test_variants.py`:
 ```python
 import json
 
-from vectormark.variants import write_variant_set
+from vectoreyes.variants import write_variant_set
 
 
 def test_write_variant_set_writes_svgs_and_manifest(tmp_path):
@@ -450,7 +450,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/variants.py tests/test_variants.py
+git add src/vectoreyes/variants.py tests/test_variants.py
 git commit -m "feat(variants): write_variant_set emits SVGs + annotated manifest"
 ```
 
@@ -459,7 +459,7 @@ git commit -m "feat(variants): write_variant_set emits SVGs + annotated manifest
 ## Task 4: `compose_contact_sheet` — annotated grid PNG (renderer-optional)
 
 **Files:**
-- Modify: `src/vectormark/variants.py`
+- Modify: `src/vectoreyes/variants.py`
 - Test: `tests/test_variants.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -471,8 +471,8 @@ import io
 
 import pytest
 
-import vectormark.variants as V
-from vectormark.score import SvgRendererUnavailable
+import vectoreyes.variants as V
+from vectoreyes.score import SvgRendererUnavailable
 
 
 def _renderer_available():
@@ -505,7 +505,7 @@ def test_contact_sheet_none_without_renderer(monkeypatch):
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `uv run --extra dev pytest tests/test_variants.py -k contact_sheet -q`
-Expected: FAIL — `AttributeError: module 'vectormark.variants' has no attribute 'compose_contact_sheet'` / `_rasterize`.
+Expected: FAIL — `AttributeError: module 'vectoreyes.variants' has no attribute 'compose_contact_sheet'` / `_rasterize`.
 
 - [ ] **Step 3: Add the contact-sheet composer to `variants.py`**
 
@@ -593,7 +593,7 @@ Expected: PASS — grid renders with resvg; returns `None` when `_rasterize` is 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/variants.py tests/test_variants.py
+git add src/vectoreyes/variants.py tests/test_variants.py
 git commit -m "feat(variants): annotated contact-sheet PNG (renderer-optional)"
 ```
 
@@ -602,7 +602,7 @@ git commit -m "feat(variants): annotated contact-sheet PNG (renderer-optional)"
 ## Task 5: CLI `--variants` mode
 
 **Files:**
-- Modify: `src/vectormark/cli.py`
+- Modify: `src/vectoreyes/cli.py`
 - Test: `tests/test_variants.py`
 
 - [ ] **Step 1: Write the failing test**
@@ -610,7 +610,7 @@ git commit -m "feat(variants): annotated contact-sheet PNG (renderer-optional)"
 Append to `tests/test_variants.py`:
 
 ```python
-from vectormark.cli import main as cli_main
+from vectoreyes.cli import main as cli_main
 
 
 def test_cli_variants_writes_set(tmp_path):
@@ -639,7 +639,7 @@ Expected: FAIL — `--variants`/`--out-dir`/`--epsilons` are unrecognised argume
 
 - [ ] **Step 3: Wire `--variants` into `cli.py`**
 
-Replace the contents of `src/vectormark/cli.py`'s `main` with:
+Replace the contents of `src/vectoreyes/cli.py`'s `main` with:
 
 ```python
 def _floats(text: str) -> tuple[float, ...]:
@@ -653,7 +653,7 @@ def _floats(text: str) -> tuple[float, ...]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="vectormark", description="Idealize a logo raster into SVG.")
+    ap = argparse.ArgumentParser(prog="vectoreyes", description="Idealize a logo raster into SVG.")
     ap.add_argument("input", help="input raster (PNG/JPG)")
     ap.add_argument("-o", "--output", help="output .svg (default: stdout)")
     ap.add_argument("--epsilon", type=float, default=1.5, help="fit tolerance in px")
@@ -688,7 +688,7 @@ def main(argv: list[str] | None = None) -> int:
         if png is not None:
             (out_dir / "contact-sheet.png").write_bytes(png)
         else:
-            print("contact sheet skipped (install vectormark[scoring] to render it)", file=sys.stderr)
+            print("contact sheet skipped (install vectoreyes[scoring] to render it)", file=sys.stderr)
         print(f"{len(variants)} variants -> {out_dir}"
               f"{' (+contact-sheet.png)' if png is not None else ''}")
         return 0
@@ -720,7 +720,7 @@ Expected: PASS — no regressions.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/cli.py tests/test_variants.py
+git add src/vectoreyes/cli.py tests/test_variants.py
 git commit -m "feat(cli): --variants writes the epsilon x max_error matrix"
 ```
 
@@ -741,13 +741,13 @@ Under the CLI usage section of `README.md`, add:
 Explore the geometric design space without re-running by hand:
 
 \`\`\`bash
-vectormark logo.png --variants                       # 3×3 epsilon × max_error grid -> ./logo-variants/
-vectormark logo.png --variants --out-dir ./looks/
-vectormark logo.png --variants --epsilons 0.5,2,4 --max-errors 0.5,2
+vectoreyes logo.png --variants                       # 3×3 epsilon × max_error grid -> ./logo-variants/
+vectoreyes logo.png --variants --out-dir ./looks/
+vectoreyes logo.png --variants --epsilons 0.5,2,4 --max-errors 0.5,2
 \`\`\`
 
 Writes `variant-e<ε>-m<max_error>.svg` per cell, a `manifest.json` (params +
-the fitter strategies each variant used), and—if `vectormark[scoring]` is
+the fitter strategies each variant used), and—if `vectoreyes[scoring]` is
 installed—an annotated `contact-sheet.png`.
 ```
 

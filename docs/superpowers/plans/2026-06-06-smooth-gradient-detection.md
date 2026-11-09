@@ -14,7 +14,7 @@ Spec: `docs/superpowers/specs/2026-06-06-smooth-gradient-detection-design.md`. B
 
 ## File Structure
 
-- **`src/vectormark/gradient.py`** (modify): add constant `_BLOB_DOMINANCE`, helper `_dominant_blob_fraction`, and the smooth-silhouette branch in `detect_gradients`. This is the only source file touched.
+- **`src/vectoreyes/gradient.py`** (modify): add constant `_BLOB_DOMINANCE`, helper `_dominant_blob_fraction`, and the smooth-silhouette branch in `detect_gradients`. This is the only source file touched.
 - **`tests/test_gradient.py`** (append): unit tests for `_dominant_blob_fraction` and the new `detect_gradients` branch.
 - **`tests/test_acceptance_smooth_gradient.py`** (create): end-to-end tests through `idealize` proving the smooth path emits a gradient and rejects flats/multi-blob.
 
@@ -49,7 +49,7 @@ def detect_gradients(
 ### Task 1: `_dominant_blob_fraction` helper + constant
 
 **Files:**
-- Modify: `src/vectormark/gradient.py`
+- Modify: `src/vectoreyes/gradient.py`
 - Test: `tests/test_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing test**
@@ -58,7 +58,7 @@ Append to `tests/test_gradient.py`:
 
 ```python
 def test_dominant_blob_fraction():
-    from vectormark.gradient import _dominant_blob_fraction
+    from vectoreyes.gradient import _dominant_blob_fraction
     m = np.zeros((20, 40), bool)
     m[2:18, 2:18] = True                       # one 16x16 blob, rest empty
     assert _dominant_blob_fraction(m) == 1.0
@@ -74,7 +74,7 @@ Expected: FAIL — `_dominant_blob_fraction` not defined.
 
 - [ ] **Step 3: Add the constant and helper**
 
-In `src/vectormark/gradient.py`, add the constant next to the other module constants (right after the `_GATE_DELTA_E = ...` line near the top):
+In `src/vectoreyes/gradient.py`, add the constant next to the other module constants (right after the `_GATE_DELTA_E = ...` line near the top):
 
 ```python
 _BLOB_DOMINANCE = 0.85   # smooth-gradient path: min fraction of the foreground that must lie
@@ -108,7 +108,7 @@ Expected: PASS (1 passed).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): _dominant_blob_fraction helper + _BLOB_DOMINANCE"
 ```
 
@@ -119,7 +119,7 @@ Commit trailer: `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.
 ### Task 2: smooth-silhouette branch in `detect_gradients`
 
 **Files:**
-- Modify: `src/vectormark/gradient.py`
+- Modify: `src/vectoreyes/gradient.py`
 - Test: `tests/test_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -129,7 +129,7 @@ Append to `tests/test_gradient.py`:
 ```python
 def _smooth_linear_region(h, w, c0, c1):
     """One full-canvas Region + a horizontally smooth linear gradient image (raw pixels)."""
-    from vectormark.types import Region
+    from vectoreyes.types import Region
     yy, xx = np.mgrid[:h, :w]
     t = xx / (w - 1)
     img = np.empty((h, w, 3))
@@ -140,7 +140,7 @@ def _smooth_linear_region(h, w, c0, c1):
 
 
 def test_detect_gradients_smooth_single_blob_fits():
-    from vectormark.gradient import detect_gradients
+    from vectoreyes.gradient import detect_gradients
     regions, img = _smooth_linear_region(60, 120, (20, 40, 200), (220, 40, 90))
     fills, remaining = detect_gradients(regions, img)
     assert len(fills) == 1 and fills[0][1]["kind"] == "linear"
@@ -148,8 +148,8 @@ def test_detect_gradients_smooth_single_blob_fits():
 
 
 def test_detect_gradients_smooth_rejects_multiblob():
-    from vectormark.types import Region
-    from vectormark.gradient import detect_gradients
+    from vectoreyes.types import Region
+    from vectoreyes.gradient import detect_gradients
     h, w = 60, 140
     img = np.full((h, w, 3), 255, np.uint8)
     img[10:50, 10:50] = (220, 30, 30)                        # two disconnected flat blocks
@@ -163,8 +163,8 @@ def test_detect_gradients_smooth_rejects_multiblob():
 
 
 def test_detect_gradients_smooth_rejects_flat_blob():
-    from vectormark.types import Region
-    from vectormark.gradient import detect_gradients
+    from vectoreyes.types import Region
+    from vectoreyes.gradient import detect_gradients
     h, w = 50, 50
     img = np.full((h, w, 3), (40, 120, 200), np.uint8)       # one flat colour
     regions = [Region(label=1, mask=np.ones((h, w), bool), color_hex="#2878c8")]
@@ -179,7 +179,7 @@ Expected: FAIL — `test_detect_gradients_smooth_single_blob_fits` fails (no smo
 
 - [ ] **Step 3: Add the smooth-silhouette branch**
 
-In `src/vectormark/gradient.py`, in `detect_gradients`, replace the final two lines:
+In `src/vectoreyes/gradient.py`, in `detect_gradients`, replace the final two lines:
 
 ```python
     remaining = [r for r in regions if r.label not in consumed]
@@ -221,7 +221,7 @@ Expected: all green. The smooth branch is additive; verify in particular that `t
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): smooth-silhouette gradient path in detect_gradients"
 ```
 
@@ -248,10 +248,10 @@ is attributable to the smooth-silhouette path, not the band-grouping path."""
 
 import numpy as np
 
-from vectormark import Options, idealize
-from vectormark.color import mean_delta_e
-from vectormark.gradient import _ramp_groups
-from vectormark.pipeline import _segment_image
+from vectoreyes import Options, idealize
+from vectoreyes.color import mean_delta_e
+from vectoreyes.gradient import _ramp_groups
+from vectoreyes.pipeline import _segment_image
 from tests._render import render_svg
 
 
@@ -368,12 +368,12 @@ Expected: `telegram` and `apple_music` now show `lin=1` (or `rad=1`) with low Δ
 
 Real-logo eval (after Task 3) found Telegram routes through the rectified (tilted-symmetry) path, where PR #8 left gradients off, so it rendered flat despite a perfect upright fit. We reverse that non-goal (see the spec's "Rectified-path gradient support" section). Spike-verified: a `userSpaceOnUse` gradient inside a rotated `<g>` aligns with its shape (ΔE 0.0004); flatten needs the gradient geometry baked by the same affine.
 
-All edits are in `src/vectormark/pipeline.py`; tests in `tests/test_acceptance_smooth_gradient.py`.
+All edits are in `src/vectoreyes/pipeline.py`; tests in `tests/test_acceptance_smooth_gradient.py`.
 
 ### Task 4: thread gradients through `_idealize_rectified` + bake geometry
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py`
+- Modify: `src/vectoreyes/pipeline.py`
 - Test: `tests/test_acceptance_smooth_gradient.py` (append)
 
 - [ ] **Step 1: Write the failing tests**
@@ -388,7 +388,7 @@ def _rotate_img(img, deg):
 
 
 def test_bake_gradient_geometry_linear_and_radial():
-    from vectormark.pipeline import _bake_gradient_geometry
+    from vectoreyes.pipeline import _bake_gradient_geometry
     # identity-rotation-by-90° about origin via an SVG affine (a,b,c,d,e,f): (x,y)->(-y, x)
     bake = (0.0, 1.0, -1.0, 0.0, 0.0, 0.0)
     lin = _bake_gradient_geometry({"x1": 10.0, "y1": 0.0, "x2": 20.0, "y2": 0.0}, "linear", bake)
@@ -416,7 +416,7 @@ Expected: FAIL — `_bake_gradient_geometry` not defined; the non-flatten test f
 
 - [ ] **Step 3: Add `_bake_gradient_geometry` and relax the gate**
 
-In `src/vectormark/pipeline.py`, add this helper immediately after `_rectify_affine`:
+In `src/vectoreyes/pipeline.py`, add this helper immediately after `_rectify_affine`:
 
 ```python
 def _bake_gradient_geometry(geom: dict, kind: str, bake: Affine) -> dict:
@@ -484,7 +484,7 @@ Expected: PASS (2 passed). If `test_rectified_path_emits_gradient_nonflatten` fa
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_acceptance_smooth_gradient.py
+git add src/vectoreyes/pipeline.py tests/test_acceptance_smooth_gradient.py
 git commit -m "feat(pipeline): gradients in the rectified path (thread rgb/defs, bake gradient geometry)"
 ```
 Commit trailer: `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`.

@@ -1,6 +1,6 @@
 import numpy as np
-from vectormark.color import extract_palette, quantize
-from vectormark.segment import fill_small_compatible_holes, fill_tiny_isolated_holes, segment, hexstr
+from vectoreyes.color import extract_palette, quantize
+from vectoreyes.segment import fill_small_compatible_holes, fill_tiny_isolated_holes, segment, hexstr
 
 
 def _logo_on_white():

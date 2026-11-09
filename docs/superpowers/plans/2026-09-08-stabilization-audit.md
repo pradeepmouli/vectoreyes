@@ -1,13 +1,13 @@
 # Stabilization audit — 2026-09-08
 
 Environment: isolated Python 3.13.15 at
-`/tmp/vectormark-upgrade-20260907`, using the upgraded project dependencies.
+`/tmp/vectoreyes-upgrade-20260907`, using the upgraded project dependencies.
 The repository environment was not recreated. Full-suite result: **610 passed,
 17 failed, 0 errors, 0 skipped**, 627 tests, 963 warnings, about 97 seconds.
 The three new widget-resource tests were collected separately and all passed.
 
-Local raw evidence: `/tmp/vectormark-full-audit/pytest.log` and
-`/tmp/vectormark-full-audit/junit.xml`. These files are temporary; this inventory
+Local raw evidence: `/tmp/vectoreyes-full-audit/pytest.log` and
+`/tmp/vectoreyes-full-audit/junit.xml`. These files are temporary; this inventory
 retains the failing test identities. No baseline SVGs were updated.
 
 ## Failure inventory
@@ -87,7 +87,7 @@ Full follow-up run: **620 passed, 16 failed**, 636 tests. Compared with the
 original audit, only `test_region_with_hole_uses_evenodd_and_renders_hole` changed
 from failing to passing; there are no new failing tests. The nine added cases
 are the three widget checks and six closed/open-seam checks. Raw follow-up
-evidence is at `/tmp/vectormark-cutout-audit/pytest.log` and `junit.xml`.
+evidence is at `/tmp/vectoreyes-cutout-audit/pytest.log` and `junit.xml`.
 
 ## Follow-up — cutout-aware simplify acceptance, 2026-09-09
 
@@ -105,7 +105,7 @@ On the existing Apple Music regression fixture, the rejected refit's exterior
 and cutout displacement were **1.90 px and 2.10 px**. Accepted cleanup measures
 **0.64 px and 0.58 px**, both below its 1 px budget. These are sampled estimates.
 Command count remains 62; weighted complexity decreases from 115 to 82.
-The linked SVG comparison is `/tmp/vectormark-cutout-boundary-review/index.html`.
+The linked SVG comparison is `/tmp/vectoreyes-cutout-boundary-review/index.html`.
 It reuses fixture geometry and does not regenerate corpus segmentation.
 
 Final full suite: **652 passed, 15 failed**, 667 total, no errors or skips,
@@ -113,8 +113,8 @@ about 91 seconds. Relative to the local-corner audit, the compound simplify
 failure is resolved and there are no new failing test identities. Remaining
 failures are the seven optimizer integration, three annulus representation,
 four golden-byte, and one corpus-report assertions recorded above.
-Evidence: `/tmp/vectormark-cutout-boundary-final-pytest.log` and
-`/tmp/vectormark-cutout-boundary-final-junit.xml`. `git diff --check` passes.
+Evidence: `/tmp/vectoreyes-cutout-boundary-final-pytest.log` and
+`/tmp/vectoreyes-cutout-boundary-final-junit.xml`. `git diff --check` passes.
 
 ## Follow-up — optimizer integration reconciliation, 2026-09-09
 
@@ -158,14 +158,14 @@ region before tolerant appearance scoring. A 0.5 px intrusion regression covers
 the former false acceptance. All 51 focused checks still pass, without changing
 fitting tolerances; independent re-review approved the correction.
 
-Evidence: `/tmp/vectormark-retained-annulus-final-pytest.log` and
-`/tmp/vectormark-retained-annulus-final-junit.xml`. The full run reports 945
+Evidence: `/tmp/vectoreyes-retained-annulus-final-pytest.log` and
+`/tmp/vectoreyes-retained-annulus-final-junit.xml`. The full run reports 945
 warnings; those have not been silently suppressed. `git diff --check` passes.
 
 The final reviewed-code rerun also reports **665 passed, 5 failed**, in 95.91
 seconds, with the same five failing identities and 945 warnings. Evidence:
-`/tmp/vectormark-retained-annulus-reviewed-pytest.log` and
-`/tmp/vectormark-retained-annulus-reviewed-junit.xml`.
+`/tmp/vectoreyes-retained-annulus-reviewed-pytest.log` and
+`/tmp/vectoreyes-retained-annulus-reviewed-junit.xml`.
 
 The four historical byte snapshots are not the approved corpus reference SVGs.
 Per the clarified evaluation contract, primitive recognition and clone extraction
@@ -193,8 +193,8 @@ corner detector or smoothing heuristic. Residual v0 visual imperfections can be
 agent refinement work; they do not by themselves require more automatic fitting.
 
 The latest combined run is **688 passed, 2 failed**,690 total,95.30seconds.
-Evidence: `/tmp/vectormark-geometry-policy-pytest.log` and
-`/tmp/vectormark-geometry-policy-junit.xml`. Both failures are MCP reconnect
+Evidence: `/tmp/vectoreyes-geometry-policy-pytest.log` and
+`/tmp/vectoreyes-geometry-policy-junit.xml`. Both failures are MCP reconnect
 checks whose refinement targets hardcode r1 after optimization exposes split
 children. Actual published addresses and retained geometry are under review;
 this is not yet declared a harmless test mismatch.
@@ -208,7 +208,7 @@ polyline metric without silently changing the simplifier's established policy.
 
 The corrected and independently re-reviewed implementation now passes the full
 suite: **693 passed**,949warnings,105.51seconds,exit0. Evidence:
-`/tmp/vectormark-geometry-policy-round1-pytest.log` and corresponding JUnit XML.
+`/tmp/vectoreyes-geometry-policy-round1-pytest.log` and corresponding JUnit XML.
 All original stabilization failures are reconciled. The acceptance metric uses
 a conservative continuous-polyline bound with declared0.05px precision; its
 SkPath curve linearization remains an explicitly reported approximation.
@@ -232,6 +232,6 @@ peers instead of aborting conversion.
 
 Independent review approved the implementation after one malformed-provenance
 correction. The final combined run passes **707 tests**,949warnings,105.38seconds.
-Evidence: `/tmp/vectormark-canonical-corner-ingress-round1-pytest.log` and JUnit XML.
+Evidence: `/tmp/vectoreyes-canonical-corner-ingress-round1-pytest.log` and JUnit XML.
 This closes the annotation-ingress gap only: concrete explicit-declaration
 fitting, canonical version storage and full recipe replay are still pending.

@@ -3,7 +3,7 @@
 Use when iterating on a traced drawing and needing persistent evidence,
 independent shape/fill judgments, and an artwork handoff with Review / Edit.
 The decision loop applies to both direct MCP agents and local runners. The
-commands below require local Python with `vectormark[server,scoring]` and an
+commands below require local Python with `vectoreyes[server,scoring]` and an
 accessible MCP endpoint. Without local execution, use the equivalent public
 trace/refine/artifact tools and retain the worklist in available task notes;
 do not assume shell access or fabricate saved bundle paths. In a source
@@ -13,7 +13,7 @@ HTML and does not require widget interaction.
 ## Start and inspect
 
 ```sh
-python -m vectormark.evaluation trace input.png output/run \
+python -m vectoreyes.evaluation trace input.png output/run \
   --options options.json --title "My drawing" \
   --endpoint http://127.0.0.1:8000/mcp
 ```
@@ -67,7 +67,7 @@ evaluate fill separately without diagnostic overlay colors.
 ## Submit and evaluate a trial
 
 ```sh
-python -m vectormark.evaluation refine output/run plan.json \
+python -m vectoreyes.evaluation refine output/run plan.json \
   --hypothesis "Replace the noisy side with one source-fitted curve"
 ```
 
@@ -98,7 +98,7 @@ to save the version manifest before deciding what happened. `capture` with an
 exact saved response can retry artifact retrieval without retracing/refining.
 
 ```sh
-python -m vectormark.evaluation view output/run --version v0.0 \
+python -m vectoreyes.evaluation view output/run --version v0.0 \
   --region r4 --layers commands features source --name tip-detail
 ```
 
@@ -165,13 +165,13 @@ candidate or switch to external SVG edits.
 ## Independent review and explicit acceptance
 
 ```sh
-python -m vectormark.evaluation review output/run t0003 --track shape \
+python -m vectoreyes.evaluation review output/run t0003 --track shape \
   --verdict pass --reason "Source boundaries retained; three corners intact" \
   --reviewer agent --evidence versions/v0.0.0/annotated.png
-python -m vectormark.evaluation review output/run t0003 --track fill \
+python -m vectoreyes.evaluation review output/run t0003 --track fill \
   --verdict pass --reason "Interior paint matches source on fixed geometry" \
   --reviewer agent --evidence versions/v0.0.0/review_panel.png
-python -m vectormark.evaluation accept output/run t0003
+python -m vectoreyes.evaluation accept output/run t0003
 ```
 
 IDs above are illustrative. Inspect the actual evidence before recording either

@@ -2,15 +2,15 @@ import numpy as np
 import pytest
 import math
 
-from vectormark.candidate import FlatFill
-from vectormark.drawing_actions import SymmetryAxisInput
-from vectormark.fit import Shape
-from vectormark.refinement.region_sample import RegionSample
+from vectoreyes.candidate import FlatFill
+from vectoreyes.drawing_actions import SymmetryAxisInput
+from vectoreyes.fit import Shape
+from vectoreyes.refinement.region_sample import RegionSample
 
 
 def choose(source, target, *, matrix, symbolic=True, family_size=None, axis=None):
-    from vectormark.drawing_adapter import bind_region_inputs
-    from vectormark.refinement.automatic_replay import (
+    from vectoreyes.drawing_adapter import bind_region_inputs
+    from vectoreyes.refinement.automatic_replay import (
         AssignCloneOperation, MirrorRegionOperation, apply_relationship_choice, draft_input_ref,
     )
     refs = draft_input_ref(source.id), draft_input_ref(target.id)
@@ -32,8 +32,13 @@ def test_selected_clone_publication_preserves_target_paint_and_source_evidence(s
     source, target = pair()
     result = choose(source, target, matrix=(1, 0, 0, 1, 8, 0),
         symbolic=symbolic, family_size=4)[0]
-    assert result.current == (Shape('use', {'href_obj_id': 1, 'transform': (1, 0, 0, 1, 8, 0)})
-        if symbolic else Shape('path', {'d': 'M 9 2 L 13 2 L 13 6 L 9 6 Z'}))
+    if symbolic:
+        assert result.current == Shape('use', {'href_obj_id': 1, 'transform': (1, 0, 0, 1, 8, 0)})
+    else:
+        geometry = result.current.params['canonical_path_geometry']
+        assert [command.end for command in geometry.path.commands] == [(9, 2), (13, 2), (13, 6), (9, 6)]
+        assert geometry.path.id == 'r2.p0'
+        assert geometry.to_svg_d() == result.current.params['d']
     assert result.fill is target.fill and result.original is target.original
     assert result.z == target.z and result.drawing_id == target.drawing_id
     assert np.array_equal(result.raster, target.raster)
@@ -48,17 +53,19 @@ def test_selected_mirror_pair_keeps_source_and_independent_target_paint():
     result = choose(source, target,
         axis=SymmetryAxisInput(point=(7, 0), angle_degrees=90), matrix=(-1, 0, 0, 1, 14, 0))
     assert result[0] is source
-    assert result[1].current.params['d'] == 'M 13 2 L 9 2 L 9 6 L 13 6 Z'
+    geometry = result[1].current.params['canonical_path_geometry']
+    assert [command.end for command in geometry.path.commands] == [(13, 2), (9, 2), (9, 6), (13, 6)]
+    assert geometry.to_svg_d() == result[1].current.params['d']
     assert result[1].fill is target.fill and result[1].original is target.original
     assert result[1].footprint.bounds == (9, 2, 13, 6)
     assert result[1].diagnostics['symmetry'] == {'accepted': True, 'mode': 'pair',
-        'matched_source': 1, 'axis': {'point': [7.0, 0.0], 'angle_degrees': 90.0}}
+        'matched_source': 1, 'axis': {'point': (7.0, 0.0), 'angle_degrees': 90.0}}
 
 
 @pytest.mark.parametrize('mirror', [False, True])
 def test_transformed_copy_updates_canonical_coordinates_and_retains_corners(mirror):
     from dataclasses import replace
-    from vectormark.path_geometry import CornerAnchor, geometry_from_svg_d
+    from vectoreyes.path_geometry import CornerAnchor, geometry_from_svg_d
     source, target = pair()
     path = geometry_from_svg_d(source.current.params['d'], region_id='r1')
     end = path.path.commands[1].id
@@ -75,14 +82,16 @@ def test_transformed_copy_updates_canonical_coordinates_and_retains_corners(mirr
     updated = result.current.params['canonical_path_geometry']
     assert updated.path.commands[1].end == expected
     assert updated.to_svg_d() == result.current.params['d']
-    assert updated.anchors == path.anchors
+    endpoint = updated.path.commands[1].id
+    assert updated.anchors == (CornerAnchor('r2.p0.corner0', endpoint, endpoint),)
+    assert all(command.id.startswith('r2.p0.') for command in updated.path.commands)
     assert source.current.params['canonical_path_geometry'] is path
 
 
 def test_transformed_cutout_keeps_sparse_command_bindings_and_rounded_numeric_output():
     from dataclasses import replace
-    from vectormark.drawing_adapter import transform_working_shape
-    from vectormark.path_geometry import CornerAnchor, geometry_from_svg_d
+    from vectoreyes.drawing_adapter import transform_working_shape
+    from vectoreyes.path_geometry import CornerAnchor, geometry_from_svg_d
     geometry = geometry_from_svg_d('M0 0 L10 0 L10 10 L0 10 Z M2 2 L4 2 L4 4 L2 4 Z',
         region_id='r1', fill_rule='evenodd')
     hole = geometry.cutouts[0]
