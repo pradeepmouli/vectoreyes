@@ -1,6 +1,6 @@
-import vectormark
+import vectoreyes
 
 
 def test_version_exposed():
-    assert isinstance(vectormark.__version__, str)
-    assert vectormark.__version__.count(".") == 2
+    assert isinstance(vectoreyes.__version__, str)
+    assert vectoreyes.__version__.count(".") == 2

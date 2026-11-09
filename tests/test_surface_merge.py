@@ -1,11 +1,57 @@
 import numpy as np
+import pytest
 from unittest.mock import patch
-from vectormark.surface_merge import seam_is_soft, gradients_continuous, merge_surfaces
-from vectormark.fill_fit import fit_fill as _ff
-from vectormark.types import Region
-from vectormark.candidate import FlatFill, LinearGradientFill, RadialGradientFill
+from vectoreyes.surface_merge import seam_is_soft, gradients_continuous, merge_surfaces
+from vectoreyes.fill_fit import FillFitResult, fit_fill as _ff
+from vectoreyes.types import Region
+from vectoreyes.candidate import FlatFill, LinearGradientFill, RadialGradientFill
 
 _AnyGradient = (LinearGradientFill, RadialGradientFill)
+
+
+@pytest.mark.parametrize("curved", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_closed_hard_seam_is_not_palette_noise(curved, reverse):
+    from vectoreyes.material_pretrace import _noncredible_edges
+    from vectoreyes.surface_merge import material_groups, seam_is_noncredible
+
+    yy, xx = np.mgrid[:60, :60]
+    outer = (xx >= 10) & (xx < 50) & (yy >= 10) & (yy < 50)
+    inner = ((xx - 30)**2 + (yy - 30)**2 < 10**2) if curved else (
+        (xx >= 24) & (xx < 36) & (yy >= 24) & (yy < 36)
+    )
+    regions = [Region(1, outer & ~inner, "#062336"), Region(2, inner, "#FFFFFF")]
+    if reverse:
+        regions.reverse()
+    rgb = np.full((60, 60, 3), 255, dtype=np.uint8)
+    rgb[outer & ~inner] = (6, 35, 54)
+
+    assert not seam_is_noncredible(regions[0].mask, regions[1].mask)
+    assert _noncredible_edges(regions) == set()
+    assert len(material_groups(regions, rgb)) == 2
+
+
+def test_closed_soft_seam_can_still_merge_by_source_color():
+    from vectoreyes.surface_merge import material_groups
+
+    yy, xx = np.mgrid[:60, :60]
+    inner = (xx - 30)**2 + (yy - 30)**2 < 10**2
+    regions = [Region(1, ~inner, "#062336"), Region(2, inner, "#072437")]
+    rgb = np.full((60, 60, 3), (6, 35, 54), dtype=np.uint8)
+    rgb[inner] = (7, 36, 55)
+    assert material_groups(regions, rgb) == [(0, 1)]
+
+
+def test_open_tortuous_seam_still_merges_by_shape():
+    from vectoreyes.material_pretrace import _noncredible_edges
+    from vectoreyes.surface_merge import seam_is_noncredible
+
+    yy, xx = np.mgrid[:80, :100]
+    boundary = 50 + 18 * np.sin(yy * np.pi / 10)
+    left = xx < boundary
+    regions = [Region(1, left, "#062336"), Region(2, ~left, "#FFFFFF")]
+    assert seam_is_noncredible(left, ~left)
+    assert _noncredible_edges(regions) == {(0, 1)}
 
 
 def _ramp(h, w, c0, c1):
@@ -57,7 +103,7 @@ def test_non_adjacent_masks_are_not_soft():
 def test_two_gradient_halves_are_continuous():
     # each half of a wide ramp spans enough colour to fit a gradient -> compare at the seam
     rgb, a, b = _full_ramp_split()
-    fa, fb = _ff(a, rgb, flat_hex="#000000"), _ff(b, rgb, flat_hex="#000000")
+    fa, fb = _ff(a, rgb, flat_hex="#000000").fill, _ff(b, rgb, flat_hex="#000000").fill
     assert gradients_continuous(fa, a, fb, b)
 
 
@@ -68,7 +114,7 @@ def test_gradient_meets_flat_is_not_continuous():
     rgb[:, W // 2:] = (20, 60, 210)
     a = np.zeros((H, W), bool); a[:, : W // 2] = True
     b = np.zeros((H, W), bool); b[:, W // 2:] = True
-    fa, fb = _ff(a, rgb, flat_hex="#000000"), _ff(b, rgb, flat_hex="#143CD2")
+    fa, fb = _ff(a, rgb, flat_hex="#000000").fill, _ff(b, rgb, flat_hex="#143CD2").fill
     assert not gradients_continuous(fa, a, fb, b)
 
 
@@ -76,8 +122,8 @@ def test_non_adjacent_gradients_not_continuous():
     # two non-touching gradient blobs have no shared seam -> False
     rgb, a, _ = _full_ramp_split()
     far = np.zeros_like(a); far[:, 70:] = True       # disjoint from a (left half)
-    fa = _ff(a, rgb, flat_hex="#000000")
-    fb = _ff(far, rgb, flat_hex="#000000")
+    fa = _ff(a, rgb, flat_hex="#000000").fill
+    fb = _ff(far, rgb, flat_hex="#000000").fill
     assert not gradients_continuous(fa, a, fb, far)
 
 
@@ -92,8 +138,8 @@ def test_ramp_halves_merge_into_one_gradient():
     # NOTE: the brief says "a horizontal ramp may fit RADIAL — that's fine; the tests
     # assert 'is a gradient'"; we check _AnyGradient accordingly.
     rgb, a, b = _full_ramp_split()
-    filled = [(_region(0, a, "#1428C8"), _ff(a, rgb, flat_hex="#1428C8")),
-              (_region(1, b, "#DC2814"), _ff(b, rgb, flat_hex="#DC2814"))]
+    filled = [(_region(0, a, "#1428C8"), _ff(a, rgb, flat_hex="#1428C8").fill),
+              (_region(1, b, "#DC2814"), _ff(b, rgb, flat_hex="#DC2814").fill)]
     out = merge_surfaces(filled, rgb)
     assert len(out) == 1
     region, fill = out[0]
@@ -110,7 +156,7 @@ def test_narrow_bands_collapse_to_one_gradient():
     filled = []
     for k in range(0, W, 8):
         m = np.zeros((H, W), bool); m[:, k:k + 8] = True
-        filled.append((_region(k, m, "#808080"), _ff(m, rgb, flat_hex="#808080")))
+        filled.append((_region(k, m, "#808080"), _ff(m, rgb, flat_hex="#808080").fill))
     out = merge_surfaces(filled, rgb)
     assert len(out) == 1 and isinstance(out[0][1], _AnyGradient)
 
@@ -123,8 +169,8 @@ def test_flat_dot_on_ramp_stays_separate():
     rgb[:, W // 2:] = (20, 60, 210)
     a = np.zeros((H, W), bool); a[:, : W // 2] = True
     b = np.zeros((H, W), bool); b[:, W // 2:] = True
-    filled = [(_region(0, a, "#1428C8"), _ff(a, rgb, flat_hex="#1428C8")),
-              (_region(1, b, "#143CD2"), _ff(b, rgb, flat_hex="#143CD2"))]
+    filled = [(_region(0, a, "#1428C8"), _ff(a, rgb, flat_hex="#1428C8").fill),
+              (_region(1, b, "#143CD2"), _ff(b, rgb, flat_hex="#143CD2").fill)]
     out = merge_surfaces(filled, rgb)
     assert len(out) == 2                                 # NOT merged
 
@@ -136,8 +182,8 @@ def test_two_distinct_flats_do_not_merge():
     rgb[:, : W // 2] = (200, 40, 40); rgb[:, W // 2:] = (40, 160, 60)
     a = np.zeros((H, W), bool); a[:, : W // 2] = True
     b = np.zeros((H, W), bool); b[:, W // 2:] = True
-    filled = [(_region(0, a, "#C82828"), _ff(a, rgb, flat_hex="#C82828")),
-              (_region(1, b, "#28A03C"), _ff(b, rgb, flat_hex="#28A03C"))]
+    filled = [(_region(0, a, "#C82828"), _ff(a, rgb, flat_hex="#C82828").fill),
+              (_region(1, b, "#28A03C"), _ff(b, rgb, flat_hex="#28A03C").fill)]
     assert len(merge_surfaces(filled, rgb)) == 2
 
 
@@ -182,9 +228,9 @@ def test_seam_cache_evicts_stale_entries_after_merge():
     def _controlled_fit_fill(mask, rgb_, *, flat_hex):
         if mask[:, :24].any() and mask[:, 24:].any():
             return _ff(mask, rgb_, flat_hex=flat_hex)
-        return FlatFill(hex=flat_hex)
+        return FillFitResult(FlatFill(hex=flat_hex), 'flat_evidence', 'controlled_flat', int(mask.sum()))
 
-    with patch("vectormark.surface_merge.fit_fill", _controlled_fit_fill):
+    with patch("vectoreyes.surface_merge.fit_fill", _controlled_fit_fill):
         out = merge_surfaces(filled, rgb)
 
     assert len(out) == 1, (

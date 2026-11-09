@@ -7,7 +7,7 @@ brainstorm → spec → plan → build cycle. This doc is the map, not the terri
 
 ## The core idea
 
-Every element vectormark emits is a pair: **(geometry, fill)**.
+Every element vectoreyes emits is a pair: **(geometry, fill)**.
 
 - *Geometry* = the shape's outline: a primitive (`<circle>`, `<rect>`, ellipse, annulus,
   convex polygon) or a fitted smooth path (lines + Béziers).
@@ -143,6 +143,6 @@ structural change and benefits from the uniform candidate loop already existing.
 
 ## Non-goals (for this roadmap)
 
-- ML / learned tracing (StarVector-class) — vectormark stays deterministic.
+- ML / learned tracing (StarVector-class) — vectoreyes stays deterministic.
 - Conic/sweep gradients — still a gradient non-goal.
 - Rewriting the emit layer — it already renders `(geometry, fill)` generically.

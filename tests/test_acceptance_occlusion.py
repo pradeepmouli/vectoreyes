@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 import numpy as np
 from skimage.metrics import structural_similarity
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 from tests._render import render_svg
 
 

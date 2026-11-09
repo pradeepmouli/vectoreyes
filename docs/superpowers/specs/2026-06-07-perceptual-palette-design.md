@@ -86,7 +86,7 @@ principle: a self-contained change to one function, no pipeline restructuring.
   the average of blue-vs-white AA blends is a washed mid-blue). The most-frequent member is always a
   real colour and renders faithfully. (User-confirmed.)
 - **k-means — rejected.** Non-deterministic without a fixed seed, needs a `k`, and is heavier than
-  the greedy single-pass clustering. vectormark is deterministic by contract; the greedy pass is
+  the greedy single-pass clustering. vectoreyes is deterministic by contract; the greedy pass is
   deterministic and already the codebase idiom.
 - **No pre-bin — rejected.** `np.unique` on a photographic-AA logo can yield >100k exact shades; an
   O(shades²) greedy loop over that is too slow. The 5-bit pre-bin bounds it without perceptually
@@ -96,7 +96,7 @@ principle: a self-contained change to one function, no pipeline restructuring.
 
 ## Architecture & placement
 
-Single function rewrite in `src/vectormark/color.py::extract_palette`. **Signature unchanged**
+Single function rewrite in `src/vectoreyes/color.py::extract_palette`. **Signature unchanged**
 `(rgb_image, *, max_colors, merge_de, min_fraction)` so every caller (`segment.py`, pipeline,
 tests) is unaffected. Return type unchanged: `(N, 3) uint8`, frequency-ordered. `srgb_to_oklab`,
 `delta_e`, `quantize`, `mean_delta_e` are untouched and reused.

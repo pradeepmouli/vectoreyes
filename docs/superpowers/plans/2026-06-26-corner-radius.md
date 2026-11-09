@@ -23,7 +23,7 @@
 ### Task 1: `region_corner_radius` — measure a region's corner rounding from its contour
 
 **Files:**
-- Modify: `src/vectormark/contour.py` (add the constants, geometry helpers, and `region_corner_radius`)
+- Modify: `src/vectoreyes/contour.py` (add the constants, geometry helpers, and `region_corner_radius`)
 - Test: `tests/test_contour.py` (create if absent)
 
 **Interfaces:**
@@ -36,7 +36,7 @@ Create `tests/test_contour.py` (or append if it exists):
 
 ```python
 import numpy as np
-from vectormark.contour import region_corner_radius
+from vectoreyes.contour import region_corner_radius
 
 
 def _sharp_square(side=60, pad=10):
@@ -84,7 +84,7 @@ Expected: FAIL — `region_corner_radius` not defined.
 
 - [ ] **Step 3: Add the constants and helpers**
 
-In `src/vectormark/contour.py`, add near the top (after the imports):
+In `src/vectoreyes/contour.py`, add near the top (after the imports):
 
 ```python
 _CORNER_RDP_EPS = 1.0        # contour->polygon simplification tolerance (px): small so corners are found
@@ -208,7 +208,7 @@ Expected: PASS. If `test_corner_radius_sharp_square_is_zero` fails because sub-p
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/contour.py tests/test_contour.py
+git add src/vectoreyes/contour.py tests/test_contour.py
 git commit -m "feat(contour): region_corner_radius — measure fillet from contour, sharp->0
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -219,7 +219,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: Thread per-region corner radius through the pipeline; remove the global heuristic
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py` (`build_candidates` per-region measurement; `_render_body`; remove `_mark_corner_radius`, `_band_fillet_radius`, `_CORNER_RADIUS_FRACTION`)
+- Modify: `src/vectoreyes/pipeline.py` (`build_candidates` per-region measurement; `_render_body`; remove `_mark_corner_radius`, `_band_fillet_radius`, `_CORNER_RADIUS_FRACTION`)
 - Test: full suite (parity, daikonic guard)
 
 **Interfaces:**
@@ -228,7 +228,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Import and measure per region in `build_candidates`**
 
-In `src/vectormark/pipeline.py`, add to the contour import (find the existing `from .contour import ...`; if `region_corner_radius` isn't imported, add it):
+In `src/vectoreyes/pipeline.py`, add to the contour import (find the existing `from .contour import ...`; if `region_corner_radius` isn't imported, add it):
 
 ```python
 from .contour import region_corner_radius
@@ -297,7 +297,7 @@ Expected: PASS — paste the verbatim summary line. The key parity guard is `tes
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py
+git add src/vectoreyes/pipeline.py
 git commit -m "feat(pipeline): per-region corner radius; drop global _mark_corner_radius
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -308,7 +308,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 3: Corpus validation + `_CORNER_*` calibration
 
 **Files:**
-- Modify only if a threshold must move: `src/vectormark/contour.py` (`_CORNER_*`), with rationale in the comment.
+- Modify only if a threshold must move: `src/vectoreyes/contour.py` (`_CORNER_*`), with rationale in the comment.
 - Scratch only (untracked): render the corpus before/after.
 
 **Interfaces:**
@@ -329,7 +329,7 @@ If a sharp mark still rounds, raise `_CORNER_MIN_FILLET` or tighten `_CORNER_STR
 - [ ] **Step 4: Commit any calibration**
 
 ```bash
-git add src/vectormark/contour.py
+git add src/vectoreyes/contour.py
 git commit -m "fix(contour): calibrate _CORNER_* thresholds against the corpus
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

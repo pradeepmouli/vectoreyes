@@ -2,7 +2,7 @@ import re
 
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 
 
 def _settir_synth():

@@ -4,7 +4,7 @@
 geometry matrix and emits the variants as SVGs + a JSON manifest + an annotated
 contact-sheet PNG, so a user or agent can compare whole-mark looks and pick one.
 
-**Architecture:** A new self-contained `src/vectormark/variants.py` drives the
+**Architecture:** A new self-contained `src/vectoreyes/variants.py` drives the
 matrix by calling the existing `idealize()` once per cell. A small, backward-
 compatible change to the pipeline surfaces a per-variant **strategy report** (the
 fitter strategies the scorer chose), which the manifest and contact sheet
@@ -133,7 +133,7 @@ def generate_variants(image, *, epsilons=DEFAULT_EPSILONS,
 
 The contact sheet is the only renderer-dependent part. Reuse the existing
 `score` cascade: attempt render; on `SvgRendererUnavailable`, skip the PNG, warn
-once (`install vectormark[scoring]` to enable the contact sheet), and still emit
+once (`install vectoreyes[scoring]` to enable the contact sheet), and still emit
 the SVGs + manifest. So `--variants` works in the minimal install, minus the
 sheet.
 
@@ -171,14 +171,14 @@ input raster
 - **Contact sheet**: with the renderer available, `compose_contact_sheet` returns
   PNG bytes of the expected grid dimensions; monkeypatching the renderer
   unavailable returns `None` (and the CLI path warns once, writes no PNG).
-- **CLI**: `vectormark logo.png --variants --out-dir tmp` writes N SVGs +
+- **CLI**: `vectoreyes logo.png --variants --out-dir tmp` writes N SVGs +
   `manifest.json` (+ `contact-sheet.png` when renderer present); `--epsilons`
   with a bad value exits non-zero.
 
 ## Files
 
-- Create: `src/vectormark/variants.py`
-- Modify: `src/vectormark/pipeline.py` (add `IdealizeReport`, `report=` on
+- Create: `src/vectoreyes/variants.py`
+- Modify: `src/vectoreyes/pipeline.py` (add `IdealizeReport`, `report=` on
   `idealize`, strategy aggregation in `_render_body`)
-- Modify: `src/vectormark/cli.py` (`--variants` + axis flags + out-dir)
+- Modify: `src/vectoreyes/cli.py` (`--variants` + axis flags + out-dir)
 - Test: `tests/test_variants.py`, plus a `report=` case in the pipeline tests

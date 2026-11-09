@@ -1,7 +1,7 @@
 import numpy as np
 
-from vectormark.types import Region
-from vectormark.components import decompose_components
+from vectoreyes.types import Region
+from vectoreyes.components import decompose_components
 
 
 def _rect_region(rid, r0, r1, c0, c1, h, w, hexc="#222222"):

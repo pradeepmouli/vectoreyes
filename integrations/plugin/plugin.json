@@ -1,0 +1,37 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "vectoreyes",
+  "description": "Reconstruct raster artwork as editable SVG through source-grounded plans, iterative region review, and separate shape/fill evaluation.",
+  "author": {
+    "name": "Pradeep Mouli"
+  },
+  "homepage": "https://github.com/pradeepmouli/vectoreyes",
+  "repository": "https://github.com/pradeepmouli/vectoreyes",
+  "license": "MIT",
+  "keywords": [
+    "svg",
+    "vectorization",
+    "design",
+    "image-generation",
+    "evaluation"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "vectorEyes",
+        "shortDescription": "Image-to-vector reconstruction and review",
+        "longDescription": "Trace, inspect and refine artwork region by region with retained source evidence and exact plan parameters.",
+        "developerName": "Pradeep Mouli",
+        "category": "Design",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": [
+          "Use vectorEyes to reconstruct this image as a faithful editable SVG and evaluate alternative fits region by region."
+        ]
+      }
+    }
+  },
+  "version": "0.2.1"
+}

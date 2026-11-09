@@ -1,0 +1,44 @@
+{
+  "entry": "asana",
+  "svg": "asana.svg",
+  "revision": 1,
+  "sha256": "7307594dcb26d7e736bb60b0c347debd81a751c636fe4e6255e29af480fad3c2",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Asana_logo.svg",
+    "title": "File:Asana logo.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/3/3b/Asana_logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2022-03-15T05:17:29Z",
+    "upstream_sha1": "fb27eac693a531a987af7de1e3b59f51174bd02f",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Asana",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://asana.com/brand\">https://asana.com/brand</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": "0 0 1000 198",
+    "width": "1000",
+    "height": "198"
+  },
+  "raster": {
+    "path": "../input/asana.png",
+    "sha256": "2ddcfae736c05b8ab6b5d3d4053e10828b7d7ec4c7f85d231b07c9b2afb3fa9f"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

@@ -9,7 +9,7 @@ group→fit→consistency-gate→fall-back pattern from the occlusion pass.
 
 ## Problem
 
-vectormark's color model is flat-fill-per-region: `extract_palette` → `quantize` → `segment`
+vectoreyes's color model is flat-fill-per-region: `extract_palette` → `quantize` → `segment`
 produces `Region`s each with a single `color_hex`. A genuine gradient in the input is therefore
 **shattered into many flat bands** — the "path soup / too many colors" failure mode. There is no way
 to recognize that a set of bands is one smooth color ramp and emit a single shape with an SVG

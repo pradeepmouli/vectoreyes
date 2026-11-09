@@ -1,8 +1,8 @@
-from vectormark.candidate import (
+from vectoreyes.candidate import (
     Candidate, FlatFill, LinearGradientFill, RadialGradientFill,
 )
-from vectormark.fit import Shape
-from vectormark.types import Axis
+from vectoreyes.fit import Shape
+from vectoreyes.types import Axis
 
 
 def test_flat_fill_holds_hex():

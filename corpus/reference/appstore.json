@@ -1,0 +1,44 @@
+{
+  "entry": "appstore",
+  "svg": "appstore.svg",
+  "revision": 1,
+  "sha256": "c20ecd97a57fafe57a7f6ca36b8831d94ce8237b8995c5bf4f41d3929a77b647",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:App_Store_(iOS).svg",
+    "title": "File:App Store (iOS).svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/6/67/App_Store_%28iOS%29.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2020-10-23T14:53:13Z",
+    "upstream_sha1": "bb8394c577a1b67e84b0cb95f22e9351b63270ac",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Apple",
+    "Credit": "Apple",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": "0 0 800 800",
+    "width": null,
+    "height": null
+  },
+  "raster": {
+    "path": "../input/appstore.png",
+    "sha256": "2e940fd4ed9a3bba96570fbea19ccf8d969f2c1ce68e067ae9cfd6480c26d0e4"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

@@ -37,7 +37,7 @@ the existing per-mark code, invoked in a loop. Decomposition slots **inside**
 `_render_body`, which already encapsulates "given a region subset + raster, detect
 symmetry/occlusion/gradients and emit."
 
-### New module: `src/vectormark/components.py`
+### New module: `src/vectoreyes/components.py`
 
 ```python
 def decompose_components(regions: list[Region], shape: tuple[int, int]) -> list[list[Region]]:
@@ -79,7 +79,7 @@ decompose(regions):
   left-then-right. The recursion therefore emits components in reading order, which
   becomes the `sN` order.
 
-### `_render_body` change (`src/vectormark/pipeline.py`)
+### `_render_body` change (`src/vectoreyes/pipeline.py`)
 
 `_render_body` currently computes one mark-wide `axis`/`corner_radius`, runs
 `reconstruct_scene`, `detect_gradients`, `classify_regions`, and `build_candidates` over
@@ -171,7 +171,7 @@ fails `_dominant_blob_fraction` when both blobs are projected together.
 
 ## Files
 
-- **Create:** `src/vectormark/components.py`, `tests/test_components.py`
-- **Modify:** `src/vectormark/pipeline.py` (`_render_body` loops over components; import
+- **Create:** `src/vectoreyes/components.py`, `tests/test_components.py`
+- **Modify:** `src/vectoreyes/pipeline.py` (`_render_body` loops over components; import
   `decompose_components`), `tests/test_pipeline.py` (per-component symmetry, multi-blob
   gradient, continuous-`sN`, parity tests).

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 import numpy as np
-from vectormark.types import Region
-from vectormark.occlusion import ScenePrimitive, region_adjacency, has_bite
+from vectoreyes.types import Region
+from vectoreyes.occlusion import ScenePrimitive, region_adjacency, has_bite
 
 
 def _region(label, mask, color="#000000"):
@@ -33,7 +33,7 @@ def test_has_bite_crescent_vs_convex():
     assert has_bite(rect) is False
 
 
-from vectormark.occlusion import label_boundary, complete_primitive
+from vectoreyes.occlusion import label_boundary, complete_primitive
 
 
 def test_label_boundary_marks_the_bite_as_seam():
@@ -74,7 +74,7 @@ def test_complete_primitive_rejects_when_own_arc_too_short():
 
 
 import re
-from vectormark.occlusion import intersection_lens_d
+from vectoreyes.occlusion import intersection_lens_d
 
 
 def test_intersection_lens_path_two_arcs_between_crossing_points():
@@ -93,7 +93,7 @@ def test_intersection_lens_none_when_disjoint():
     assert intersection_lens_d(a, b) is None
 
 
-from vectormark.occlusion import primitive_mask, stack_agreement
+from vectoreyes.occlusion import primitive_mask, stack_agreement
 
 
 def test_primitive_mask_circle():
@@ -125,9 +125,9 @@ def test_stack_agreement_low_for_wrong_reconstruction():
     assert stack_agreement(prims, None, regions, H, W) < 0.9   # oversized disk disagrees
 
 
-from vectormark.types import Axis
-from vectormark.fit import Shape
-from vectormark.occlusion import reconstruct_scene
+from vectoreyes.types import Axis
+from vectoreyes.fit import Shape
+from vectoreyes.occlusion import reconstruct_scene
 
 
 def _two_disk_mark(H=140, W=200, gap=24, r=44):
@@ -185,7 +185,7 @@ def test_reconstruct_scene_does_not_drop_members_of_larger_component():
 
 
 # --- Task 2: label_boundary per-contour ---
-from vectormark.occlusion import label_boundary as _lb_contour_index  # noqa: E402
+from vectoreyes.occlusion import label_boundary as _lb_contour_index  # noqa: E402
 
 
 def _ring_region(label, cx, cy, r_out, r_in, h=120, w=120, color="#3366cc"):
@@ -207,7 +207,7 @@ def test_label_boundary_reads_inner_contour():
 
 
 # --- Task 3: _fit_circle ---
-from vectormark.occlusion import _fit_circle  # noqa: E402
+from vectoreyes.occlusion import _fit_circle  # noqa: E402
 
 
 def test_fit_circle_recovers_full_circle():
@@ -236,7 +236,7 @@ def test_primitive_mask_annulus():
 
 
 # --- Task 5: complete_annulus ---
-from vectormark.occlusion import complete_annulus  # noqa: E402
+from vectoreyes.occlusion import complete_annulus  # noqa: E402
 
 
 def _occluded_ring(h=160, w=200):
@@ -266,8 +266,67 @@ def test_complete_annulus_rejects_solid_disk():
     assert complete_annulus(disk, [], max_residual=1.6, min_arc_deg=110.0, concentric_tol=2.0) is None
 
 
+def test_cavity_containment_is_geometric_and_keeps_crossing_occluder():
+    from vectoreyes.occlusion import _cavity_contained_labels
+
+    h = w = 140
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - 60) ** 2 + (yy - 70) ** 2
+    ring = Region(1, (d2 <= 42 ** 2) & (d2 >= 24 ** 2), "#3366cc")
+    colored_art = Region(2, (xx - 60) ** 2 + (yy - 70) ** 2 <= 12 ** 2, "#11aa55")
+    crossing = Region(3, (xx - 93) ** 2 + (yy - 70) ** 2 <= 25 ** 2, "#cc3333")
+
+    assert _cavity_contained_labels(ring, [colored_art, crossing]) == {colored_art.label}
+
+
+def test_gate_rejects_same_color_candidate_overpainting_retained_artwork():
+    h = w = 120
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - 60) ** 2 + (yy - 60) ** 2
+    ring = Region(1, (d2 <= 40 ** 2) & (d2 >= 20 ** 2), "#3366cc")
+    retained = Region(2, d2 < 20 ** 2, "#3366cc")
+    annulus = {"kind": "annulus", "params": {"cx": 60, "cy": 60, "r_outer": 40,
+                                                "r_inner": 20}, "color": "#3366cc", "z": 0}
+    thin_intrusion = {"kind": "annulus", "params": {"cx": 60, "cy": 60,
+                                                       "r_outer": 40, "r_inner": 19.5},
+                      "color": "#3366cc", "z": 0}
+    filled = {"kind": "circle", "params": {"cx": 60, "cy": 60, "r": 40},
+              "color": "#3366cc", "z": 0}
+
+    assert stack_agreement([annulus], None, [ring, retained], h, w,
+                           retained_regions=[retained]) > 0.99
+    assert stack_agreement([thin_intrusion], None, [ring, retained], h, w,
+                           retained_regions=[retained]) == 0.0
+    assert stack_agreement([filled], None, [ring, retained], h, w,
+                           retained_regions=[retained]) < 0.96
+
+
+def test_reconstruct_ring_carries_colored_cavity_artwork_by_source_identity():
+    from vectoreyes.fit import Shape
+
+    h, w = 160, 200
+    yy, xx = np.ogrid[:h, :w]
+    d2 = (xx - 70) ** 2 + (yy - 70) ** 2
+    full_ring = (d2 <= 45 ** 2) & (d2 >= 25 ** 2)
+    occluder_mask = (xx - 135) ** 2 + (yy - 70) ** 2 <= 38 ** 2
+    ring = Region(1, full_ring & ~occluder_mask, "#3366cc")
+    occluder = Region(2, occluder_mask, "#cc3333")
+    artwork = Region(3, d2 < 25 ** 2, "#22aa66")
+
+    reconstructed, remaining = reconstruct_scene([ring, occluder, artwork], None, (h, w))
+    retained = [item for item in reconstructed
+                if isinstance(item, Shape) and item.params.get("source_label") == artwork.label]
+
+    assert len(retained) == 1
+    assert retained[0].params["color_hex"] == artwork.color_hex
+    assert sorted(item.kind for item in reconstructed if isinstance(item, ScenePrimitive)) == [
+        "annulus", "circle"
+    ]
+    assert remaining == []
+
+
 # --- Task 6: pairwise over/under + topological order ---
-from vectormark.occlusion import _pair_constraint, _topo_order  # noqa: E402
+from vectoreyes.occlusion import _pair_constraint, _topo_order  # noqa: E402
 
 
 def test_pair_constraint_from_overlap_ownership():
@@ -318,7 +377,7 @@ def test_reconstruct_declines_weave():
 
 
 def test_fit_line_recovers_horizontal_line():
-    from vectormark.occlusion import _fit_line
+    from vectoreyes.occlusion import _fit_line
     pts = np.array([[0.0, 5.0], [2.0, 5.0], [4.0, 5.0], [6.0, 5.0]])
     a, b, c, resid = _fit_line(pts)
     # line is y == 5  ->  normal is (0, 1), offset c == 5
@@ -328,14 +387,14 @@ def test_fit_line_recovers_horizontal_line():
 
 
 def test_fit_line_reports_residual_for_noisy_points():
-    from vectormark.occlusion import _fit_line
+    from vectoreyes.occlusion import _fit_line
     pts = np.array([[0.0, 0.0], [2.0, 0.0], [4.0, 3.0], [6.0, 0.0]])  # one 3px outlier
     _, _, _, resid = _fit_line(pts)
     assert resid > 1.0
 
 
 def test_line_intersect_crossing_lines():
-    from vectormark.occlusion import _fit_line, _line_intersect
+    from vectoreyes.occlusion import _fit_line, _line_intersect
     horiz = _fit_line(np.array([[0.0, 4.0], [8.0, 4.0]]))
     vert = _fit_line(np.array([[5.0, 0.0], [5.0, 9.0]]))
     p = _line_intersect(horiz, vert)
@@ -344,14 +403,14 @@ def test_line_intersect_crossing_lines():
 
 
 def test_line_intersect_parallel_returns_none():
-    from vectormark.occlusion import _fit_line, _line_intersect
+    from vectoreyes.occlusion import _fit_line, _line_intersect
     l1 = _fit_line(np.array([[0.0, 0.0], [8.0, 0.0]]))
     l2 = _fit_line(np.array([[0.0, 3.0], [8.0, 3.0]]))
     assert _line_intersect(l1, l2) is None
 
 
 def test_is_convex_accepts_square_rejects_arrow():
-    from vectormark.occlusion import _is_convex
+    from vectoreyes.occlusion import _is_convex
     square = [(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)]
     assert _is_convex(square)
     concave = [(0.0, 0.0), (4.0, 0.0), (2.0, 2.0), (4.0, 4.0), (0.0, 4.0)]  # arrowhead notch
@@ -359,7 +418,7 @@ def test_is_convex_accepts_square_rejects_arrow():
 
 
 def test_own_runs_single_contiguous_arc():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(10)])
     seam = np.array([False, False, False, True, True, True, False, False, False, False])
     runs = _own_runs(contour, seam)
@@ -368,7 +427,7 @@ def test_own_runs_single_contiguous_arc():
 
 
 def test_own_runs_no_seam_returns_whole_contour():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(5)])
     seam = np.zeros(5, bool)
     runs = _own_runs(contour, seam)
@@ -376,14 +435,14 @@ def test_own_runs_no_seam_returns_whole_contour():
 
 
 def test_own_runs_all_seam_returns_empty():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(5)])
     runs = _own_runs(contour, np.ones(5, bool))
     assert runs == []
 
 
 def test_own_runs_two_disjoint_arcs():
-    from vectormark.occlusion import _own_runs
+    from vectoreyes.occlusion import _own_runs
     contour = np.array([[float(i), 0.0] for i in range(10)])
     seam = np.array([True, False, False, True, True, False, False, False, True, True])
     runs = _own_runs(contour, seam)
@@ -403,7 +462,7 @@ def _disk_mask(cx, cy, r, h, w):
 
 
 def test_complete_polygon_recovers_occluded_diamond():
-    from vectormark.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
+    from vectoreyes.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
     h, w = 160, 220
     cx, cy, r = 80, 80, 46
     diamond = _diamond_mask(cx, cy, r, h, w) & ~_disk_mask(126, 80, 30, h, w)  # right corner bitten
@@ -421,7 +480,7 @@ def test_complete_polygon_recovers_occluded_diamond():
 
 
 def test_complete_polygon_rejects_curved_disk_fragment():
-    from vectormark.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
+    from vectoreyes.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
     h, w = 160, 200
     disk = _disk_mask(90, 80, 50, h, w) & ~_disk_mask(150, 80, 28, h, w)   # big disk, small bite
     occluder = _disk_mask(150, 80, 28, h, w)
@@ -437,7 +496,7 @@ def test_complete_polygon_recovers_diamond_with_two_corners_bitten():
     # must collect edge lines across BOTH runs in cyclic order to recover all four
     # corners (including the two hidden ones). Regression for keeping only the longest
     # run, which would drop one arc's edges and decline.
-    from vectormark.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
+    from vectoreyes.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
     h, w = 180, 180
     cx, cy, r = 90, 90, 50
     top = _disk_mask(90, 40, 16, h, w)       # hides top corner (90,40)
@@ -462,7 +521,7 @@ def test_complete_polygon_recovers_diamond_with_midedge_bite():
     # collinear lines whose intersection is None. complete_polygon must COALESCE the
     # collinear (incl. wraparound) pair before intersecting, else it declines a valid
     # "every edge partly visible" case. (Codex P2: split collinear edge runs.)
-    from vectormark.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
+    from vectoreyes.occlusion import complete_polygon, _MAX_RESIDUAL, _MAX_VERTICES
     h, w = 180, 180
     cx, cy, r = 90, 90, 50
     bite = _disk_mask(115, 65, 14, h, w)     # midpoint of edge T(90,40)-R(140,90); reaches no corner
@@ -480,7 +539,7 @@ def test_complete_polygon_recovers_diamond_with_midedge_bite():
 
 # --- Task 4 (polygon branch): primitive_mask polygon case ---
 def test_primitive_mask_polygon_membership():
-    from vectormark.occlusion import primitive_mask
+    from vectoreyes.occlusion import primitive_mask
     # an asymmetric rectangle: x in [2,7] (width 5), y in [2,12] (height 10).
     # Asymmetric extents make the (x,y)->(row,col) swap load-bearing — a reversed
     # swap would fail these assertions.
@@ -494,7 +553,7 @@ def test_primitive_mask_polygon_membership():
 
 # --- Task 5: _complete_member dispatches polygonal fragments ---
 def test_complete_member_dispatches_diamond_to_polygon():
-    from vectormark.occlusion import _complete_member
+    from vectoreyes.occlusion import _complete_member
     h, w = 160, 220
     diamond = _diamond_mask(80, 80, 46, h, w) & ~_disk_mask(126, 80, 30, h, w)
     occluder = _disk_mask(126, 80, 30, h, w)
@@ -518,7 +577,7 @@ def test_reconstruct_scene_declines_polygon_with_whole_edge_hidden():
     point outside the true shape). The gate rejects this and leaves label 1 in remaining.
     """
     from skimage.draw import polygon2mask
-    from vectormark.occlusion import _complete_member
+    from vectoreyes.occlusion import _complete_member
 
     h, w = 200, 240
     cx, cy, r_pent = 100, 100, 65

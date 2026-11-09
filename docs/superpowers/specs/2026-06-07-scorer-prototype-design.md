@@ -36,7 +36,7 @@ over-accepts, proven repeatedly in the gradient work.
 
 ## Architecture
 
-New module `src/vectormark/score.py`. Pure scoring logic + the resvg-backed fidelity measure. Not
+New module `src/vectoreyes/score.py`. Pure scoring logic + the resvg-backed fidelity measure. Not
 wired into `pipeline.py` in this slice.
 
 ```python

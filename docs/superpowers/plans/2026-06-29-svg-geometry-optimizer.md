@@ -22,15 +22,15 @@
 
 ## File Structure
 
-- `src/vectormark/optimizer/__init__.py` — package.
-- `src/vectormark/optimizer/optobject.py` — `OptObject` dual-rep model + `flatten`.
-- `src/vectormark/optimizer/faithful.py` — Stage 1: regions → `OptObject` list + true masks.
-- `src/vectormark/optimizer/gate.py` — coverage gate (`coverage_residual`, `gate_ok`).
-- `src/vectormark/optimizer/framework.py` — `optimize(objects, masks, passes)` runner.
-- `src/vectormark/optimizer/passes/primitives.py` — pass 2a.
-- `src/vectormark/optimizer/passes/clones.py` — pass 2b.
-- `src/vectormark/optimizer/passes/symmetry.py` — pass 2c.
-- `src/vectormark/optimizer/passes/simplify.py` — pass 2d.
+- `src/vectoreyes/optimizer/__init__.py` — package.
+- `src/vectoreyes/optimizer/optobject.py` — `OptObject` dual-rep model + `flatten`.
+- `src/vectoreyes/optimizer/faithful.py` — Stage 1: regions → `OptObject` list + true masks.
+- `src/vectoreyes/optimizer/gate.py` — coverage gate (`coverage_residual`, `gate_ok`).
+- `src/vectoreyes/optimizer/framework.py` — `optimize(objects, masks, passes)` runner.
+- `src/vectoreyes/optimizer/passes/primitives.py` — pass 2a.
+- `src/vectoreyes/optimizer/passes/clones.py` — pass 2b.
+- `src/vectoreyes/optimizer/passes/symmetry.py` — pass 2c.
+- `src/vectoreyes/optimizer/passes/simplify.py` — pass 2d.
 - `tests/optimizer/test_*.py` — per-unit tests.
 
 Reuse (do not duplicate): `Shape` (fit.py), `Fill`/`FlatFill`/`LinearGradientFill`/`RadialGradientFill` (candidate.py), `region_contours` (contour.py), `fit_path`/`recognize_primitive` (fit.py), `merge_surfaces` (surface_merge.py), `emit.shape_to_path_d`/`mirror_use`/`transform_path_d`/`path_svg` (emit.py), `symmetry` axis/test helpers (symmetry.py), `_fitcurve`/`rdp` (simplify).
@@ -40,7 +40,7 @@ Reuse (do not duplicate): `Shape` (fit.py), `Fill`/`FlatFill`/`LinearGradientFil
 ### Task 1: `OptObject` model + flatten
 
 **Files:**
-- Create: `src/vectormark/optimizer/__init__.py` (empty), `src/vectormark/optimizer/optobject.py`
+- Create: `src/vectoreyes/optimizer/__init__.py` (empty), `src/vectoreyes/optimizer/optobject.py`
 - Test: `tests/optimizer/test_optobject.py`
 
 **Interfaces:**
@@ -55,9 +55,9 @@ Reuse (do not duplicate): `Shape` (fit.py), `Fill`/`FlatFill`/`LinearGradientFil
 ```python
 import numpy as np
 from shapely.geometry import Polygon
-from vectormark.fit import Shape
-from vectormark.optimizer.optobject import to_polygon, flatten_points, OptObject
-from vectormark.candidate import FlatFill
+from vectoreyes.fit import Shape
+from vectoreyes.optimizer.optobject import to_polygon, flatten_points, OptObject
+from vectoreyes.candidate import FlatFill
 
 def test_to_polygon_circle_area_matches():
     circ = Shape("circle", {"cx": 50.0, "cy": 50.0, "r": 20.0})
@@ -78,7 +78,7 @@ def test_optobject_with_exact_refreshes_flat():
     assert abs(o2.flat.area - 200) < 1 and abs(o.flat.area - 100) < 1   # original unchanged
 ```
 
-- [ ] **Step 2: Run → FAIL** (`ModuleNotFoundError: vectormark.optimizer`).
+- [ ] **Step 2: Run → FAIL** (`ModuleNotFoundError: vectoreyes.optimizer`).
 
 - [ ] **Step 3: Implement** `optobject.py`:
 
@@ -166,7 +166,7 @@ class OptObject:
 ### Task 2: Stage-1 faithful vectorize → objects + true masks
 
 **Files:**
-- Create: `src/vectormark/optimizer/faithful.py`
+- Create: `src/vectoreyes/optimizer/faithful.py`
 - Test: `tests/optimizer/test_faithful.py`
 
 **Interfaces:**
@@ -178,8 +178,8 @@ class OptObject:
 
 ```python
 import numpy as np
-from vectormark.pipeline import Options
-from vectormark.optimizer.faithful import faithful_objects
+from vectoreyes.pipeline import Options
+from vectoreyes.optimizer.faithful import faithful_objects
 
 def _disk(h, w, cy, cx, r):
     yy, xx = np.ogrid[:h, :w]
@@ -211,7 +211,7 @@ def test_faithful_single_disk_one_object_path():
 ### Task 3: Coverage gate
 
 **Files:**
-- Create: `src/vectormark/optimizer/gate.py`
+- Create: `src/vectoreyes/optimizer/gate.py`
 - Test: `tests/optimizer/test_gate.py`
 
 **Interfaces:**
@@ -227,7 +227,7 @@ def test_faithful_single_disk_one_object_path():
 ```python
 import numpy as np
 from shapely.geometry import Point, Polygon
-from vectormark.optimizer.gate import coverage_residual, gate_ok, BUDGET
+from vectoreyes.optimizer.gate import coverage_residual, gate_ok, BUDGET
 
 def _disk_mask(h, w, cy, cx, r):
     yy, xx = np.ogrid[:h, :w]
@@ -258,7 +258,7 @@ def test_gate_rejects_wrong_shape():
 ### Task 4: Optimizer framework
 
 **Files:**
-- Create: `src/vectormark/optimizer/framework.py`
+- Create: `src/vectoreyes/optimizer/framework.py`
 - Test: `tests/optimizer/test_framework.py`
 
 **Interfaces:**
@@ -271,10 +271,10 @@ def test_gate_rejects_wrong_shape():
 
 ```python
 import numpy as np
-from vectormark.fit import Shape
-from vectormark.candidate import FlatFill
-from vectormark.optimizer.optobject import OptObject
-from vectormark.optimizer.framework import optimize, Proposal
+from vectoreyes.fit import Shape
+from vectoreyes.candidate import FlatFill
+from vectoreyes.optimizer.optobject import OptObject
+from vectoreyes.optimizer.framework import optimize, Proposal
 
 def _rect_obj(i, w, h):
     return OptObject(i, Shape("rect", {"x":0.0,"y":0.0,"w":float(w),"h":float(h)}), FlatFill("#000"), 0)
@@ -297,7 +297,7 @@ def test_framework_accepts_good_rejects_bad():
 
 ### Task 5: Pass 2a — primitives
 
-**Files:** Create `src/vectormark/optimizer/passes/__init__.py`, `passes/primitives.py`; Test `tests/optimizer/test_pass_primitives.py`.
+**Files:** Create `src/vectoreyes/optimizer/passes/__init__.py`, `passes/primitives.py`; Test `tests/optimizer/test_pass_primitives.py`.
 
 **Interfaces:**
 - Consumes: `recognize_primitive` (fit.py), `flatten_points` (T1), `Proposal`/`OptObject`.
@@ -356,7 +356,7 @@ def test_framework_accepts_good_rejects_bad():
 
 ### Task 9: Integration + corpus acceptance
 
-**Files:** Modify `src/vectormark/pipeline.py` (add an optimizer code path in `idealize`); Test `tests/optimizer/test_integration.py`.
+**Files:** Modify `src/vectoreyes/pipeline.py` (add an optimizer code path in `idealize`); Test `tests/optimizer/test_integration.py`.
 
 **Interfaces:**
 - Consumes: `faithful_objects` (T2), `optimize` (T4), the four passes (T5–T8), `emit` to serialize objects → SVG.

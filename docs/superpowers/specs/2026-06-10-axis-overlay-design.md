@@ -138,11 +138,11 @@ idealize(report=True)
 
 ## Files
 
-- Modify: `src/vectormark/pipeline.py` (`AxisLine`, `IdealizeReport.axes`,
+- Modify: `src/vectoreyes/pipeline.py` (`AxisLine`, `IdealizeReport.axes`,
   `_render_body` frame-axes, `idealize`/`_idealize_rectified` mapping,
   `_build_report`)
-- Modify: `src/vectormark/variants.py` (`_render_tile` injection,
+- Modify: `src/vectoreyes/variants.py` (`_render_tile` injection,
   `_axis_line_svg`, `compose_contact_sheet` `draw_axes`)
-- Modify: `src/vectormark/cli.py` (`--axes`)
+- Modify: `src/vectoreyes/cli.py` (`--axes`)
 - Test: `tests/test_pipeline_report.py` (axes cases), `tests/test_variants.py`
   (injection + contact sheet + CLI)

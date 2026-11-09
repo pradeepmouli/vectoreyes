@@ -19,10 +19,10 @@
 
 ## File Structure
 
-- **New** `src/vectormark/fill_fit.py` — `fit_fill(mask, rgb, *, flat_hex)`: the per-shape fill decision (flat vs parametric gradient). Pure, no pipeline imports beyond gradient/color helpers.
-- **New** `src/vectormark/surface_merge.py` — `seam_is_soft(...)` and `merge_surfaces(...)`: the source-edge seam test and the fixed-point merge pass. Pure.
-- **Modify** `src/vectormark/pipeline.py` — `_render_body`/`build_candidates`: run the flat shape pass, fit fills, merge surfaces, attach fitted fills. Remove the `detect_gradients` call.
-- **Retire** in `src/vectormark/gradient.py` — `detect_gradients`, `_component_fill`, `_expand_footprint`, `merge_components`, `_group_is_fillable` are removed from the main path (Task 4) and deleted once unreferenced (Task 4 step). `_best_parametric` and its helpers stay.
+- **New** `src/vectoreyes/fill_fit.py` — `fit_fill(mask, rgb, *, flat_hex)`: the per-shape fill decision (flat vs parametric gradient). Pure, no pipeline imports beyond gradient/color helpers.
+- **New** `src/vectoreyes/surface_merge.py` — `seam_is_soft(...)` and `merge_surfaces(...)`: the source-edge seam test and the fixed-point merge pass. Pure.
+- **Modify** `src/vectoreyes/pipeline.py` — `_render_body`/`build_candidates`: run the flat shape pass, fit fills, merge surfaces, attach fitted fills. Remove the `detect_gradients` call.
+- **Retire** in `src/vectoreyes/gradient.py` — `detect_gradients`, `_component_fill`, `_expand_footprint`, `merge_components`, `_group_is_fillable` are removed from the main path (Task 4) and deleted once unreferenced (Task 4 step). `_best_parametric` and its helpers stay.
 - **Test** `tests/test_fill_fit.py`, `tests/test_surface_merge.py`, `tests/test_pipeline_decoupled.py`.
 
 ---
@@ -30,7 +30,7 @@
 ### Task 1: `fit_fill` — per-shape fill decision
 
 **Files:**
-- Create: `src/vectormark/fill_fit.py`
+- Create: `src/vectoreyes/fill_fit.py`
 - Test: `tests/test_fill_fit.py`
 
 **Interfaces:**
@@ -43,8 +43,8 @@ Create `tests/test_fill_fit.py`:
 
 ```python
 import numpy as np
-from vectormark.fill_fit import fit_fill
-from vectormark.candidate import FlatFill, LinearGradientFill
+from vectoreyes.fill_fit import fit_fill
+from vectoreyes.candidate import FlatFill, LinearGradientFill
 
 
 def _solid(h=40, w=40, color=(30, 120, 200)):
@@ -86,11 +86,11 @@ def test_flat_hex_used_only_for_flat_decision():
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `uv run pytest tests/test_fill_fit.py -v`
-Expected: FAIL — `vectormark.fill_fit` does not exist.
+Expected: FAIL — `vectoreyes.fill_fit` does not exist.
 
 - [ ] **Step 3: Implement `fit_fill`**
 
-Create `src/vectormark/fill_fit.py`:
+Create `src/vectoreyes/fill_fit.py`:
 
 ```python
 # SPDX-License-Identifier: MIT
@@ -132,7 +132,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/fill_fit.py tests/test_fill_fit.py
+git add src/vectoreyes/fill_fit.py tests/test_fill_fit.py
 git commit -m "feat(fill): fit_fill — per-shape flat/gradient fill decision
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -143,7 +143,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: seam tests — gradient continuity (B) + source-edge softness (A)
 
 **Files:**
-- Create: `src/vectormark/surface_merge.py`
+- Create: `src/vectoreyes/surface_merge.py`
 - Test: `tests/test_surface_merge.py`
 
 The merge (Task 3) is a hybrid: **B is primary** — when both regions fit gradients, merge if one's color at the seam matches the other's within a ΔE (lead-meets-tail). **A is the fallback** — when a narrow region devolved to a flat fill (too little span to fit a gradient), merge on source-seam softness instead. This task builds both predicates.
@@ -162,8 +162,8 @@ Create `tests/test_surface_merge.py`:
 
 ```python
 import numpy as np
-from vectormark.surface_merge import seam_is_soft, gradients_continuous
-from vectormark.fill_fit import fit_fill
+from vectoreyes.surface_merge import seam_is_soft, gradients_continuous
+from vectoreyes.fill_fit import fit_fill
 
 
 def _ramp(h, w, c0, c1):
@@ -233,11 +233,11 @@ def test_gradient_meets_flat_is_not_continuous():
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `uv run pytest tests/test_surface_merge.py -k "soft or continuous" -v`
-Expected: FAIL — `vectormark.surface_merge` does not exist.
+Expected: FAIL — `vectoreyes.surface_merge` does not exist.
 
 - [ ] **Step 3: Implement the seam test**
 
-Create `src/vectormark/surface_merge.py`:
+Create `src/vectoreyes/surface_merge.py`:
 
 ```python
 # SPDX-License-Identifier: MIT
@@ -344,7 +344,7 @@ Expected: PASS. (If `test_within_ramp_seam_is_soft` or `test_two_gradient_halves
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/surface_merge.py tests/test_surface_merge.py
+git add src/vectoreyes/surface_merge.py tests/test_surface_merge.py
 git commit -m "feat(merge): seam_is_soft (A) + gradients_continuous (B) seam predicates
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -355,7 +355,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 3: `merge_surfaces` — hybrid gradient-continuity (B) / soft-seam (A) merge
 
 **Files:**
-- Modify: `src/vectormark/surface_merge.py`
+- Modify: `src/vectoreyes/surface_merge.py`
 - Test: `tests/test_surface_merge.py`
 
 **Interfaces:**
@@ -367,10 +367,10 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 Add to `tests/test_surface_merge.py`:
 
 ```python
-from vectormark.types import Region
-from vectormark.surface_merge import merge_surfaces
-from vectormark.fill_fit import fit_fill as _ff
-from vectormark.candidate import LinearGradientFill
+from vectoreyes.types import Region
+from vectoreyes.surface_merge import merge_surfaces
+from vectoreyes.fill_fit import fit_fill as _ff
+from vectoreyes.candidate import LinearGradientFill
 
 
 def _region(label, mask, hex_):
@@ -435,7 +435,7 @@ Expected: FAIL — `merge_surfaces` not defined.
 
 - [ ] **Step 3: Implement `merge_surfaces`**
 
-Append to `src/vectormark/surface_merge.py` (add `from .types import Region` and `from .fill_fit import fit_fill` at the top — `LinearGradientFill`/`RadialGradientFill` are already imported in Task 2. `fit_fill` imports from `gradient`, and `surface_merge` does not import `pipeline`, so there is no cycle):
+Append to `src/vectoreyes/surface_merge.py` (add `from .types import Region` and `from .fill_fit import fit_fill` at the top — `LinearGradientFill`/`RadialGradientFill` are already imported in Task 2. `fit_fill` imports from `gradient`, and `surface_merge` does not import `pipeline`, so there is no cycle):
 
 ```python
 _GRADIENT = (LinearGradientFill, RadialGradientFill)
@@ -488,7 +488,7 @@ Expected: PASS (all of Task 2 + Task 3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/surface_merge.py tests/test_surface_merge.py
+git add src/vectoreyes/surface_merge.py tests/test_surface_merge.py
 git commit -m "feat(merge): merge_surfaces — hybrid gradient-continuity (B) / soft-seam (A)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -499,8 +499,8 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 4: Rewire the pipeline; retire the footprint path
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py` (`_render_body`, `build_candidates`)
-- Modify: `src/vectormark/gradient.py` (delete the retired functions once unreferenced)
+- Modify: `src/vectoreyes/pipeline.py` (`_render_body`, `build_candidates`)
+- Modify: `src/vectoreyes/gradient.py` (delete the retired functions once unreferenced)
 - Test: `tests/test_pipeline_decoupled.py`
 
 **Interfaces:**
@@ -517,7 +517,7 @@ Create `tests/test_pipeline_decoupled.py`:
 ```python
 import re
 import numpy as np
-from vectormark.pipeline import idealize, Options
+from vectoreyes.pipeline import idealize, Options
 
 
 def _wing_with_dot():
@@ -557,7 +557,7 @@ Expected: FAIL — the wing currently emits stacked flat bands (no `<linearGradi
 
 - [ ] **Step 3: Rewire `build_candidates` to accept fitted fills**
 
-In `src/vectormark/pipeline.py`, change `build_candidates`'s signature to drop `gradient_fills` and add `fills` (ensure `Fill` is imported: `from .candidate import ... Fill`):
+In `src/vectoreyes/pipeline.py`, change `build_candidates`'s signature to drop `gradient_fills` and add `fills` (ensure `Fill` is imported: `from .candidate import ... Fill`):
 
 ```python
 def build_candidates(
@@ -580,7 +580,7 @@ Delete the entire trailing `for footprint, model in gradient_fills:` loop (pipel
 
 - [ ] **Step 4: Rewire `_render_body` to fit + merge before classify**
 
-In `src/vectormark/pipeline.py` `_render_body`, replace the per-component block
+In `src/vectoreyes/pipeline.py` `_render_body`, replace the per-component block
 
 ```python
         gradient_fills: list[tuple[Region, dict]] = []
@@ -637,14 +637,14 @@ Expected: gradient-related tests in `tests/test_gradient.py` that asserted the O
 
 - [ ] **Step 6: Delete the retired functions**
 
-Once `rg -n "detect_gradients|_component_fill|_expand_footprint|merge_components|_group_is_fillable" src/ tests/` shows no remaining non-definition references, delete those functions from `src/vectormark/gradient.py`. Keep `_best_parametric`, `_model_t`, `_interp_stops_rgb`, `_per_pixel_delta_e`, `_stop_span`, the `_fit_*` searched fitters, and the constants. Re-run `uv run pytest -q`.
+Once `rg -n "detect_gradients|_component_fill|_expand_footprint|merge_components|_group_is_fillable" src/ tests/` shows no remaining non-definition references, delete those functions from `src/vectoreyes/gradient.py`. Keep `_best_parametric`, `_model_t`, `_interp_stops_rgb`, `_per_pixel_delta_e`, `_stop_span`, the `_fit_*` searched fitters, and the constants. Re-run `uv run pytest -q`.
 
 Expected: PASS (full suite green after test updates).
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py src/vectormark/gradient.py tests/
+git add src/vectoreyes/pipeline.py src/vectoreyes/gradient.py tests/
 git commit -m "feat(pipeline): decouple fill from shape — fit+merge surfaces, retire footprint path
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -674,7 +674,7 @@ import glob
 import numpy as np
 import pytest
 from PIL import Image
-from vectormark.pipeline import idealize, Options, _flatten_on_white
+from vectoreyes.pipeline import idealize, Options, _flatten_on_white
 
 CORPUS = sorted(glob.glob(os.path.expanduser("scratch/real-logos/*.png")))
 pytestmark = pytest.mark.skipif(not CORPUS, reason="corpus not present")
@@ -698,7 +698,7 @@ Then, for the named gradient logos, capture element + gradient counts to a scrat
 uv run python - <<'PY'
 import glob, re, numpy as np
 from PIL import Image
-from vectormark.pipeline import idealize, Options, _flatten_on_white
+from vectoreyes.pipeline import idealize, Options, _flatten_on_white
 for p in ["firefox","instagram","pokeball","gdrive"]:
     import os
     f=f"scratch/real-logos/{p}.png"
@@ -722,7 +722,7 @@ Render the V-bird through the pipeline and confirm by eye (a scratch PNG, not co
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/test_decoupled_corpus.py src/vectormark/surface_merge.py src/vectormark/fill_fit.py
+git add tests/test_decoupled_corpus.py src/vectoreyes/surface_merge.py src/vectoreyes/fill_fit.py
 git commit -m "test(decoupled): corpus validation + calibrated seam tolerances
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

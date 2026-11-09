@@ -13,7 +13,7 @@
 
 **Architecture:** A pure drawing_trace.py produces the stable trace artifact. drawing_state.py owns the session-scoped version tree. drawing_plan.py parses and validates agent input, and drawing_refine.py creates scenes from existing Shape, Fill, and SVG emitters. mcp_server.py only resolves images, injects session context, and maps domain results to MCP responses.
 
-**Tech Stack:** Python 3.12+, numpy, scipy, scikit-image, Pillow, skia-python, FastMCP, Pydantic through vectormark[server], pytest.
+**Tech Stack:** Python 3.12+, numpy, scipy, scikit-image, Pillow, skia-python, FastMCP, Pydantic through vectoreyes[server], pytest.
 
 ## Global Constraints
 
@@ -33,11 +33,11 @@
 
 | File | Responsibility |
 | --- | --- |
-| src/vectormark/drawing_trace.py | Trace types, deterministic Python TraceEngine, command serialization, and region map. |
-| src/vectormark/drawing_state.py | Session-scoped drawing store, idle expiry, and immutable version tree. |
-| src/vectormark/drawing_plan.py | Plan dataclasses, parsing, and JSON-pointer validation errors. |
-| src/vectormark/drawing_refine.py | Primitive/path fitting, fills, paint order, SVG, and report generation. |
-| src/vectormark/mcp_server.py | Pydantic MCP inputs, auto/interactive dispatch, and trace_drawing/refine_drawing handlers. |
+| src/vectoreyes/drawing_trace.py | Trace types, deterministic Python TraceEngine, command serialization, and region map. |
+| src/vectoreyes/drawing_state.py | Session-scoped drawing store, idle expiry, and immutable version tree. |
+| src/vectoreyes/drawing_plan.py | Plan dataclasses, parsing, and JSON-pointer validation errors. |
+| src/vectoreyes/drawing_refine.py | Primitive/path fitting, fills, paint order, SVG, and report generation. |
+| src/vectoreyes/mcp_server.py | Pydantic MCP inputs, auto/interactive dispatch, and trace_drawing/refine_drawing handlers. |
 | tests/test_drawing_trace.py | Trace options, IDs, paths, and region-map tests. |
 | tests/test_drawing_state.py | Session isolation, TTL, and version-tree tests. |
 | tests/test_drawing_plan.py | DSL parsing and validation tests. |
@@ -48,9 +48,9 @@
 
 **Files:**
 
-- Create: src/vectormark/drawing_trace.py
+- Create: src/vectoreyes/drawing_trace.py
 - Create: tests/test_drawing_trace.py
-- Modify: src/vectormark/pipeline.py only if attach_coverage_field needs a reusable public helper.
+- Modify: src/vectoreyes/pipeline.py only if attach_coverage_field needs a reusable public helper.
 
 **Interfaces:**
 
@@ -86,7 +86,7 @@ def test_region_map_labels_every_region():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: PYTHONPATH=src .venv/bin/python -m pytest tests/test_drawing_trace.py -v  
-Expected: FAIL with ModuleNotFoundError for vectormark.drawing_trace.
+Expected: FAIL with ModuleNotFoundError for vectoreyes.drawing_trace.
 
 - [ ] **Step 3: Write the minimal trace implementation**
 
@@ -149,7 +149,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ~~~bash
-git add src/vectormark/drawing_trace.py src/vectormark/pipeline.py tests/test_drawing_trace.py
+git add src/vectoreyes/drawing_trace.py src/vectoreyes/pipeline.py tests/test_drawing_trace.py
 git commit -m "feat: add stable drawing trace artifact"
 ~~~
 
@@ -157,7 +157,7 @@ git commit -m "feat: add stable drawing trace artifact"
 
 **Files:**
 
-- Create: src/vectormark/drawing_state.py
+- Create: src/vectoreyes/drawing_state.py
 - Create: tests/test_drawing_state.py
 
 **Interfaces:**
@@ -195,7 +195,7 @@ def test_store_rejects_cross_session_and_expired_drawings(fake_clock):
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: PYTHONPATH=src .venv/bin/python -m pytest tests/test_drawing_state.py -v  
-Expected: FAIL with ModuleNotFoundError for vectormark.drawing_state.
+Expected: FAIL with ModuleNotFoundError for vectoreyes.drawing_state.
 
 - [ ] **Step 3: Write the minimal state implementation**
 
@@ -240,7 +240,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ~~~bash
-git add src/vectormark/drawing_state.py tests/test_drawing_state.py
+git add src/vectoreyes/drawing_state.py tests/test_drawing_state.py
 git commit -m "feat: store branching drawing versions"
 ~~~
 
@@ -248,7 +248,7 @@ git commit -m "feat: store branching drawing versions"
 
 **Files:**
 
-- Create: src/vectormark/drawing_plan.py
+- Create: src/vectoreyes/drawing_plan.py
 - Create: tests/test_drawing_plan.py
 
 **Interfaces:**
@@ -261,7 +261,7 @@ git commit -m "feat: store branching drawing versions"
 ~~~python
 def test_plan_accepts_path_group_fit_break_and_close():
     plan = parse_plan({
-        "version": "vectormark.plan.v1", "drawing_id": "drw_x",
+        "version": "vectoreyes.plan.v1", "drawing_id": "drw_x",
         "base_version": "v0", "ops": [{
             "op": "set_geometry", "target": "r1",
             "geometry": {"type": "path", "ops": [
@@ -287,14 +287,14 @@ def test_plan_reports_pointer_for_non_contiguous_path_commands():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: PYTHONPATH=src .venv/bin/python -m pytest tests/test_drawing_plan.py -v  
-Expected: FAIL with ModuleNotFoundError for vectormark.drawing_plan.
+Expected: FAIL with ModuleNotFoundError for vectoreyes.drawing_plan.
 
 - [ ] **Step 3: Write the parser and validator**
 
 ~~~python
 @dataclass(frozen=True)
 class DrawingPlan:
-    version: Literal["vectormark.plan.v1"]
+    version: Literal["vectoreyes.plan.v1"]
     drawing_id: str
     base_version: str
     label: str | None
@@ -327,7 +327,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ~~~bash
-git add src/vectormark/drawing_plan.py tests/test_drawing_plan.py
+git add src/vectoreyes/drawing_plan.py tests/test_drawing_plan.py
 git commit -m "feat: validate drawing refinement plans"
 ~~~
 
@@ -335,9 +335,9 @@ git commit -m "feat: validate drawing refinement plans"
 
 **Files:**
 
-- Create: src/vectormark/drawing_refine.py
+- Create: src/vectoreyes/drawing_refine.py
 - Create: tests/test_drawing_refine.py
-- Modify: src/vectormark/fit.py only to add explicit circle, ellipse, rect, or polygon fit helpers missing from the current API.
+- Modify: src/vectoreyes/fit.py only to add explicit circle, ellipse, rect, or polygon fit helpers missing from the current API.
 
 **Interfaces:**
 
@@ -375,7 +375,7 @@ def test_refine_uses_declared_z_order():
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: PYTHONPATH=src .venv/bin/python -m pytest tests/test_drawing_refine.py -v  
-Expected: FAIL with ModuleNotFoundError for vectormark.drawing_refine.
+Expected: FAIL with ModuleNotFoundError for vectoreyes.drawing_refine.
 
 - [ ] **Step 3: Write the scene executor**
 
@@ -409,7 +409,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ~~~bash
-git add src/vectormark/drawing_refine.py src/vectormark/fit.py tests/test_drawing_refine.py
+git add src/vectoreyes/drawing_refine.py src/vectoreyes/fit.py tests/test_drawing_refine.py
 git commit -m "feat: execute drawing refinement plans"
 ~~~
 
@@ -417,7 +417,7 @@ git commit -m "feat: execute drawing refinement plans"
 
 **Files:**
 
-- Modify: src/vectormark/mcp_server.py
+- Modify: src/vectoreyes/mcp_server.py
 - Modify: tests/test_mcp_server.py
 
 **Interfaces:**
@@ -430,7 +430,7 @@ git commit -m "feat: execute drawing refinement plans"
 ~~~python
 def test_stdio_trace_then_create_sibling_versions():
     async def workflow():
-        params = StdioServerParameters(command="uv", args=["run", "vectormark-mcp"])
+        params = StdioServerParameters(command="uv", args=["run", "vectoreyes-mcp"])
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -491,7 +491,7 @@ class TraceDrawingOptions(BaseModel):
     preprocess: PreprocessOpts = Field(default_factory=PreprocessOpts)
 
 class RefinementPlanInput(BaseModel):
-    version: Literal["vectormark.plan.v1"]
+    version: Literal["vectoreyes.plan.v1"]
     drawing_id: str = Field(min_length=1)
     base_version: str = Field(pattern=r"^v\d+(?:\.\d+)*$")
     label: str | None = Field(None, max_length=200)
@@ -513,7 +513,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ~~~bash
-git add src/vectormark/mcp_server.py tests/test_mcp_server.py
+git add src/vectoreyes/mcp_server.py tests/test_mcp_server.py
 git commit -m "feat(mcp): add trace and branching refine tools"
 ~~~
 

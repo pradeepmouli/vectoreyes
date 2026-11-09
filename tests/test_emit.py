@@ -2,18 +2,18 @@ import re
 
 import numpy as np
 
-from vectormark.fit import Shape
-from vectormark.types import Axis
-from vectormark.candidate import FlatFill
-from vectormark.emit import (
-    optimizer_objects_to_svg,
+from vectoreyes.fit import Shape
+from vectoreyes.types import Axis
+from vectoreyes.candidate import FlatFill
+from vectoreyes.emit import (
+    refinement_objects_to_svg,
     resolve_use_shape,
     shape_to_svg,
     shape_to_path_d,
     mirror_use,
     render_svg_doc,
 )
-from vectormark.optimizer.vector_region import VectorRegion
+from vectoreyes.refinement.region_sample import RegionSample
 from tests._render import render_svg
 
 
@@ -50,7 +50,7 @@ def test_render_svg_doc_wraps_with_viewbox():
 
 
 def test_shape_to_path_d_converts_basic_shapes():
-    from vectormark.emit import shape_to_path_d
+    from vectoreyes.emit import shape_to_path_d
     rect = shape_to_path_d(Shape("rect", {"x": 5, "y": 6, "w": 20, "h": 10}))
     assert rect.startswith("M") and "L" in rect and rect.rstrip().endswith("Z")
     poly = shape_to_path_d(Shape("polygon", {"points": [(0, 0), (4, 0), (2, 4)]}))
@@ -89,14 +89,14 @@ def test_resolve_use_shape_maps_object_id_to_emitted_id():
     assert "href_obj_id" not in shape.params
 
 
-def test_optimizer_objects_to_svg_resolves_object_id_hrefs():
-    source = VectorRegion(
+def test_refinement_objects_to_svg_resolves_object_id_hrefs():
+    source = RegionSample(
         10,
         Shape("rect", {"x": 0.0, "y": 0.0, "w": 5.0, "h": 5.0}),
         FlatFill("#111111"),
         0,
     )
-    clone = VectorRegion(
+    clone = RegionSample(
         20,
         Shape("use", {"href_obj_id": 10, "transform": (1.0, 0.0, 0.0, 1.0, 8.0, 0.0), "fill": "#222222"}),
         FlatFill("#222222"),
@@ -104,7 +104,7 @@ def test_optimizer_objects_to_svg_resolves_object_id_hrefs():
         footprint=source.footprint,
     )
 
-    body = optimizer_objects_to_svg([clone, source])
+    body = refinement_objects_to_svg([clone, source])
 
     assert body[0].startswith('<rect id="s0"')
     assert body[1].startswith('<use id="s1"')
@@ -119,7 +119,7 @@ def test_shape_to_path_d_rejects_use_without_source_geometry():
 
 
 def test_reflect_path_d_mirrors_x_about_axis():
-    from vectormark.emit import reflect_path_d
+    from vectoreyes.emit import reflect_path_d
     out = reflect_path_d("M0 0 L10 0 L10 4 Z", axis_x=5.0)
     # x' = 2*5 - x: 0->10, 10->0 ; y unchanged
     nums = [float(t) for t in re.findall(r"-?\d+\.?\d*", out)]
@@ -128,7 +128,7 @@ def test_reflect_path_d_mirrors_x_about_axis():
 
 
 def test_transform_path_d_flips_arc_sweep_under_reflection():
-    from vectormark.emit import transform_path_d
+    from vectoreyes.emit import transform_path_d
 
     out = transform_path_d("M0 0 A5 5 0 0 1 10 0 Z", (-1.0, 0.0, 0.0, 1.0, 10.0, 0.0))
 
@@ -136,7 +136,7 @@ def test_transform_path_d_flips_arc_sweep_under_reflection():
 
 
 def test_transform_path_d_reflects_rotated_arc_axis():
-    from vectormark.emit import transform_path_d
+    from vectoreyes.emit import transform_path_d
 
     out = transform_path_d("M0 0 A5 3 30 0 1 10 0 Z", (-1.0, 0.0, 0.0, 1.0, 10.0, 0.0))
 
@@ -164,7 +164,7 @@ def test_annulus_renders_hollow_center():
 
 
 def test_pattern_image_def_emits_stretched_image():
-    from vectormark.emit import pattern_image_def
+    from vectoreyes.emit import pattern_image_def
     s = pattern_image_def("g0", 10.0, 20.0, 100.0, 80.0, "AAAA")
     assert 'id="g0"' in s and 'patternUnits="userSpaceOnUse"' in s
     assert 'width="100" height="80"' in s
@@ -175,14 +175,14 @@ def test_pattern_image_def_emits_stretched_image():
 
 
 def test_pattern_image_def_emits_transform_matrix():
-    from vectormark.emit import pattern_image_def
+    from vectoreyes.emit import pattern_image_def
     s = pattern_image_def("g1", 0.0, 0.0, 4.0, 4.0, "BBBB", transform=(1.0, 0.0, 0.0, 1.0, 5.0, 6.0))
     assert 'patternTransform="matrix(1 0 0 1 5 6)"' in s
 
 
 def test_resolve_fill_registers_pattern_for_rasterfill():
-    from vectormark.candidate import RasterFill
-    from vectormark.emit import resolve_fill
+    from vectoreyes.candidate import RasterFill
+    from vectoreyes.emit import resolve_fill
     defs = []
     out = resolve_fill(RasterFill({"x": 0.0, "y": 0.0, "w": 8.0, "h": 8.0}, "CCCC"), defs)
     assert out == "url(#g0)"
@@ -190,8 +190,8 @@ def test_resolve_fill_registers_pattern_for_rasterfill():
 
 
 def test_resolve_fill_rasterfill_geometry_override():
-    from vectormark.candidate import RasterFill
-    from vectormark.emit import resolve_fill
+    from vectoreyes.candidate import RasterFill
+    from vectoreyes.emit import resolve_fill
     defs = []
     out = resolve_fill(RasterFill({"x": 0.0, "y": 0.0, "w": 8.0, "h": 8.0}, "CCCC"),
                        defs, geometry={"x": 5.0, "y": 5.0, "w": 16.0, "h": 16.0})

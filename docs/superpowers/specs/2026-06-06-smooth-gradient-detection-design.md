@@ -52,7 +52,7 @@ Rejected alternatives (all empirically false-positive-prone or unsound):
 
 ## Architecture & placement
 
-All new logic lives in `src/vectormark/gradient.py`, inside `detect_gradients`, running **after**
+All new logic lives in `src/vectoreyes/gradient.py`, inside `detect_gradients`, running **after**
 the existing band-grouping loop on the **remaining** (unconsumed) regions. A mark is realistically
 either posterized or smooth, so the two paths compose without overlap: band-grouping consumes
 posterized ramps first; whatever remains is tested once as a smooth silhouette.

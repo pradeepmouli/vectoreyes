@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "description": "Reference candidates discovered on Wikimedia Commons; not the missing original raster download manifest. Titles identify variants, not approval or verified original authorship.",
+  "entries": [
+    {"name": "apple_music", "title": "File:Apple Music icon.svg"},
+    {"name": "appstore", "title": "File:App Store (iOS).svg"},
+    {"name": "asana", "title": "File:Asana logo.svg"},
+    {"name": "burger_king", "title": "File:Burger King 2020.svg"},
+    {"name": "dropbox", "title": "File:Dropbox Icon.svg"},
+    {"name": "firefox", "title": "File:Firefox logo, 2019.svg"},
+    {"name": "gdrive", "title": "File:Google Drive icon (2020).svg"},
+    {"name": "icloud", "title": "File:ICloud logo.svg"},
+    {"name": "instagram", "title": "File:Instagram logo 2016.svg"},
+    {"name": "mastercard", "title": "File:Mastercard-logo.svg"},
+    {"name": "microsoft", "title": "File:Microsoft logo (2012).svg"},
+    {"name": "photoshop", "title": "File:Adobe Photoshop CC icon.svg"},
+    {"name": "pinterest", "title": "File:Pinterest.svg"},
+    {"name": "pokeball", "title": "File:Poké Ball.svg"},
+    {"name": "sketch", "title": "File:Sketch Logo.svg"},
+    {"name": "slack", "title": "File:Slack icon 2019.svg"},
+    {"name": "telegram", "title": "File:Telegram 2019 Logo.svg"},
+    {"name": "vimeo", "title": "File:Vimeo Logo.svg"},
+    {"name": "visa", "title": "File:Visa Inc. logo (2005–2014).svg"}
+  ],
+  "unresolved": [
+    {"name": "daikonic", "reason": "Custom artwork; existing geometric reconstruction is present as a draft, not an original source."},
+    {"name": "radish", "reason": "Custom artwork; no known original SVG."},
+    {"name": "settir", "reason": "Custom artwork; no known original SVG."},
+    {"name": "vbird", "reason": "Custom artwork; no known original SVG."},
+    {"name": "telegram_final", "reason": "Alternate corpus artwork; verify its relationship to the Telegram source before assigning a reference."}
+  ]
+}

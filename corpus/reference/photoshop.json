@@ -1,0 +1,49 @@
+{
+  "entry": "photoshop",
+  "svg": "photoshop.svg",
+  "revision": 1,
+  "sha256": "4e8a55358541d6acf03c0a25b1f708e1378093c7b79e331200ea23997071e127",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Adobe_Photoshop_CC_icon.svg",
+    "title": "File:Adobe Photoshop CC icon.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/a/af/Adobe_Photoshop_CC_icon.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2020-06-16T07:36:17Z",
+    "upstream_sha1": "ea8f4a123d347cb904048f42b4eb1358914b1303",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Adobe Inc.",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://www.adobe.com/content/dam/acom/one-console/icons_rebrand/ps_appicon.svg\">https://www.adobe.com/content/dam/acom/one-console/icons_rebrand/ps_appicon.svg</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      240.0,
+      234.0
+    ],
+    "width": null,
+    "height": null
+  },
+  "raster": {
+    "path": "../input/photoshop.png",
+    "sha256": "ae63032afe127a2a2407fe10cfc6e1ca24e29879f91d55ccee86eb969852674c"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

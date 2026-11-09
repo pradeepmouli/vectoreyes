@@ -4,7 +4,7 @@ bar; flat and non-ramp inputs stay flat (no <defs>)."""
 
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import render_svg, mean_delta_e
 
 

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Rework the vectormark MCP server to a file/artifact-first `idealize_logo({image, options})` that resolves an image reference to bytes server-side, preprocesses it, runs the in-process pipeline, and returns SVG + diagnostics + a best-effort preview.
+**Goal:** Rework the vectoreyes MCP server to a file/artifact-first `idealize_logo({image, options})` that resolves an image reference to bytes server-side, preprocesses it, runs the in-process pipeline, and returns SVG + diagnostics + a best-effort preview.
 
-**Architecture:** A new pure `src/vectormark/mcp_image.py` (resolve_image / preprocess_image / svg_output_facts / errors / limits — no MCP imports, unit-testable) does the heavy lifting. `mcp_server.py` adds the file-first `idealize_logo` tool (marked `openai/fileParams`), updates `render_idealized_logo` to take a full result, and demotes the base64 tool to a deprecated fallback.
+**Architecture:** A new pure `src/vectoreyes/mcp_image.py` (resolve_image / preprocess_image / svg_output_facts / errors / limits — no MCP imports, unit-testable) does the heavy lifting. `mcp_server.py` adds the file-first `idealize_logo` tool (marked `openai/fileParams`), updates `render_idealized_logo` to take a full result, and demotes the base64 tool to a deprecated fallback.
 
 **Tech Stack:** Python 3.12+, FastMCP (`mcp>=1.13`), Pillow, numpy, httpx (transitive via mcp), pytest.
 
@@ -14,10 +14,10 @@
 - `mcp_image.py` is pure (no `mcp`/FastMCP imports) so it unit-tests without a server.
 - Limits (module constants, exact values): `MAX_INPUT_BYTES = 20*1024*1024`, `MAX_DIMENSION_PX = 4096`, `DEFAULT_MAX_SIZE_PX = 1024`, `DEFAULT_COLORS = 16`.
 - Allowed mimes: `image/png`, `image/jpeg`, `image/webp`.
-- Error codes (exact): `IMAGE_UNRESOLVABLE`, `UNSUPPORTED_IMAGE_TYPE`, `IMAGE_TOO_LARGE`, `URL_NOT_ALLOWED`, `VECTORMARK_FAILED`.
+- Error codes (exact): `IMAGE_UNRESOLVABLE`, `UNSUPPORTED_IMAGE_TYPE`, `IMAGE_TOO_LARGE`, `URL_NOT_ALLOWED`, `VECTOREYES_FAILED`.
 - Security: `path` resolution is **stdio/local-trust only** (rejected when `local_trust=False`); `url` over HTTP is SSRF-guarded (https-only, reject loopback/private/link-local/metadata IPs); `download_url`/`data_uri`/`base64` are remote-safe. Preserve the existing `_LOCAL_TRUST` gate.
 - Preprocess defaults: `crop_to_content=True`, `max_size_px=1024`, `preserve_transparency=True`, `quantize=False`.
-- Reuse `vectormark.pipeline.idealize` / `Options` / `_flatten_on_white`; do NOT shell out.
+- Reuse `vectoreyes.pipeline.idealize` / `Options` / `_flatten_on_white`; do NOT shell out.
 - Commit trailer exactly `Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>`, no other trailer.
 
 ---
@@ -25,7 +25,7 @@
 ### Task 1: `mcp_image.resolve_image` — reference → bytes
 
 **Files:**
-- Create: `src/vectormark/mcp_image.py`
+- Create: `src/vectoreyes/mcp_image.py`
 - Test: `tests/test_mcp_image.py`
 
 **Interfaces:**
@@ -45,7 +45,7 @@ import io
 import numpy as np
 import pytest
 from PIL import Image
-from vectormark.mcp_image import resolve_image, ImageError, MAX_INPUT_BYTES
+from vectoreyes.mcp_image import resolve_image, ImageError, MAX_INPUT_BYTES
 
 
 def _png_bytes(size=(32, 32), color=(20, 120, 200)):
@@ -108,11 +108,11 @@ def test_resolve_none_is_unresolvable():
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `uv run pytest tests/test_mcp_image.py -k resolve -v`
-Expected: FAIL — `vectormark.mcp_image` does not exist.
+Expected: FAIL — `vectoreyes.mcp_image` does not exist.
 
 - [ ] **Step 3: Implement `mcp_image.py` (resolver half)**
 
-Create `src/vectormark/mcp_image.py`:
+Create `src/vectoreyes/mcp_image.py`:
 
 ```python
 # SPDX-License-Identifier: MIT
@@ -257,7 +257,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/mcp_image.py tests/test_mcp_image.py
+git add src/vectoreyes/mcp_image.py tests/test_mcp_image.py
 git commit -m "feat(mcp): resolve_image — file-ref -> validated bytes with security gating
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -268,11 +268,11 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: `preprocess_image` + `svg_output_facts`
 
 **Files:**
-- Modify: `src/vectormark/mcp_image.py`
+- Modify: `src/vectoreyes/mcp_image.py`
 - Test: `tests/test_mcp_image.py`
 
 **Interfaces:**
-- Consumes: `vectormark.pipeline._flatten_on_white`, `MAX_*`/`DEFAULT_*` constants.
+- Consumes: `vectoreyes.pipeline._flatten_on_white`, `MAX_*`/`DEFAULT_*` constants.
 - Produces:
   - `@dataclass ProcessedMeta` `{width, height, cropped, resized, transparent, quantized}`.
   - `preprocess_image(data: bytes, *, crop_to_content=True, max_size_px=DEFAULT_MAX_SIZE_PX, preserve_transparency=True, quantize=False) -> tuple[np.ndarray, ProcessedMeta]` — returns an (H,W,3) uint8 RGB array (composited on white) ready for `idealize`.
@@ -289,7 +289,7 @@ def _rgba(size, color, alpha):
 
 
 def test_preprocess_crops_transparent_margin_and_keeps_size():
-    from vectormark.mcp_image import preprocess_image
+    from vectoreyes.mcp_image import preprocess_image
     im = Image.new("RGBA", (100, 100), (0, 0, 0, 0))           # all transparent
     im.paste((200, 30, 30, 255), (30, 30, 70, 70))            # a 40x40 opaque block
     buf = io.BytesIO(); im.save(buf, format="PNG")
@@ -300,7 +300,7 @@ def test_preprocess_crops_transparent_margin_and_keeps_size():
 
 
 def test_preprocess_downscales_only_when_larger():
-    from vectormark.mcp_image import preprocess_image
+    from vectoreyes.mcp_image import preprocess_image
     big = io.BytesIO(); Image.new("RGB", (2000, 1000), (10, 20, 30)).save(big, format="PNG")
     arr, meta = preprocess_image(big.getvalue(), crop_to_content=False, max_size_px=1024)
     assert meta.resized is True and max(meta.width, meta.height) == 1024
@@ -310,7 +310,7 @@ def test_preprocess_downscales_only_when_larger():
 
 
 def test_svg_output_facts():
-    from vectormark.mcp_image import svg_output_facts
+    from vectoreyes.mcp_image import svg_output_facts
     svg = '<svg><defs><linearGradient/></defs><rect/><path/><use href="#s0"/></svg>'
     f = svg_output_facts(svg)
     assert f["has_defs"] and f["has_paths"] and f["has_primitives"] and f["has_symmetry"]
@@ -324,7 +324,7 @@ Expected: FAIL — functions not defined.
 
 - [ ] **Step 3: Implement preprocess + facts**
 
-Append to `src/vectormark/mcp_image.py` (add `import re`, `import numpy as np`, and `from .pipeline import _flatten_on_white` at the top with the other imports):
+Append to `src/vectoreyes/mcp_image.py` (add `import re`, `import numpy as np`, and `from .pipeline import _flatten_on_white` at the top with the other imports):
 
 ```python
 @dataclass(frozen=True)
@@ -405,7 +405,7 @@ Expected: PASS. (If `_content_bbox`'s near-white threshold trims a legitimately 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/mcp_image.py tests/test_mcp_image.py
+git add src/vectoreyes/mcp_image.py tests/test_mcp_image.py
 git commit -m "feat(mcp): preprocess_image (crop/resize/keep-alpha) + svg_output_facts
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -416,7 +416,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 3: `idealize_logo` tool (file-first) + diagnostics
 
 **Files:**
-- Modify: `src/vectormark/mcp_server.py`
+- Modify: `src/vectoreyes/mcp_server.py`
 - Test: `tests/test_mcp_server.py`
 
 **Interfaces:**
@@ -441,20 +441,20 @@ def _png_b64(size=(48, 48), color=(30, 100, 220)):
 
 
 def test_idealize_logo_image_from_data_uri():
-    from vectormark.mcp_server import idealize_logo_image
+    from vectoreyes.mcp_server import idealize_logo_image
     result, preview = idealize_logo_image(
         {"data_uri": f"data:image/png;base64,{_png_b64()}"}, {"colors": 8}, local_trust=False)
     assert result["svg"].startswith("<svg ") and result["svg_bytes"] == len(result["svg"].encode())
     d = result["diagnostics"]
     assert d["input"]["source_kind"] == "data_uri" and d["input"]["mime_type"] == "image/png"
-    assert d["vectormark"]["colors"] == 8 and "element_count" in d["output"]
+    assert d["vectoreyes"]["colors"] == 8 and "element_count" in d["output"]
     assert result["preview_available"] in (True, False)        # best-effort
     assert preview is None or isinstance(preview, (bytes, bytearray))
 
 
 def test_idealize_logo_image_path_blocked_without_local_trust(tmp_path):
-    from vectormark.mcp_server import idealize_logo_image
-    from vectormark.mcp_image import ImageError
+    from vectoreyes.mcp_server import idealize_logo_image
+    from vectoreyes.mcp_image import ImageError
     p = tmp_path / "m.png"; _Img.new("RGB", (16, 16), "white").save(p)
     # local_trust=True works; False rejects
     r, _ = idealize_logo_image({"path": str(p)}, None, local_trust=True)
@@ -474,7 +474,7 @@ Expected: FAIL — `idealize_logo_image` not defined.
 
 - [ ] **Step 3: Implement the helper + tool**
 
-In `src/vectormark/mcp_server.py`, add imports near the top:
+In `src/vectoreyes/mcp_server.py`, add imports near the top:
 
 ```python
 from .mcp_image import (
@@ -511,7 +511,7 @@ def idealize_logo_image(image: dict, options: dict | None, *, local_trust: bool)
     try:
         svg = idealize(arr, options=opts)
     except Exception as exc:
-        raise ImageError("VECTORMARK_FAILED", f"vectormark failed to process the image: {exc}") from exc
+        raise ImageError("VECTOREYES_FAILED", f"vectoreyes failed to process the image: {exc}") from exc
 
     with Image.open(io.BytesIO(resolved.bytes)) as src:
         ow, oh = src.size
@@ -524,7 +524,7 @@ def idealize_logo_image(image: dict, options: dict | None, *, local_trust: bool)
                   "original_width": ow, "original_height": oh},
         "processed": {"width": meta.width, "height": meta.height, "cropped": meta.cropped,
                       "resized": meta.resized, "transparent": meta.transparent, "quantized": meta.quantized},
-        "vectormark": {"colors": opts.max_colors, "flatten": opts.flatten,
+        "vectoreyes": {"colors": opts.max_colors, "flatten": opts.flatten,
                        "no_symmetry": opts.no_symmetry, "epsilon": opts.epsilon, "max_error": opts.max_error},
         "output": {"svg_bytes": len(svg.encode()), **svg_output_facts(svg)},
         "warnings": warnings,
@@ -586,7 +586,7 @@ Expected: PASS (existing tests unaffected — the base64/file helpers are untouc
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/mcp_server.py tests/test_mcp_server.py
+git add src/vectoreyes/mcp_server.py tests/test_mcp_server.py
 git commit -m "feat(mcp): file-first idealize_logo tool with diagnostics + preview
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -597,7 +597,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 4: render tool result-shape, base64 demotion, docs, E2E
 
 **Files:**
-- Modify: `src/vectormark/mcp_server.py` (`render_idealized_logo`, `idealize_logo_data` description)
+- Modify: `src/vectoreyes/mcp_server.py` (`render_idealized_logo`, `idealize_logo_data` description)
 - Modify: `docs/mcp.md`
 - Test: `tests/test_mcp_server.py`
 
@@ -611,7 +611,7 @@ Add to `tests/test_mcp_server.py`:
 
 ```python
 def test_render_idealized_logo_accepts_full_result():
-    from vectormark.mcp_server import render_idealized_logo
+    from vectoreyes.mcp_server import render_idealized_logo
     res = {"svg": "<svg >x</svg>", "width": 10, "height": 12}
     out = render_idealized_logo(result=res)
     assert out["svg"] == res["svg"] and out["width"] == 10 and out["height"] == 12
@@ -620,7 +620,7 @@ def test_render_idealized_logo_accepts_full_result():
 
 def test_stdio_server_exposes_file_first_idealize_logo_with_fileparams():
     async def go():
-        params = StdioServerParameters(command="uv", args=["run", "vectormark-mcp"])
+        params = StdioServerParameters(command="uv", args=["run", "vectoreyes-mcp"])
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
@@ -661,7 +661,7 @@ Replace the `render_idealized_logo` definition (currently takes `image_path, svg
 )
 def render_idealized_logo(result: dict | None = None, image_path: str = "", svg: str = "",
                           width: int = 0, height: int = 0) -> dict[str, object]:
-    """Render an existing idealized SVG result in the vectormark app. Accepts the full
+    """Render an existing idealized SVG result in the vectoreyes app. Accepts the full
     `idealize_logo` result (preferred) or the legacy flat fields."""
     if result:
         svg = result.get("svg", svg)
@@ -703,7 +703,7 @@ Keep the existing security and transport sections. Commit.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/mcp_server.py tests/test_mcp_server.py docs/mcp.md
+git add src/vectoreyes/mcp_server.py tests/test_mcp_server.py docs/mcp.md
 git commit -m "feat(mcp): result-shaped render tool, demote base64 tool, file-first docs
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

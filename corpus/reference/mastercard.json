@@ -1,0 +1,49 @@
+{
+  "entry": "mastercard",
+  "svg": "mastercard.svg",
+  "revision": 1,
+  "sha256": "79534478273e209365b14a47e39375e95329d1f7fc41b50c2eadd8cb09a32c9e",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Mastercard-logo.svg",
+    "title": "File:Mastercard-logo.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/2/2a/Mastercard-logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2021-08-17T14:43:58Z",
+    "upstream_sha1": "749f71b24787940813c600fb28dc03cd115215b9",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<a href=\"https://en.wikipedia.org/wiki/Mastercard_Inc.\" class=\"extiw\" title=\"w:Mastercard Inc.\">Mastercard Inc.</a> and <a href=\"https://en.wikipedia.org/wiki/Pentagram_Design\" class=\"extiw\" title=\"w:Pentagram Design\">Pentagram Design</a>",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://brand.mastercard.com/content/dam/mccom/brandcenter/assets/mc_brandmark_guidelines_v8,1.pdf\">https://brand.mastercard.com/content/dam/mccom/brandcenter/assets/mc_brandmark_guidelines_v8,1.pdf</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      999.2,
+      776.0
+    ],
+    "width": "999.2px",
+    "height": "776px"
+  },
+  "raster": {
+    "path": "../input/mastercard.png",
+    "sha256": "8b604d5b09f4e49f37a25a9d978d9242d47d1b1aa15fa938a462201de42af159"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

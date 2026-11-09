@@ -18,8 +18,8 @@ _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from vectormark import Options, idealize
-from vectormark.color import mean_delta_e
+from vectoreyes import Options, idealize
+from vectoreyes.color import mean_delta_e
 from tests._render import render_svg, ssim
 
 CORPUS = _REPO / "scratch" / "real-logos"

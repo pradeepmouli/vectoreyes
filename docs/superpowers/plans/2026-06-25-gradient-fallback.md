@@ -22,9 +22,9 @@
 ### Task 1: `RasterFill` type + `<pattern><image>` emission
 
 **Files:**
-- Modify: `src/vectormark/candidate.py:12-32` (add type, extend `Fill` union)
-- Modify: `src/vectormark/emit.py:8` (import), add `pattern_image_def`, extend `resolve_fill` (`src/vectormark/emit.py:188-201`)
-- Modify: `src/vectormark/score.py:17` (import), `src/vectormark/score.py:48-54` (add branch)
+- Modify: `src/vectoreyes/candidate.py:12-32` (add type, extend `Fill` union)
+- Modify: `src/vectoreyes/emit.py:8` (import), add `pattern_image_def`, extend `resolve_fill` (`src/vectoreyes/emit.py:188-201`)
+- Modify: `src/vectoreyes/score.py:17` (import), `src/vectoreyes/score.py:48-54` (add branch)
 - Test: `tests/test_emit.py`
 
 **Interfaces:**
@@ -40,7 +40,7 @@ Add to `tests/test_emit.py`:
 
 ```python
 def test_pattern_image_def_emits_stretched_image():
-    from vectormark.emit import pattern_image_def
+    from vectoreyes.emit import pattern_image_def
     s = pattern_image_def("g0", 10.0, 20.0, 100.0, 80.0, "AAAA")
     assert 'id="g0"' in s and 'patternUnits="userSpaceOnUse"' in s
     assert 'width="100" height="80"' in s
@@ -50,14 +50,14 @@ def test_pattern_image_def_emits_stretched_image():
 
 
 def test_pattern_image_def_emits_transform_matrix():
-    from vectormark.emit import pattern_image_def
+    from vectoreyes.emit import pattern_image_def
     s = pattern_image_def("g1", 0.0, 0.0, 4.0, 4.0, "BBBB", transform=(1.0, 0.0, 0.0, 1.0, 5.0, 6.0))
     assert 'patternTransform="matrix(1 0 0 1 5 6)"' in s
 
 
 def test_resolve_fill_registers_pattern_for_rasterfill():
-    from vectormark.candidate import RasterFill
-    from vectormark.emit import resolve_fill
+    from vectoreyes.candidate import RasterFill
+    from vectoreyes.emit import resolve_fill
     defs = []
     out = resolve_fill(RasterFill({"x": 0.0, "y": 0.0, "w": 8.0, "h": 8.0}, "CCCC"), defs)
     assert out == "url(#g0)"
@@ -71,7 +71,7 @@ Expected: FAIL — `RasterFill` / `pattern_image_def` not defined.
 
 - [ ] **Step 3: Add the `RasterFill` dataclass and extend the union**
 
-In `src/vectormark/candidate.py`, after the `RadialGradientFill` dataclass (line 29) and before `Fill = ...` (line 32):
+In `src/vectoreyes/candidate.py`, after the `RadialGradientFill` dataclass (line 29) and before `Fill = ...` (line 32):
 
 ```python
 @dataclass
@@ -91,7 +91,7 @@ Fill = FlatFill | LinearGradientFill | RadialGradientFill | RasterFill
 
 - [ ] **Step 4: Add `pattern_image_def` and extend `resolve_fill`**
 
-In `src/vectormark/emit.py`, update the import on line 8:
+In `src/vectoreyes/emit.py`, update the import on line 8:
 
 ```python
 from .candidate import FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
@@ -143,7 +143,7 @@ def resolve_fill(fill, defs: list[str], *, geometry: dict | None = None,
 
 - [ ] **Step 5: Make the `score.py` complexity site total**
 
-In `src/vectormark/score.py`, update the import on line 17:
+In `src/vectoreyes/score.py`, update the import on line 17:
 
 ```python
 from .candidate import Candidate, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
@@ -172,7 +172,7 @@ Expected: PASS (new tests + existing emit tests).
 - [ ] **Step 7: Commit**
 
 ```bash
-git add src/vectormark/candidate.py src/vectormark/emit.py src/vectormark/score.py tests/test_emit.py
+git add src/vectoreyes/candidate.py src/vectoreyes/emit.py src/vectoreyes/score.py tests/test_emit.py
 git commit -m "feat(gradient): RasterFill type + <pattern><image> emission
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -183,7 +183,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: Searched parametric fit (fallback-only) + shared model builders
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (factor builders from `_fit_radial`/`_fit_linear` at lines 210-265; add searched fits + `_best_parametric`)
+- Modify: `src/vectoreyes/gradient.py` (factor builders from `_fit_radial`/`_fit_linear` at lines 210-265; add searched fits + `_best_parametric`)
 - Test: `tests/test_gradient.py`
 
 **Interfaces:**
@@ -203,7 +203,7 @@ Add to `tests/test_gradient.py`:
 def test_best_parametric_searched_beats_heuristic_on_offcenter_radial():
     # a radial gradient whose centre is in a corner (where the principal-axis-extreme
     # heuristic lands poorly); the searched fit must find a low-mean-ΔE radial model.
-    from vectormark.gradient import _best_parametric
+    from vectoreyes.gradient import _best_parametric
     h, w = 80, 80
     yy, xx = np.mgrid[:h, :w]
     r = np.hypot(xx - 5, yy - 5) / np.hypot(w, h)        # centre near (5,5) corner
@@ -219,7 +219,7 @@ def test_best_parametric_searched_beats_heuristic_on_offcenter_radial():
 
 
 def test_best_parametric_returns_none_for_flat():
-    from vectormark.gradient import _best_parametric
+    from vectoreyes.gradient import _best_parametric
     img = np.full((40, 40, 3), (50, 100, 150), np.uint8)
     assert _best_parametric(np.ones((40, 40), bool), img) is None   # span below minimum
 ```
@@ -231,7 +231,7 @@ Expected: FAIL — `_best_parametric` not defined.
 
 - [ ] **Step 3: Factor the shared model builders (DRY) and refactor the existing fits**
 
-In `src/vectormark/gradient.py`, add these builders just above `_fit_radial` (before line 210):
+In `src/vectoreyes/gradient.py`, add these builders just above `_fit_radial` (before line 210):
 
 ```python
 def _radial_model_from_center(c: np.ndarray, pts: np.ndarray, rgb: np.ndarray) -> dict | None:
@@ -376,7 +376,7 @@ Expected: PASS — new tests AND the existing `test_fit_radial_recovers_center`,
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): searched parametric fit + shared model builders
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -387,7 +387,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 3: Adaptive stretch-fill
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (imports + new constants + `_fit_stretch` and helpers)
+- Modify: `src/vectoreyes/gradient.py` (imports + new constants + `_fit_stretch` and helpers)
 - Test: `tests/test_gradient.py`
 
 **Interfaces:**
@@ -416,7 +416,7 @@ def _diagonal_2d_field(h, w):
 
 
 def test_fit_stretch_returns_raster_model_under_target():
-    from vectormark.gradient import _fit_stretch, _STRETCH_TARGET
+    from vectoreyes.gradient import _fit_stretch, _STRETCH_TARGET
     img = _diagonal_2d_field(96, 96)
     model = _fit_stretch(np.ones((96, 96), bool), img)
     assert model is not None and model["kind"] == "raster"
@@ -426,7 +426,7 @@ def test_fit_stretch_returns_raster_model_under_target():
 
 
 def test_fit_stretch_none_for_degenerate_bbox():
-    from vectormark.gradient import _fit_stretch
+    from vectoreyes.gradient import _fit_stretch
     m = np.zeros((40, 40), bool)
     m[10, 5:9] = True                                  # 1px tall footprint
     assert _fit_stretch(m, np.zeros((40, 40, 3), np.uint8)) is None
@@ -439,7 +439,7 @@ Expected: FAIL — `_fit_stretch` not defined.
 
 - [ ] **Step 3: Add imports and constants**
 
-In `src/vectormark/gradient.py`, extend the imports near the top (after line 10):
+In `src/vectoreyes/gradient.py`, extend the imports near the top (after line 10):
 
 ```python
 import base64
@@ -506,7 +506,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): adaptive bilinear stretch-fill for 2-D colour fields
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -517,7 +517,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 4: Smooth-blob decision ladder in `detect_gradients`
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (new constants + `_fit_smooth_blob`; rewire the smooth-blob block at lines 392-400)
+- Modify: `src/vectoreyes/gradient.py` (new constants + `_fit_smooth_blob`; rewire the smooth-blob block at lines 392-400)
 - Test: `tests/test_gradient.py`
 
 **Interfaces:**
@@ -545,7 +545,7 @@ Add to `tests/test_gradient.py`:
 ```python
 def _dummy_regions(n, shape):
     """n placeholder Regions — _fit_smooth_blob uses only len(leftover) (band-count guard)."""
-    from vectormark.types import Region
+    from vectoreyes.types import Region
     return [Region(label=i + 1, mask=np.zeros(shape, bool), color_hex="#000000") for i in range(n)]
 
 
@@ -575,14 +575,14 @@ def _three_facets(h, w):
 
 
 def test_fit_smooth_blob_raster_for_2d_field():
-    from vectormark.gradient import _fit_smooth_blob
+    from vectoreyes.gradient import _fit_smooth_blob
     img = _mostly_linear_plus_corner(96, 96)
     model = _fit_smooth_blob(_dummy_regions(12, (96, 96)), np.ones((96, 96), bool), img)
     assert model is not None and model["kind"] == "raster"
 
 
 def test_fit_smooth_blob_strict_parametric_for_clean_gradient():
-    from vectormark.gradient import _fit_smooth_blob
+    from vectoreyes.gradient import _fit_smooth_blob
     h, w = 60, 120
     img = np.empty((h, w, 3))
     t = np.linspace(0.0, 1.0, w)
@@ -595,7 +595,7 @@ def test_fit_smooth_blob_strict_parametric_for_clean_gradient():
 
 def test_fit_smooth_blob_none_for_faceted_few_bands():
     # band-count guard: faceted art with too few bands stays flat (returns None).
-    from vectormark.gradient import _fit_smooth_blob
+    from vectoreyes.gradient import _fit_smooth_blob
     img = _three_facets(90, 90)
     model = _fit_smooth_blob(_dummy_regions(3, (90, 90)), np.ones((90, 90), bool), img)
     assert model is None
@@ -604,7 +604,7 @@ def test_fit_smooth_blob_none_for_faceted_few_bands():
 def test_fit_smooth_blob_none_for_faceted_median_guard():
     # median guard: even with the band-count guard bypassed (12 dummy bands), faceted art's
     # best parametric fit has median per-pixel ΔE > _SMOOTH_MEDIAN_TOL -> None (never blurred).
-    from vectormark.gradient import _fit_smooth_blob
+    from vectoreyes.gradient import _fit_smooth_blob
     img = _three_facets(90, 90)
     model = _fit_smooth_blob(_dummy_regions(12, (90, 90)), np.ones((90, 90), bool), img)
     assert model is None
@@ -623,7 +623,7 @@ Expected: FAIL — `_fit_smooth_blob` not defined.
 
 - [ ] **Step 3: Add the ladder constants and `_fit_smooth_blob`**
 
-In `src/vectormark/gradient.py`, add constants after `_STRETCH_TARGET` (from Task 3):
+In `src/vectoreyes/gradient.py`, add constants after `_STRETCH_TARGET` (from Task 3):
 
 ```python
 _SMOOTH_BAND_MIN = 10        # min quantized bands (len(leftover)) for the smooth-blob fallback:
@@ -690,7 +690,7 @@ Expected: PASS — the new `fit_smooth_blob` tests AND all existing gradient tes
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): smooth-blob fallback ladder (strict -> guard -> loose -> stretch)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -701,7 +701,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 5: Pipeline wiring — raster model -> `RasterFill`, bake, end-to-end
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py:27` (import `RasterFill`), `:236-241` (model→fill mapping), `:292-297` (`_fill_attr` raster bake)
+- Modify: `src/vectoreyes/pipeline.py:27` (import `RasterFill`), `:236-241` (model→fill mapping), `:292-297` (`_fill_attr` raster bake)
 - Test: `tests/test_acceptance_gradient.py`, plus a full-suite parity run.
 
 **Interfaces:**
@@ -721,8 +721,8 @@ Add to `tests/test_acceptance_gradient.py`:
 ```python
 def test_pipeline_emits_pattern_for_injected_raster_model(monkeypatch):
     import numpy as np
-    import vectormark.pipeline as P
-    from vectormark import Options, idealize
+    import vectoreyes.pipeline as P
+    from vectoreyes import Options, idealize
     img = np.full((40, 40, 3), (200, 80, 60), np.uint8)        # trivial one-region mark
     raster = {"kind": "raster",
               "geometry": {"x": 0.0, "y": 0.0, "w": 40.0, "h": 40.0},
@@ -736,8 +736,8 @@ def test_pipeline_emits_pattern_for_injected_raster_model(monkeypatch):
 
 def test_pipeline_raster_survives_flatten(monkeypatch):
     import numpy as np
-    import vectormark.pipeline as P
-    from vectormark import Options, idealize
+    import vectoreyes.pipeline as P
+    from vectoreyes import Options, idealize
     img = np.full((40, 40, 3), (200, 80, 60), np.uint8)
     raster = {"kind": "raster",
               "geometry": {"x": 0.0, "y": 0.0, "w": 40.0, "h": 40.0},
@@ -755,7 +755,7 @@ Expected: FAIL — `<pattern>` not emitted (raster model isn't mapped to a fill 
 
 - [ ] **Step 3: Map the raster model to `RasterFill`**
 
-In `src/vectormark/pipeline.py`, extend the import on line 27:
+In `src/vectoreyes/pipeline.py`, extend the import on line 27:
 
 ```python
 from .candidate import Candidate, Fill, FlatFill, LinearGradientFill, RadialGradientFill, RasterFill
@@ -778,7 +778,7 @@ Replace the fill construction in `build_candidates` (lines 236-241) with:
 
 - [ ] **Step 4: Handle raster in `_fill_attr` (bake -> patternTransform)**
 
-In `src/vectormark/pipeline.py`, replace `_fill_attr` (lines 292-297) with:
+In `src/vectoreyes/pipeline.py`, replace `_fill_attr` (lines 292-297) with:
 
 ```python
     def _fill_attr(fill: Fill) -> str:
@@ -804,7 +804,7 @@ Expected: PASS — the full suite (no regressions; report the verbatim summary l
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py tests/test_acceptance_gradient.py
+git add src/vectoreyes/pipeline.py tests/test_acceptance_gradient.py
 git commit -m "feat(gradient): wire raster stretch-fill through the candidate pipeline
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -815,7 +815,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 6: Corpus threshold validation + visual confirmation
 
 **Files:**
-- No production code unless a threshold must move; if one does, modify the relevant constant in `src/vectormark/gradient.py` and note why in its comment.
+- No production code unless a threshold must move; if one does, modify the relevant constant in `src/vectoreyes/gradient.py` and note why in its comment.
 - Scratch only (untracked): render the corpus before/after.
 
 **Interfaces:**
@@ -823,7 +823,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Render the whole corpus through the new pipeline**
 
-Run vectormark over every corpus mark (Firefox, Instagram, gdrive, and the rest of the gallery) and record, per mark: `kind` of any emitted gradient/raster fill, element count, and whether it changed vs `master`. Use the existing corpus script pattern in `scratch/` (do not add scratch files to git).
+Run vectoreyes over every corpus mark (Firefox, Instagram, gdrive, and the rest of the gallery) and record, per mark: `kind` of any emitted gradient/raster fill, element count, and whether it changed vs `master`. Use the existing corpus script pattern in `scratch/` (do not add scratch files to git).
 
 - [ ] **Step 2: Assert the three anchor outcomes** (the real end-to-end raster proof)
 
@@ -842,7 +842,7 @@ If a genuine gradient mark fails to fire (parametric or raster) or a flat mark w
 Render Firefox/Instagram SVGs and confirm the stretch-fill looks smooth (not banded) and gdrive's facets are still crisp. If constants changed:
 
 ```bash
-git add src/vectormark/gradient.py
+git add src/vectoreyes/gradient.py
 git commit -m "fix(gradient): tune smooth-blob thresholds against the corpus
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

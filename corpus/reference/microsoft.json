@@ -1,0 +1,49 @@
+{
+  "entry": "microsoft",
+  "svg": "microsoft.svg",
+  "revision": 1,
+  "sha256": "34ec1619e4a62515d67c5240fe5762ef5a1838fe67d2fb1fb0b001099cebf1db",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Microsoft_logo_(2012).svg",
+    "title": "File:Microsoft logo (2012).svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/9/96/Microsoft_logo_%282012%29.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2023-02-21T16:09:17Z",
+    "upstream_sha1": "501b90ab65c9f9f9b37ee2e938f77ae0e59f4b37",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<a href=\"https://en.wikipedia.org/wiki/Microsoft\" class=\"extiw\" title=\"en:Microsoft\">Microsoft Corporation</a> — Jason Wells",
+    "Credit": "<a rel=\"nofollow\" class=\"external text\" href=\"https://info.flipgrid.com/\">Flipgrid</a> <span style=\"font-size: 0.95em; font-weight: bold; color:#555; position: relative;\">(english)</span>. <a href=\"https://en.wikipedia.org/wiki/Microsoft\" class=\"extiw\" title=\"w:Microsoft\">Microsoft</a> (<span class=\"mw-formatted-date\" title=\"2025-06-18\">June 18, 2025</span>). Retrieved on <span class=\"mw-formatted-date\" title=\"2025-05-21\">May 21, 2025</span>. (<a rel=\"nofollow\" class=\"external text\" href=\"https://static.flipgrid.com/fg-svgs/microsoft-logo.svg\">Direct link</a>).",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [
+      0.0,
+      0.0,
+      337.6,
+      72.0
+    ],
+    "width": null,
+    "height": null
+  },
+  "raster": {
+    "path": "../input/microsoft.png",
+    "sha256": "657e229c23019f699119bb74d43f72b95c77ee5a87e8cdd1b63b5db512d68b5b"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

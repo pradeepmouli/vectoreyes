@@ -1,6 +1,8 @@
 # Python
 __pycache__/
 *.py[cod]
+*.so
+*.pyd
 *.egg-info/
 .eggs/
 build/
@@ -22,7 +24,9 @@ htmlcov/
 /out/
 *.tmp.svg
 *.tmp.png
-corpus/
+corpus/*
+!corpus/.gitignore
+!corpus/reference/
 
 # OS
 .DS_Store

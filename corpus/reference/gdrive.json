@@ -1,0 +1,44 @@
+{
+  "entry": "gdrive",
+  "svg": "gdrive.svg",
+  "revision": 1,
+  "sha256": "3d14c519af7b2252c512d0113759c2ff5ea22ff99bf52de0e4421af5b87c3ad4",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Google_Drive_icon_(2020).svg",
+    "title": "File:Google Drive icon (2020).svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/1/12/Google_Drive_icon_%282020%29.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2022-11-03T15:30:31Z",
+    "upstream_sha1": "bbeffb0922b3841d79ccfa204400c7dc2c399628",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Google, LLC",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"https://www.google.com/intl/en_in/drive/\">https://www.google.com/intl/en_in/drive/</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": "0 0 87.3 78",
+    "width": null,
+    "height": null
+  },
+  "raster": {
+    "path": "../input/gdrive.png",
+    "sha256": "c322495222565a934720f3e1b661189a30155b6b8dd2f6d69a4b486ee16c1305"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

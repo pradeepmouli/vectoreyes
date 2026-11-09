@@ -1,0 +1,44 @@
+{
+  "entry": "pokeball",
+  "svg": "pokeball.svg",
+  "revision": 1,
+  "sha256": "d1e07fcf665a82a5beb405a971836056f77285dc38f68524800ce37310312bef",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Pok%C3%A9_Ball.svg",
+    "title": "File:Poké Ball.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/2/23/Pok%C3%A9_Ball.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2006-12-16T04:02:53Z",
+    "upstream_sha1": "e4082a6b44395ac5b6c3e8a1a38b295567915cc0",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<div style=\"display:inline-block;padding:0 3px;background-color:#CCF\">Original:</div> <div style=\"display:inline-block;padding:3px 0;\">Unknown</div> <div style=\"display:inline-block;padding:0 3px;background-color:#CCF\">Vector: </div> <div style=\"display:inline-block;\"><a href=\"//commons.wikimedia.org/wiki/User:Geni\" title=\"User:Geni\">Geni</a></div>",
+    "Credit": "Own work based on: <a href=\"//commons.wikimedia.org/w/index.php?title=File:Pok%C3%A9_Ball.png&amp;action=edit&amp;redlink=1\" class=\"new\" title=\"File:Poké Ball.png (page does not exist)\">Poké Ball.png</a>",
+    "LicenseShortName": "CC BY-SA 3.0",
+    "LicenseUrl": "http://creativecommons.org/licenses/by-sa/3.0/",
+    "UsageTerms": "Creative Commons Attribution-Share Alike 3.0",
+    "Restrictions": ""
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [],
+    "width": "674.71478",
+    "height": "672.0556"
+  },
+  "raster": {
+    "path": "../input/pokeball.png",
+    "sha256": "df99e09eb37b3808a028442245f31b3635b22746c6b84c22ffb931a500a7b57f"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

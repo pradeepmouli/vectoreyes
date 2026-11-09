@@ -1,5 +1,5 @@
 import numpy as np
-from vectormark.contour import outer_contour, rdp, corner_indices, region_contours, _polygon_area, region_corner_radius
+from vectoreyes.contour import outer_contour, rdp, corner_indices, region_contours, _polygon_area, region_corner_radius
 
 
 def test_region_contours_finds_hole_outer_first():

@@ -1,10 +1,13 @@
 {
-  "name": "@vectormark/mcp-app",
+  "name": "@vectoreyes/mcp-app",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && cross-env INPUT=mcp-app.html vite build",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node test/browser-handoff.mjs",
+    "dev": "cross-env INPUT=mcp-app.html vite --host 127.0.0.1 --port 62747",
     "watch": "cross-env NODE_ENV=development INPUT=mcp-app.html vite build --watch"
   },
   "dependencies": {

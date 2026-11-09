@@ -1,0 +1,44 @@
+{
+  "entry": "vimeo",
+  "svg": "vimeo.svg",
+  "revision": 1,
+  "sha256": "445f4137deb11cf9eb406e5ccc2e03a1f878cfdbac33f83a04aa792c651e7202",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Vimeo_Logo.svg",
+    "title": "File:Vimeo Logo.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/9/9c/Vimeo_Logo.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2018-07-06T17:05:57Z",
+    "upstream_sha1": "eb542e52fc126b4a034081aaac02fe91638ff7ec",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "<a href=\"https://en.wikipedia.org/wiki/en:Vimeo\" class=\"extiw\" title=\"w:en:Vimeo\"><span title=\"American video hosting platform\">Vimeo</span></a>",
+    "Credit": "<a rel=\"nofollow\" class=\"external free\" href=\"http://www.cafilm.org/press/CFI_Members/2012MVFF35-FilmSchedule_LR_NP.pdf\">http://www.cafilm.org/press/CFI_Members/2012MVFF35-FilmSchedule_LR_NP.pdf</a>, page 4",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": [],
+    "width": "70",
+    "height": "20"
+  },
+  "raster": {
+    "path": "../input/vimeo.png",
+    "sha256": "d2946757064631410cc67194a68d8d46014805dab588af3167f268f616ba0127"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

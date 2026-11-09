@@ -58,7 +58,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import paint, disk
 from tests.test_acceptance_annulus import _ring
 from tests.test_acceptance_occlusion import _synthetic_mastercard
@@ -133,7 +133,7 @@ mkdir -p tests/fixtures/golden
 .venv/bin/python -c "
 from pathlib import Path
 from tests.test_candidate_byte_identical import CASES, GOLDEN
-from vectormark import idealize
+from vectoreyes import idealize
 GOLDEN.mkdir(parents=True, exist_ok=True)
 for name, factory, opts in CASES:
     (GOLDEN / f'{name}.svg').write_text(idealize(factory(), options=opts))
@@ -167,7 +167,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 2: `candidate.py` — Fill sum type + Candidate dataclass
 
 **Files:**
-- Create: `src/vectormark/candidate.py`
+- Create: `src/vectoreyes/candidate.py`
 - Test: `tests/test_candidate.py`
 
 - [ ] **Step 1: Write the failing unit test**
@@ -175,11 +175,11 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 Create `tests/test_candidate.py`:
 
 ```python
-from vectormark.candidate import (
+from vectoreyes.candidate import (
     Candidate, FlatFill, LinearGradientFill, RadialGradientFill,
 )
-from vectormark.fit import Shape
-from vectormark.types import Axis
+from vectoreyes.fit import Shape
+from vectoreyes.types import Axis
 
 
 def test_flat_fill_holds_hex():
@@ -206,9 +206,9 @@ def test_candidate_carries_mirror_axis():
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `.venv/bin/pytest tests/test_candidate.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'vectormark.candidate'`.
+Expected: FAIL — `ModuleNotFoundError: No module named 'vectoreyes.candidate'`.
 
-- [ ] **Step 3: Create `src/vectormark/candidate.py`**
+- [ ] **Step 3: Create `src/vectoreyes/candidate.py`**
 
 ```python
 """The (geometry, fill) candidate seam: decouples shape/path detection from
@@ -273,7 +273,7 @@ Expected: 11 passed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/candidate.py tests/test_candidate.py
+git add src/vectoreyes/candidate.py tests/test_candidate.py
 git commit -m "feat(candidate): Fill sum type + Candidate dataclass
 
 IO-free (geometry, fill) seam decoupling shape detection from colour
@@ -288,7 +288,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ## Task 3: `build_candidates` + single emit loop in `_render_body`
 
 **Files:**
-- Modify: `src/vectormark/pipeline.py` (add `build_candidates`; rewrite the emit section of `_render_body`)
+- Modify: `src/vectoreyes/pipeline.py` (add `build_candidates`; rewrite the emit section of `_render_body`)
 
 This is the behaviour-preserving refactor. The golden harness (Task 1) is the gate.
 
@@ -429,7 +429,7 @@ Expected: all pass (previous count + the new candidate/golden tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py
+git add src/vectoreyes/pipeline.py
 git commit -m "refactor(pipeline): unify emit via build_candidates + single loop
 
 Collapse the three emit loops (occlusion, regions, gradients) in _render_body

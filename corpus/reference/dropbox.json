@@ -1,0 +1,44 @@
+{
+  "entry": "dropbox",
+  "svg": "dropbox.svg",
+  "revision": 1,
+  "sha256": "db130adef561b2017768d20d371feda6cf793738b52729d413045751c959f071",
+  "provenance": {
+    "kind": "downloaded_vector_candidate",
+    "page": "https://commons.wikimedia.org/wiki/File:Dropbox_Icon.svg",
+    "title": "File:Dropbox Icon.svg",
+    "download": "https://upload.wikimedia.org/wikipedia/commons/7/78/Dropbox_Icon.svg?utm_source=commons.wikimedia.org&utm_campaign=imageinfo&utm_content=original",
+    "retrieved_on": "2026-09-08",
+    "upstream_timestamp": "2015-12-10T15:02:56Z",
+    "upstream_sha1": "d1687edf8b9ab6e5844f43c44e05835422457775",
+    "modified": false,
+    "metadata_attribution": "The following credit/license fields are supplied by Wikimedia Commons; original vector authorship is not independently verified.",
+    "Artist": "Dropbox",
+    "Credit": "<a rel=\"nofollow\" class=\"external text\" data-mw-original-href=\"http://www.dropbox.com/\" href=\"https://www.dropbox.com/\">www.dropbox.com</a>",
+    "LicenseShortName": "Public domain",
+    "LicenseUrl": null,
+    "UsageTerms": "Public domain",
+    "Restrictions": "trademarked"
+  },
+  "review": {
+    "status": "approved",
+    "reviewer": "user",
+    "approved_on": "2026-09-08",
+    "evidence": "User approved all downloaded SVGs in this conversation."
+  },
+  "canvas": {
+    "viewBox": "0 0 43 40",
+    "width": "43px",
+    "height": "40px"
+  },
+  "raster": {
+    "path": "../input/dropbox.png",
+    "sha256": "32addef425cd611eeded3601bd28cde48bb78a733c2166c8f4b5bcbbda8ead10"
+  },
+  "registration": {
+    "status": "unverified"
+  },
+  "notes": [
+    "Artwork approved by the user; raster registration remains unverified."
+  ]
+}

@@ -1,6 +1,6 @@
 import re
 import numpy as np
-from vectormark.pipeline import idealize, Options, IdealizeReport
+from vectoreyes.pipeline import idealize, Options, IdealizeReport
 
 
 def _wing_with_dot():
@@ -17,7 +17,7 @@ def _wing_with_dot():
 
 
 def test_wing_emits_one_gradient_and_dot_survives():
-    svg = idealize(_wing_with_dot(), options=Options(max_colors=16))
+    svg = idealize(_wing_with_dot(), options=Options(max_sampling_colors=16))
     # the wing is ONE gradient, not stacked flat bands
     assert len(re.findall(r"<linearGradient", svg)) >= 1
     # the dot is still present as its own element (a circle or a small path), not absorbed
@@ -29,7 +29,7 @@ def test_flat_logo_uses_no_gradient():
     # a solid square on white must stay a single flat shape, no gradient defs
     img = np.full((80, 80, 3), 255, np.uint8)
     img[20:60, 20:60] = (200, 40, 40)
-    svg = idealize(img, options=Options(max_colors=16))
+    svg = idealize(img, options=Options(max_sampling_colors=16))
     assert "<linearGradient" not in svg and "<radialGradient" not in svg
 
 
@@ -37,7 +37,7 @@ def test_report_gradients_counts_fill_type_not_source():
     """report.gradients must count candidates whose fill is a gradient, not candidates
     with source=='gradient' (no such source exists in the new pipeline — all filled
     regions are source='region')."""
-    svg, report = idealize(_wing_with_dot(), options=Options(max_colors=16), report=True)
+    svg, report = idealize(_wing_with_dot(), options=Options(max_sampling_colors=16), report=True)
     assert isinstance(report, IdealizeReport)
     # the wing region gets a LinearGradientFill, so gradients >= 1
     assert report.gradients >= 1
@@ -60,6 +60,6 @@ def _two_gradient_blobs():
 
 def test_two_disconnected_gradient_blobs_each_get_gradient():
     """Two spatially separate ramp blobs must each be emitted with a gradient fill."""
-    svg, report = idealize(_two_gradient_blobs(), options=Options(max_colors=16), report=True)
+    svg, report = idealize(_two_gradient_blobs(), options=Options(max_sampling_colors=16), report=True)
     grad_count = svg.count("<linearGradient") + svg.count("<radialGradient")
     assert grad_count >= 2, f"expected >= 2 gradients, got {grad_count}"

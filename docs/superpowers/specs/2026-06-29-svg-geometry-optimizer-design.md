@@ -5,7 +5,7 @@
 
 ## Problem
 
-vectormark currently performs its optimizations — primitive recognition, mirror
+vectoreyes currently performs its optimizations — primitive recognition, mirror
 symmetry, gradient merging — against the **raster** (per-region pixel masks),
 interleaved into the vectorization pass. This is the wrong layer and it has
 produced a steady stream of regressions:

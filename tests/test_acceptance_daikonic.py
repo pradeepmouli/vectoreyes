@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import render_svg, ssim, mean_delta_e
 
 FIX = Path(__file__).parent / "fixtures" / "daikonic" / "source.png"
@@ -68,13 +68,13 @@ def test_daikonic_renders_close_to_source():
 def test_daikonic_corner_radius_is_measured_tight_and_padded():
     """Per-region radius is MEASURED from the band corners + the de-antialiasing pad —
     tight (matches the reference) and far below the old fraction-of-height value."""
-    from vectormark.contour import region_corner_radius, _CORNER_DEANTIALIAS_PAD
-    from vectormark.color import extract_palette, quantize
-    from vectormark.segment import segment
+    from vectoreyes.contour import region_corner_radius, _CORNER_DEANTIALIAS_PAD
+    from vectoreyes.color import extract_palette, quantize
+    from vectoreyes.segment import segment
 
     icon = _icon_array()
     h, w, _ = icon.shape
-    pal = extract_palette(icon, max_colors=16)
+    pal = extract_palette(icon, max_sampling_colors=16)
     regions = segment(quantize(icon, pal), min_area=max(16, round(0.001 * h * w)))
     radii = [region_corner_radius(r.mask) for r in regions]
     rounded = [r for r in radii if r > 0]

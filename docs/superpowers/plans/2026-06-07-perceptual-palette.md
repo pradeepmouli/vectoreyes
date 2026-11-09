@@ -8,12 +8,12 @@
 > its own aggregate count ≥ `min_fraction × total`; sub-floor bins may only be *absorbed* into an
 > existing cluster. The design-of-record is the reconciled spec
 > (`docs/superpowers/specs/2026-06-07-perceptual-palette-design.md`, §3 "Greedy perceptual clustering
-> with a seed-floor") and the code in `src/vectormark/color.py`. Where this plan still says "floor on
+> with a seed-floor") and the code in `src/vectoreyes/color.py`. Where this plan still says "floor on
 > cluster totals" (the snippet in Task 1 Step 3 and the self-review), read "seed-floor" per the spec.
 
 **Goal:** Rewrite `extract_palette` so a colour dispersed across many antialiased shades (a thin/small mark like the settir blue) is recovered, instead of being dropped by the per-shade frequency floor.
 
-**Architecture:** Reorder the algorithm to **cluster perceptually → aggregate counts per cluster → gate cluster *seeding* by the `min_fraction` floor** (a bin seeds a new cluster only if its own aggregate ≥ floor; sub-floor bins are absorbed). A coarse 5-bit pre-bin caps the clustering input; each cluster's representative is its most-frequent member (a real colour, never a centroid). Single-function rewrite in `src/vectormark/color.py`; signature, return type, and all callers unchanged.
+**Architecture:** Reorder the algorithm to **cluster perceptually → aggregate counts per cluster → gate cluster *seeding* by the `min_fraction` floor** (a bin seeds a new cluster only if its own aggregate ≥ floor; sub-floor bins are absorbed). A coarse 5-bit pre-bin caps the clustering input; each cluster's representative is its most-frequent member (a real colour, never a centroid). Single-function rewrite in `src/vectoreyes/color.py`; signature, return type, and all callers unchanged.
 
 **Tech Stack:** Python, numpy, OKLab (`srgb_to_oklab`/`delta_e` already in `color.py`), pytest. End-to-end check via `idealize` + `tests/_render.py`.
 
@@ -72,7 +72,7 @@ string. `Options` has a `no_symmetry` flag.
 ## Task 1: Rewrite `extract_palette` with perceptual clustering
 
 **Files:**
-- Modify: `src/vectormark/color.py:52-77` (the `extract_palette` body)
+- Modify: `src/vectoreyes/color.py:52-77` (the `extract_palette` body)
 - Test: `tests/test_color.py` (append new tests; keep existing ones)
 
 - [ ] **Step 1: Write the failing core-regression test (thin AA mark)**
@@ -129,7 +129,7 @@ Expected: FAIL — the old algorithm returns `[white]` (or white+navy), no blue,
 
 - [ ] **Step 3: Rewrite `extract_palette`**
 
-Replace the body of `extract_palette` in `src/vectormark/color.py` (lines 52-77) with:
+Replace the body of `extract_palette` in `src/vectoreyes/color.py` (lines 52-77) with:
 
 ```python
 def extract_palette(
@@ -205,7 +205,7 @@ def extract_palette(
 > here at the end — it gates cluster **seeding** (`if not placed and bin_total[b] >= floor:`), so
 > sub-floor bins can only be absorbed, never seed. The end-of-loop floor above is then redundant
 > (every seeded cluster is already supra-floor). The authoritative algorithm is the spec's §3 and
-> `src/vectormark/color.py`.
+> `src/vectoreyes/color.py`.
 
 - [ ] **Step 4: Run the core-regression test to verify it passes**
 
@@ -271,7 +271,7 @@ collapse) before adjusting anything.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/vectormark/color.py tests/test_color.py
+git add src/vectoreyes/color.py tests/test_color.py
 git commit -m "fix(color): perceptual-clustering palette recovers AA-dispersed colours
 
 extract_palette now clusters near-identical shades, aggregates counts per
@@ -304,7 +304,7 @@ import re
 
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 
 
 def _settir_synth():

@@ -11,7 +11,7 @@ import re
 
 import numpy as np
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import disk as _disk, paint as _paint, render_svg, ssim
 
 

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "vectoreyes": {
+      "type": "stdio",
+      "command": "vectoreyes-mcp",
+      "args": [],
+      "env": {
+        "VECTOREYES_MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

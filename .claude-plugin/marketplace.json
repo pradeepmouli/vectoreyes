@@ -1,23 +1,23 @@
 {
-  "name": "vectormark",
+  "name": "vectoreyes",
   "owner": {
     "name": "Pradeep Mouli",
     "url": "https://github.com/pradeepmouli"
   },
   "metadata": {
-    "description": "Plugins for vectormark, the deterministic raster-logo to SVG idealizer.",
-    "version": "0.1.0"
+    "description": "Plugins for vectorEyes, the deterministic raster-logo to SVG idealizer.",
+    "version": "0.2.1"
   },
   "plugins": [
     {
-      "name": "vectormark-logo-pipeline",
-      "description": "Generate a raster logo with a raster image-generation tool or model, then idealize it into a clean, symmetric, editable SVG via the vectormark CLI.",
-      "version": "0.1.0",
+      "name": "vectoreyes",
+      "description": "Source-grounded SVG reconstruction, plan refinement, and separate shape/fill evaluation.",
+      "version": "0.2.1",
       "author": {
         "name": "Pradeep Mouli",
         "email": "pradeepmouli@users.noreply.github.com"
       },
-      "source": "./integrations/claude-plugin",
+      "source": "./integrations/plugin",
       "category": "design",
       "tags": ["logo", "svg", "raster-to-vector", "image-generation"]
     }

@@ -22,7 +22,7 @@
 ### Task 1: `merge_components` — colour-step agglomerative merge
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (add `MERGE_TOL` constant + `merge_components`)
+- Modify: `src/vectoreyes/gradient.py` (add `MERGE_TOL` constant + `merge_components`)
 - Test: `tests/test_gradient.py`
 
 **Interfaces:**
@@ -37,7 +37,7 @@ Add to `tests/test_gradient.py`:
 
 ```python
 def test_merge_components_merges_small_steps_into_one():
-    from vectormark.gradient import merge_components
+    from vectoreyes.gradient import merge_components
     # 4 adjacent bands stepping blue->magenta (small OKLab steps between neighbours)
     regions = _hstrip_regions(["#2563eb", "#7b3fc4", "#b13a9e", "#db2777"])
     groups = merge_components(regions, tol=0.15)
@@ -45,7 +45,7 @@ def test_merge_components_merges_small_steps_into_one():
 
 
 def test_merge_components_splits_at_large_step():
-    from vectormark.gradient import merge_components
+    from vectoreyes.gradient import merge_components
     # a small-step pair, then a large jump to a distinct hue, then another small-step pair
     regions = _hstrip_regions(["#2563eb", "#3a6ae0", "#11aa33", "#15b53a"])
     groups = merge_components(regions, tol=0.15)
@@ -54,7 +54,7 @@ def test_merge_components_splits_at_large_step():
 
 
 def test_merge_components_singleton_when_isolated_by_large_steps():
-    from vectormark.gradient import merge_components
+    from vectoreyes.gradient import merge_components
     # zig-zag hues: every adjacency is a large step -> no merges -> all singletons
     regions = _hstrip_regions(["#ff0000", "#00ff00", "#0000ff", "#ffff00"])
     groups = merge_components(regions, tol=0.15)
@@ -62,7 +62,7 @@ def test_merge_components_singleton_when_isolated_by_large_steps():
 
 
 def test_merge_components_transitive_chain():
-    from vectormark.gradient import merge_components
+    from vectoreyes.gradient import merge_components
     # a long chain of small steps merges end-to-end even though the ends are far apart
     regions = _hstrip_regions(["#2563eb", "#5a4fd0", "#8a44b4", "#b13a9e", "#db2777"])
     groups = merge_components(regions, tol=0.15)
@@ -78,7 +78,7 @@ Expected: FAIL — `merge_components` not defined.
 
 - [ ] **Step 3: Add `MERGE_TOL` and `merge_components`**
 
-In `src/vectormark/gradient.py`, add the constant near the other module constants (after `_STRETCH_TARGET`):
+In `src/vectoreyes/gradient.py`, add the constant near the other module constants (after `_STRETCH_TARGET`):
 
 ```python
 MERGE_TOL = 0.15   # max OKLab colour step between two spatially-adjacent regions for them
@@ -131,7 +131,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): colour-step agglomerative region merge
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -142,7 +142,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 2: `_component_fill` — per-component fill decision
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (re-add `_PARAM_FALLBACK_TOL`; add `_field_spread`, `_component_fill`)
+- Modify: `src/vectoreyes/gradient.py` (re-add `_PARAM_FALLBACK_TOL`; add `_field_spread`, `_component_fill`)
 - Test: `tests/test_gradient.py`
 
 **Interfaces:**
@@ -170,7 +170,7 @@ def _2d_field(h, w):
 
 
 def test_component_fill_strict_gradient_for_clean_ramp():
-    from vectormark.gradient import _component_fill
+    from vectoreyes.gradient import _component_fill
     h, w = 60, 120
     img = _linear_gradient_image(h, w, (0, 30), (119, 30),
                                  [(0.0, (37, 99, 235)), (1.0, (219, 39, 119))])
@@ -179,13 +179,13 @@ def test_component_fill_strict_gradient_for_clean_ramp():
 
 
 def test_component_fill_none_for_flat():
-    from vectormark.gradient import _component_fill
+    from vectoreyes.gradient import _component_fill
     img = np.full((40, 40, 3), (50, 100, 150), np.uint8)
     assert _component_fill(np.ones((40, 40), bool), img) is None     # flat -> solid colour
 
 
 def test_component_fill_raster_for_2d_field():
-    from vectormark.gradient import _component_fill
+    from vectoreyes.gradient import _component_fill
     img = _2d_field(96, 96)
     model = _component_fill(np.ones((96, 96), bool), img)
     assert model is not None and model["kind"] == "raster"
@@ -200,7 +200,7 @@ Expected: FAIL — `_component_fill` not defined.
 
 - [ ] **Step 3: Re-add `_PARAM_FALLBACK_TOL`, add `_field_spread` and `_component_fill`**
 
-In `src/vectormark/gradient.py`, add the constant near the other thresholds (after `_STRETCH_TARGET` / `MERGE_TOL`):
+In `src/vectoreyes/gradient.py`, add the constant near the other thresholds (after `_STRETCH_TARGET` / `MERGE_TOL`):
 
 ```python
 _PARAM_FALLBACK_TOL = 0.07   # max mean per-pixel ΔE for a merged component to prefer an
@@ -246,7 +246,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): per-component fill decision (gradient/raster/flat)
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -257,7 +257,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 3: Rework `detect_gradients` to merge → per-component fill; remove dead ramp-grouping
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (rewrite `detect_gradients`; remove now-dead `_ramp_groups`, `_trim_to_ramp`, `_is_ramp`, `_is_strict_ramp`, `_ramp_fit` if unreferenced)
+- Modify: `src/vectoreyes/gradient.py` (rewrite `detect_gradients`; remove now-dead `_ramp_groups`, `_trim_to_ramp`, `_is_ramp`, `_is_strict_ramp`, `_ramp_fit` if unreferenced)
 - Modify: `tests/test_gradient.py` (replace the three `_ramp_groups` unit tests; update the dissolve test)
 - Modify: `tests/test_acceptance_smooth_gradient.py` (drop `_ramp_groups`-based assertions; keep the output assertions)
 - Test: full suite (parity)
@@ -276,9 +276,9 @@ Replace `test_detect_gradients_dissolves_unfittable_group_back_to_flats` with (t
 
 ```python
 def test_detect_gradients_zigzag_bands_stay_flat():
-    from vectormark.color import oklab_to_srgb, srgb_to_oklab
-    from vectormark.gradient import detect_gradients
-    from vectormark.types import Region
+    from vectoreyes.color import oklab_to_srgb, srgb_to_oklab
+    from vectoreyes.gradient import detect_gradients
+    from vectoreyes.types import Region
     # Bands whose colours zig-zag along a line in OKLab so every spatially-adjacent pair is
     # a LARGE colour step -> merge_components never joins them -> all stay flat in `remaining`.
     l0 = srgb_to_oklab(np.array([20, 50, 250])[None] / 255.0)[0]
@@ -306,7 +306,7 @@ def test_detect_gradients_zigzag_bands_stay_flat():
 
 (`test_detect_gradients_consumes_ramp_returns_remaining` is unchanged — the 4 small-step ramp bands merge and fit one linear gradient; the large-step green block stays flat. Leave it as-is; it is a parity check.)
 
-In `tests/test_acceptance_smooth_gradient.py`: remove the two `assert _ramp_groups(regions) == []` lines (in `test_smooth_linear_rect_via_smooth_path` and `test_smooth_radial_disc_via_smooth_path`) and the now-unused `from vectormark.gradient import _ramp_groups` import. Keep every other assertion (the `svg.count("<linearGradient") == 1` / `<radialGradient>` and the ΔE bounds) — those are the real parity checks.
+In `tests/test_acceptance_smooth_gradient.py`: remove the two `assert _ramp_groups(regions) == []` lines (in `test_smooth_linear_rect_via_smooth_path` and `test_smooth_radial_disc_via_smooth_path`) and the now-unused `from vectoreyes.gradient import _ramp_groups` import. Keep every other assertion (the `svg.count("<linearGradient") == 1` / `<radialGradient>` and the ΔE bounds) — those are the real parity checks.
 
 - [ ] **Step 2: Run to verify the suite fails as expected**
 
@@ -315,7 +315,7 @@ Expected: FAIL — the deleted/edited tests reference removed names, and `test_d
 
 - [ ] **Step 3: Rewrite `detect_gradients`**
 
-Replace the entire body of `detect_gradients` in `src/vectormark/gradient.py` with:
+Replace the entire body of `detect_gradients` in `src/vectoreyes/gradient.py` with:
 
 ```python
 def detect_gradients(
@@ -374,7 +374,7 @@ Expected: PASS — full suite, no regressions (paste the verbatim summary line).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py tests/test_acceptance_smooth_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py tests/test_acceptance_smooth_gradient.py
 git commit -m "feat(gradient): detect_gradients via colour-step merge + per-component fill
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -385,7 +385,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 4: Corpus validation + visual confirmation + `MERGE_TOL` tuning
 
 **Files:**
-- Modify only if a threshold must move: `src/vectormark/gradient.py` (`MERGE_TOL` / `_PARAM_FALLBACK_TOL`), with the rationale in its comment.
+- Modify only if a threshold must move: `src/vectoreyes/gradient.py` (`MERGE_TOL` / `_PARAM_FALLBACK_TOL`), with the rationale in its comment.
 - Scratch only (untracked): render the corpus before/after.
 
 **Interfaces:**
@@ -410,7 +410,7 @@ If a mark over-merges (a sharp feature merged into the field) lower `MERGE_TOL`;
 - [ ] **Step 5: Commit any tuning**
 
 ```bash
-git add src/vectormark/gradient.py
+git add src/vectoreyes/gradient.py
 git commit -m "fix(gradient): tune MERGE_TOL against the corpus
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
@@ -425,7 +425,7 @@ Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
 ### Task 5: Thin-band fillability gate (keep faceted logos crisp)
 
 **Files:**
-- Modify: `src/vectormark/gradient.py` (add `_THIN_BAND_TOL`; extract `_group_is_fillable`; use it in `detect_gradients`)
+- Modify: `src/vectoreyes/gradient.py` (add `_THIN_BAND_TOL`; extract `_group_is_fillable`; use it in `detect_gradients`)
 - Test: `tests/test_gradient.py`
 
 **Context:** Corpus validation (Task 4) found the `>= _MIN_BANDS OR dominant` gate still smears faceted logos whose facets are similar-coloured (Sketch's top facets merge into a 4-band group and fit a radial at ΔE 0.037 — *better* than real gradients — so neither colour, band-count, nor fit-quality rejects it). The only signal that separates a finely-quantized gradient from coarse facets is band thinness: a gradient's bands are thin (firefox avg 0.03 of the mark), facets are chunky (Sketch avg 0.20). Validated across the corpus: this flips only Sketch (radial→flat) and App Store (near-dominant low-contrast → flat, its prior rendering); every real gradient and flat mark is unchanged.
@@ -439,7 +439,7 @@ Add to `tests/test_gradient.py`:
 
 ```python
 def _regions_with_areas(areas):
-    from vectormark.types import Region
+    from vectoreyes.types import Region
     out = []
     for i, a in enumerate(areas):
         m = np.zeros((1, 1000), bool); m[0, :a] = True       # a True pixels -> Region.area == a
@@ -448,7 +448,7 @@ def _regions_with_areas(areas):
 
 
 def test_group_is_fillable_dominant_thin_chunky():
-    from vectormark.gradient import _group_is_fillable
+    from vectoreyes.gradient import _group_is_fillable
     # dominant single blob (90% of fg) -> fillable
     assert _group_is_fillable(_regions_with_areas([900]), 1000.0) is True
     # 10 thin bands, 80% of fg, each 8% -> avg 0.008 < 0.10 -> finely-quantized -> fillable
@@ -507,7 +507,7 @@ Expected: PASS — full suite, no regressions (paste the verbatim summary line).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/gradient.py tests/test_gradient.py
+git add src/vectoreyes/gradient.py tests/test_gradient.py
 git commit -m "feat(gradient): thin-band fillability gate keeps faceted logos crisp
 
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"

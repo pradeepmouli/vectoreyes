@@ -1,4 +1,4 @@
-# vectormark v1 Implementation Plan
+# vectoreyes v1 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -11,19 +11,19 @@
 **Spec:** `docs/superpowers/specs/2026-06-04-vectormark-logo-idealizer-design.md`
 
 **Conventions for every commit in this plan:**
-- Run from repo root `/Users/pmouli/GitHub.nosync/active/py/vectormark`.
+- Run from repo root `/Users/pmouli/GitHub.nosync/active/py/vectoreyes`.
 - Use `uv run pytest ...` to run tests inside the project venv.
 - Commit messages end with the standard `Co-Authored-By` trailer used in this repo.
-- The package import root is `vectormark` (`src/vectormark/...`).
+- The package import root is `vectoreyes` (`src/vectoreyes/...`).
 
 ---
 
 ## File Structure
 
 ```
-vectormark/
+vectoreyes/
   pyproject.toml                  # project + deps + pytest config (uv-managed)
-  src/vectormark/
+  src/vectoreyes/
     __init__.py                   # version + public idealize() re-export
     types.py                      # dataclasses: Region, Axis (Shape lives in fit.py)
     color.py                      # A0: sRGB↔OKLab, ΔE, greedy palette, quantize
@@ -34,7 +34,7 @@ vectormark/
     _fitcurve.py                  # vendored Schneider cubic-Bézier fitter (MIT)
     emit.py                       # structured SVG emitter (+ --flatten)
     pipeline.py                   # idealize(image, opts) -> svg string
-    cli.py                        # `vectormark` entry point
+    cli.py                        # `vectoreyes` entry point
   tests/
     fixtures/daikonic/source.png            # (present) gating fixture
     fixtures/daikonic/reference-trace.svg   # (present) organic baseline
@@ -57,14 +57,14 @@ vectormark/
 
 **Files:**
 - Create: `pyproject.toml`
-- Create: `src/vectormark/__init__.py`
+- Create: `src/vectoreyes/__init__.py`
 - Test: `tests/test_smoke.py`
 
 - [ ] **Step 1: Write `pyproject.toml`**
 
 ```toml
 [project]
-name = "vectormark"
+name = "vectoreyes"
 version = "0.0.1"
 description = "Deterministic logo idealizer — rendered logo raster to clean, editable, symmetric SVG."
 readme = "README.md"
@@ -82,24 +82,24 @@ dependencies = [
 dev = ["pytest>=8.0", "resvg-py>=0.1.7"]
 
 [project.scripts]
-vectormark = "vectormark.cli:main"
+vectoreyes = "vectoreyes.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/vectormark"]
+packages = ["src/vectoreyes"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
 ```
 
-- [ ] **Step 2: Write `src/vectormark/__init__.py`**
+- [ ] **Step 2: Write `src/vectoreyes/__init__.py`**
 
 ```python
-"""vectormark — deterministic logo idealizer."""
+"""vectoreyes — deterministic logo idealizer."""
 
 __version__ = "0.0.1"
 ```
@@ -107,12 +107,12 @@ __version__ = "0.0.1"
 - [ ] **Step 3: Write the smoke test** (`tests/test_smoke.py`)
 
 ```python
-import vectormark
+import vectoreyes
 
 
 def test_version_exposed():
-    assert isinstance(vectormark.__version__, str)
-    assert vectormark.__version__.count(".") == 2
+    assert isinstance(vectoreyes.__version__, str)
+    assert vectoreyes.__version__.count(".") == 2
 ```
 
 - [ ] **Step 4: Sync env and run the smoke test**
@@ -123,8 +123,8 @@ Expected: 1 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add pyproject.toml src/vectormark/__init__.py tests/test_smoke.py uv.lock
-git commit -m "chore: scaffold vectormark python package + smoke test"
+git add pyproject.toml src/vectoreyes/__init__.py tests/test_smoke.py uv.lock
+git commit -m "chore: scaffold vectoreyes python package + smoke test"
 ```
 
 ---
@@ -198,14 +198,14 @@ def ssim(a: np.ndarray, b: np.ndarray) -> float:
 
 def mean_delta_e(a: np.ndarray, b: np.ndarray) -> float:
     """Mean OKLab Euclidean distance per pixel (perceptual color error)."""
-    from vectormark.color import srgb_to_oklab
+    from vectoreyes.color import srgb_to_oklab
 
     la = srgb_to_oklab(a.reshape(-1, 3) / 255.0)
     lb = srgb_to_oklab(b.reshape(-1, 3) / 255.0)
     return float(np.linalg.norm(la - lb, axis=1).mean())
 ```
 
-> Note: `mean_delta_e` imports `vectormark.color.srgb_to_oklab`, built in Task 2. Run only `test_render_returns_rgb_array` and the SSIM half until Task 2 lands; the import is exercised by `test_identical_images_score_perfectly` after Task 2.
+> Note: `mean_delta_e` imports `vectoreyes.color.srgb_to_oklab`, built in Task 2. Run only `test_render_returns_rgb_array` and the SSIM half until Task 2 lands; the import is exercised by `test_identical_images_score_perfectly` after Task 2.
 
 - [ ] **Step 4: Run the render half of the test**
 
@@ -226,14 +226,14 @@ git commit -m "test: add SVG render-back-diff utility (resvg + SSIM/OKLab ΔE)"
 ### Task 2: Color space + ΔE (`color.py`, part 1)
 
 **Files:**
-- Create: `src/vectormark/color.py`
+- Create: `src/vectoreyes/color.py`
 - Test: `tests/test_color.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_color.py`)
 
 ```python
 import numpy as np
-from vectormark.color import srgb_to_oklab, oklab_to_srgb, delta_e
+from vectoreyes.color import srgb_to_oklab, oklab_to_srgb, delta_e
 
 
 def test_oklab_roundtrip():
@@ -258,9 +258,9 @@ def test_delta_e_is_symmetric_and_zero_on_equal():
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `uv run pytest tests/test_color.py -v`
-Expected: FAIL (`ModuleNotFoundError: vectormark.color`).
+Expected: FAIL (`ModuleNotFoundError: vectoreyes.color`).
 
-- [ ] **Step 3: Implement `src/vectormark/color.py` (color science)**
+- [ ] **Step 3: Implement `src/vectoreyes/color.py` (color science)**
 
 ```python
 """A0 colour optimisation: OKLab conversion, ΔE, palette extraction, quantise."""
@@ -322,7 +322,7 @@ Expected: PASS (3 tests). Also re-run `uv run pytest tests/test_render_util.py -
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/color.py tests/test_color.py
+git add src/vectoreyes/color.py tests/test_color.py
 git commit -m "feat(color): sRGB<->OKLab conversion + ΔE"
 ```
 
@@ -331,14 +331,14 @@ git commit -m "feat(color): sRGB<->OKLab conversion + ΔE"
 ### Task 3: Core dataclasses (`types.py`)
 
 **Files:**
-- Create: `src/vectormark/types.py`
+- Create: `src/vectoreyes/types.py`
 - Test: `tests/test_types.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_types.py`)
 
 ```python
 import numpy as np
-from vectormark.types import Region, Axis
+from vectoreyes.types import Region, Axis
 
 
 def test_region_holds_mask_and_color():
@@ -359,7 +359,7 @@ def test_axis_reflect_x():
 Run: `uv run pytest tests/test_types.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement `src/vectormark/types.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/types.py`**
 
 ```python
 """Plain data types passed between pipeline stages (IO-free, port-friendly).
@@ -404,7 +404,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/types.py tests/test_types.py
+git add src/vectoreyes/types.py tests/test_types.py
 git commit -m "feat(types): core pipeline dataclasses"
 ```
 
@@ -417,13 +417,13 @@ git commit -m "feat(types): core pipeline dataclasses"
 Anti-aliasing produces many low-count blend colours between high-count true colours. Greedy frequency selection with ΔE-merge picks the true palette and skips blends.
 
 **Files:**
-- Modify: `src/vectormark/color.py`
+- Modify: `src/vectoreyes/color.py`
 - Test: `tests/test_color.py`
 
 - [ ] **Step 1: Add the failing test** (append to `tests/test_color.py`)
 
 ```python
-from vectormark.color import extract_palette, quantize
+from vectoreyes.color import extract_palette, quantize
 
 
 def _band_image():
@@ -460,7 +460,7 @@ def test_quantize_collapses_blend_row():
 Run: `uv run pytest tests/test_color.py -k "palette or quantize" -v`
 Expected: FAIL (`ImportError: cannot import name 'extract_palette'`).
 
-- [ ] **Step 3: Append to `src/vectormark/color.py`**
+- [ ] **Step 3: Append to `src/vectoreyes/color.py`**
 
 ```python
 def extract_palette(
@@ -508,7 +508,7 @@ Expected: PASS (all color tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/color.py tests/test_color.py
+git add src/vectoreyes/color.py tests/test_color.py
 git commit -m "feat(color): greedy OKLab palette extraction + quantize (AA-robust)"
 ```
 
@@ -519,15 +519,15 @@ git commit -m "feat(color): greedy OKLab palette extraction + quantize (AA-robus
 ### Task 5: Region segmentation + background drop (`segment.py`)
 
 **Files:**
-- Create: `src/vectormark/segment.py`
+- Create: `src/vectoreyes/segment.py`
 - Test: `tests/test_segment.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_segment.py`)
 
 ```python
 import numpy as np
-from vectormark.color import extract_palette, quantize
-from vectormark.segment import segment, hexstr
+from vectoreyes.color import extract_palette, quantize
+from vectoreyes.segment import segment, hexstr
 
 
 def _logo_on_white():
@@ -557,9 +557,9 @@ def test_hexstr_formats_uppercase():
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `uv run pytest tests/test_segment.py -v`
-Expected: FAIL (`ModuleNotFoundError: vectormark.segment`).
+Expected: FAIL (`ModuleNotFoundError: vectoreyes.segment`).
 
-- [ ] **Step 3: Implement `src/vectormark/segment.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/segment.py`**
 
 ```python
 """B: split the quantised image into connected single-colour regions."""
@@ -611,7 +611,7 @@ Expected: PASS (2 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/segment.py tests/test_segment.py
+git add src/vectoreyes/segment.py tests/test_segment.py
 git commit -m "feat(segment): connected-component regions + background-plate drop"
 ```
 
@@ -624,15 +624,15 @@ git commit -m "feat(segment): connected-component regions + background-plate dro
 v1 detects an upright (vertical) bilateral axis — covers the Daikonic mark; arbitrary-angle is a documented v1 limitation. Regions are then classed `straddling` (self-symmetric, fit with axis constraint) or `pair` (mirror-image of another region, emit one + `<use>`).
 
 **Files:**
-- Create: `src/vectormark/symmetry.py`
+- Create: `src/vectoreyes/symmetry.py`
 - Test: `tests/test_symmetry.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_symmetry.py`)
 
 ```python
 import numpy as np
-from vectormark.types import Region
-from vectormark.symmetry import detect_axis, classify_regions
+from vectoreyes.types import Region
+from vectoreyes.symmetry import detect_axis, classify_regions
 
 
 def _sym_masks():
@@ -676,7 +676,7 @@ def test_no_symmetry_returns_none():
 Run: `uv run pytest tests/test_symmetry.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement `src/vectormark/symmetry.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/symmetry.py`**
 
 ```python
 """C1/C2: vertical bilateral symmetry detection + region classification."""
@@ -774,7 +774,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/symmetry.py tests/test_symmetry.py
+git add src/vectoreyes/symmetry.py tests/test_symmetry.py
 git commit -m "feat(symmetry): vertical axis detection + straddle/pair classification"
 ```
 
@@ -785,14 +785,14 @@ git commit -m "feat(symmetry): vertical axis detection + straddle/pair classific
 ### Task 7: Sub-pixel contour + RDP + corner split (`contour.py`)
 
 **Files:**
-- Create: `src/vectormark/contour.py`
+- Create: `src/vectoreyes/contour.py`
 - Test: `tests/test_contour.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_contour.py`)
 
 ```python
 import numpy as np
-from vectormark.contour import outer_contour, rdp, corner_indices
+from vectoreyes.contour import outer_contour, rdp, corner_indices
 
 
 def test_outer_contour_of_square_is_closed_xy():
@@ -823,7 +823,7 @@ def test_corner_indices_finds_square_corners():
 Run: `uv run pytest tests/test_contour.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement `src/vectormark/contour.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/contour.py`**
 
 ```python
 """C3/C4: sub-pixel contour extraction, RDP simplification, corner detection."""
@@ -891,7 +891,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/contour.py tests/test_contour.py
+git add src/vectoreyes/contour.py tests/test_contour.py
 git commit -m "feat(contour): subpixel contour + RDP + corner detection"
 ```
 
@@ -904,15 +904,15 @@ git commit -m "feat(contour): subpixel contour + RDP + corner detection"
 Recognize a region as a native SVG primitive (circle, ellipse, axis-aligned rect, regular polygon) when its boundary matches within ε. Ellipse/circle fits use `skimage.measure` models; rect uses shapely's minimum rotated rectangle + fill ratio.
 
 **Files:**
-- Create: `src/vectormark/fit.py`
+- Create: `src/vectoreyes/fit.py`
 - Test: `tests/test_fit.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_fit.py`)
 
 ```python
 import numpy as np
-from vectormark.contour import outer_contour
-from vectormark.fit import recognize_primitive
+from vectoreyes.contour import outer_contour
+from vectoreyes.fit import recognize_primitive
 
 
 def _disk(cx, cy, r, size=60):
@@ -952,7 +952,7 @@ def test_rejects_half_ellipse_region():
 Run: `uv run pytest tests/test_fit.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement `src/vectormark/fit.py` (primitive recognition)**
+- [ ] **Step 3: Implement `src/vectoreyes/fit.py` (primitive recognition)**
 
 ```python
 """C5/C6: primitive recognition (this task) + segment path fitting (next task)."""
@@ -1021,7 +1021,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/fit.py tests/test_fit.py
+git add src/vectoreyes/fit.py tests/test_fit.py
 git commit -m "feat(fit): whole-region primitive recognition (circle/ellipse/rect)"
 ```
 
@@ -1032,13 +1032,13 @@ git commit -m "feat(fit): whole-region primitive recognition (circle/ellipse/rec
 A trapezoid (the tapering band) is not a *regular* polygon but IS a clean straight-edged polygon — emit `<polygon>` when RDP yields few vertices and every edge is straight.
 
 **Files:**
-- Modify: `src/vectormark/fit.py`
+- Modify: `src/vectoreyes/fit.py`
 - Test: `tests/test_fit.py`
 
 - [ ] **Step 1: Add the failing test** (append to `tests/test_fit.py`)
 
 ```python
-from vectormark.fit import recognize_polygon
+from vectoreyes.fit import recognize_polygon
 
 
 def _trapezoid(size=60):
@@ -1071,7 +1071,7 @@ def _disk_local(size=60):
 Run: `uv run pytest tests/test_fit.py -k polygon -v`
 Expected: FAIL (`ImportError: cannot import name 'recognize_polygon'`).
 
-- [ ] **Step 3: Append to `src/vectormark/fit.py`**
+- [ ] **Step 3: Append to `src/vectoreyes/fit.py`**
 
 ```python
 from .contour import rdp
@@ -1114,7 +1114,7 @@ Expected: PASS (all fit tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/fit.py tests/test_fit.py
+git add src/vectoreyes/fit.py tests/test_fit.py
 git commit -m "feat(fit): general straight-edged polygon recognition"
 ```
 
@@ -1127,14 +1127,14 @@ git commit -m "feat(fit): general straight-edged polygon recognition"
 For organic regions (dome arc-cap, tip, leaves) we fit cubic Béziers to boundary segments. Vendor the well-known MIT port of Schneider's *Graphics Gems* algorithm rather than reimplementing.
 
 **Files:**
-- Create: `src/vectormark/_fitcurve.py`
+- Create: `src/vectoreyes/_fitcurve.py`
 - Test: `tests/test_fitcurve.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_fitcurve.py`)
 
 ```python
 import numpy as np
-from vectormark._fitcurve import fit_cubic_beziers
+from vectoreyes._fitcurve import fit_cubic_beziers
 
 
 def test_fits_quarter_circle_within_tolerance():
@@ -1154,7 +1154,7 @@ def test_fits_quarter_circle_within_tolerance():
 Run: `uv run pytest tests/test_fitcurve.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Create `src/vectormark/_fitcurve.py`**
+- [ ] **Step 3: Create `src/vectoreyes/_fitcurve.py`**
 
 Vendor the MIT-licensed implementation from `volkerp/fitCurves`
 (https://github.com/volkerp/fitCurves — Philip J. Schneider, *Graphics Gems*,
@@ -1276,7 +1276,7 @@ Expected: PASS (1 test). If the quarter-circle needs >1 segment that's fine; the
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/_fitcurve.py tests/test_fitcurve.py
+git add src/vectoreyes/_fitcurve.py tests/test_fitcurve.py
 git commit -m "feat(fit): vendor Schneider cubic-Bézier fitter (MIT)"
 ```
 
@@ -1287,13 +1287,13 @@ git commit -m "feat(fit): vendor Schneider cubic-Bézier fitter (MIT)"
 Build a parametric `<path>` for a contour by splitting at corners, fitting each segment to a **line** (if straight) else **cubic Béziers**. This is the fallback that produces the dome (line bottom + arc-like top), tip, and leaf paths.
 
 **Files:**
-- Modify: `src/vectormark/fit.py`
+- Modify: `src/vectoreyes/fit.py`
 - Test: `tests/test_fit.py`
 
 - [ ] **Step 1: Add the failing test** (append to `tests/test_fit.py`)
 
 ```python
-from vectormark.fit import fit_path
+from vectoreyes.fit import fit_path
 
 
 def test_fit_path_of_square_uses_only_lines():
@@ -1318,7 +1318,7 @@ def test_fit_path_of_dome_uses_curve():
 Run: `uv run pytest tests/test_fit.py -k fit_path -v`
 Expected: FAIL (`ImportError: cannot import name 'fit_path'`).
 
-- [ ] **Step 3: Append to `src/vectormark/fit.py`**
+- [ ] **Step 3: Append to `src/vectoreyes/fit.py`**
 
 ```python
 from ._fitcurve import fit_cubic_beziers
@@ -1373,7 +1373,7 @@ Expected: PASS (all fit tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/fit.py tests/test_fit.py
+git add src/vectoreyes/fit.py tests/test_fit.py
 git commit -m "feat(fit): segment-fitted parametric path (line/Bézier by corner)"
 ```
 
@@ -1386,15 +1386,15 @@ git commit -m "feat(fit): segment-fitted parametric path (line/Bézier by corner
 Turn `Shape`s + symmetry into a `Drawing`'s SVG string: native elements for primitives, `<path>` otherwise, and a `<use transform="matrix(...)">` mirror for paired regions about the axis. Optional `--flatten`.
 
 **Files:**
-- Create: `src/vectormark/emit.py`
+- Create: `src/vectoreyes/emit.py`
 - Test: `tests/test_emit.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_emit.py`)
 
 ```python
-from vectormark.fit import Shape
-from vectormark.types import Axis
-from vectormark.emit import shape_to_svg, mirror_use, render_svg_doc
+from vectoreyes.fit import Shape
+from vectoreyes.types import Axis
+from vectoreyes.emit import shape_to_svg, mirror_use, render_svg_doc
 
 
 def test_rect_shape_emits_native_rect():
@@ -1426,7 +1426,7 @@ def test_render_svg_doc_wraps_with_viewbox():
 Run: `uv run pytest tests/test_emit.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement `src/vectormark/emit.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/emit.py`**
 
 ```python
 """C6: serialise fitted shapes into a structured SVG document."""
@@ -1478,7 +1478,7 @@ Expected: PASS (4 tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/emit.py tests/test_emit.py
+git add src/vectoreyes/emit.py tests/test_emit.py
 git commit -m "feat(emit): structured SVG serialiser + <use> mirror"
 ```
 
@@ -1491,8 +1491,8 @@ git commit -m "feat(emit): structured SVG serialiser + <use> mirror"
 Wire the stages: decode → quantize → segment → symmetry → per-region fit (primitive-first, polygon, then path fallback; straddlers snap to axis, pairs emit + mirror) → emit. Z-order regions back-to-front by area (largest first) so smaller bands/leaves paint on top.
 
 **Files:**
-- Create: `src/vectormark/pipeline.py`
-- Modify: `src/vectormark/__init__.py`
+- Create: `src/vectoreyes/pipeline.py`
+- Modify: `src/vectoreyes/__init__.py`
 - Test: `tests/test_pipeline.py` (structure-level; full acceptance in Task 15)
 
 - [ ] **Step 1: Write the failing test** (`tests/test_pipeline.py`)
@@ -1500,7 +1500,7 @@ Wire the stages: decode → quantize → segment → symmetry → per-region fit
 ```python
 import numpy as np
 from PIL import Image
-from vectormark.pipeline import idealize
+from vectoreyes.pipeline import idealize
 
 
 def _two_band_logo(path):
@@ -1524,7 +1524,7 @@ def test_idealize_emits_two_rects(tmp_path):
 Run: `uv run pytest tests/test_pipeline.py -v`
 Expected: FAIL (`ModuleNotFoundError`).
 
-- [ ] **Step 3: Implement `src/vectormark/pipeline.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/pipeline.py`**
 
 ```python
 """Top-level orchestration: raster path/array -> structured SVG string."""
@@ -1612,10 +1612,10 @@ def idealize(image, *, options: Options | None = None) -> str:
     return render_svg_doc(w, h, body)
 ```
 
-- [ ] **Step 4: Update `src/vectormark/__init__.py`**
+- [ ] **Step 4: Update `src/vectoreyes/__init__.py`**
 
 ```python
-"""vectormark — deterministic logo idealizer."""
+"""vectoreyes — deterministic logo idealizer."""
 
 from .pipeline import Options, idealize
 
@@ -1631,7 +1631,7 @@ Expected: PASS (1 test).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/vectormark/pipeline.py src/vectormark/__init__.py tests/test_pipeline.py
+git add src/vectoreyes/pipeline.py src/vectoreyes/__init__.py tests/test_pipeline.py
 git commit -m "feat(pipeline): orchestrate quantize→segment→symmetry→fit→emit"
 ```
 
@@ -1640,7 +1640,7 @@ git commit -m "feat(pipeline): orchestrate quantize→segment→symmetry→fit�
 ### Task 14: CLI (`cli.py`)
 
 **Files:**
-- Create: `src/vectormark/cli.py`
+- Create: `src/vectoreyes/cli.py`
 - Test: `tests/test_cli.py`
 
 - [ ] **Step 1: Write the failing test** (`tests/test_cli.py`)
@@ -1656,7 +1656,7 @@ def test_cli_writes_svg(tmp_path):
     img[8:32, 8:32] = (6, 35, 54)
     src = tmp_path / "in.png"; out = tmp_path / "out.svg"
     Image.fromarray(img).save(src)
-    r = subprocess.run([sys.executable, "-m", "vectormark.cli", str(src), "-o", str(out)],
+    r = subprocess.run([sys.executable, "-m", "vectoreyes.cli", str(src), "-o", str(out)],
                        capture_output=True, text=True)
     assert r.returncode == 0, r.stderr
     assert out.read_text().startswith("<svg")
@@ -1665,12 +1665,12 @@ def test_cli_writes_svg(tmp_path):
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `uv run pytest tests/test_cli.py -v`
-Expected: FAIL (`No module named vectormark.cli`).
+Expected: FAIL (`No module named vectoreyes.cli`).
 
-- [ ] **Step 3: Implement `src/vectormark/cli.py`**
+- [ ] **Step 3: Implement `src/vectoreyes/cli.py`**
 
 ```python
-"""`vectormark` CLI."""
+"""`vectoreyes` CLI."""
 
 from __future__ import annotations
 
@@ -1681,7 +1681,7 @@ from .pipeline import Options, idealize
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="vectormark", description="Idealize a logo raster into SVG.")
+    ap = argparse.ArgumentParser(prog="vectoreyes", description="Idealize a logo raster into SVG.")
     ap.add_argument("input", help="input raster (PNG/JPG)")
     ap.add_argument("-o", "--output", help="output .svg (default: stdout)")
     ap.add_argument("--epsilon", type=float, default=1.5, help="fit tolerance in px")
@@ -1713,8 +1713,8 @@ Expected: PASS (1 test).
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/vectormark/cli.py tests/test_cli.py
-git commit -m "feat(cli): vectormark command-line entry point"
+git add src/vectoreyes/cli.py tests/test_cli.py
+git commit -m "feat(cli): vectoreyes command-line entry point"
 ```
 
 ---
@@ -1737,7 +1737,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from vectormark import Options, idealize
+from vectoreyes import Options, idealize
 from tests._render import render_svg, ssim, mean_delta_e
 
 FIX = Path(__file__).parent / "fixtures" / "daikonic" / "source.png"
@@ -1796,7 +1796,7 @@ Re-run until both asserts pass. Do **not** weaken the asserts below SSIM 0.90 / 
 
 Run:
 ```bash
-uv run python -c "from vectormark import idealize, Options; open('/tmp/daikonic.svg','w').write(idealize('tests/fixtures/daikonic/source.png', options=Options(epsilon=1.8, max_error=1.2)))"
+uv run python -c "from vectoreyes import idealize, Options; open('/tmp/daikonic.svg','w').write(idealize('tests/fixtures/daikonic/source.png', options=Options(epsilon=1.8, max_error=1.2)))"
 ```
 Open `/tmp/daikonic.svg` and compare to `tests/fixtures/daikonic/reference-geometric.svg`. Confirm: dome capped by a curve, two bands solid, tip pointed, two symmetric leaves.
 

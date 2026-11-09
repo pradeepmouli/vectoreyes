@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
-from vectormark.pipeline import Options, idealize
+from vectoreyes.pipeline import Options, idealize
 
 
 def _disc(n: int = 64) -> np.ndarray:

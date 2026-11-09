@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 176 176" role="img">
+  <title>vectorEyes</title>
+  <g fill="#08282B">
+    <g transform="translate(8 43)">
+      <path fill-rule="evenodd" d="M0 39H10V29H22V19H38V9H55V0H80
+        C113 0 140 17 159 42 Q162 45 159 48 C140 73 113 90 80 90
+        H55V81H38V71H22V61H10V52H0Z
+        M17 39V52H28V61H44V71H62V80H80
+        C108 80 130 67 148 45 C130 23 108 10 80 10H62V19H44V29H28V39Z"/>
+      <circle cx="84" cy="45" r="21"/>
+    </g>
+  </g>
+</svg>

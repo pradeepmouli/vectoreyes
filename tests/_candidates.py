@@ -6,13 +6,13 @@ from __future__ import annotations
 
 import numpy as np
 
-from vectormark.candidate import (
+from vectoreyes.candidate import (
     Candidate, FlatFill, LinearGradientFill, RadialGradientFill,
 )
-from vectormark.contour import region_contours
-from vectormark.fit import fit_path, recognize_primitive
-from vectormark.gradient import fit_gradient
-from vectormark.types import Region
+from vectoreyes.contour import region_contours
+from vectoreyes.fit import fit_path, recognize_primitive
+from vectoreyes.gradient import fit_gradient
+from vectoreyes.types import Region
 
 
 def generate_candidates(
